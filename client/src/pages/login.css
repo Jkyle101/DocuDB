@@ -1,0 +1,28 @@
+/* Background */
+.login-page {
+  background: linear-gradient(135deg, #eeeeee, #ffffff);
+  min-height: 100vh;
+}
+
+/* Card */
+.login-card {
+  border-radius: 20px;
+  background: #fff;
+  transition: transform 0.3s ease, box-shadow 0.3s ease;
+}
+
+
+
+/* Inputs */
+.login-card input {
+  padding: 12px 16px;
+  font-size: 15px;
+  border: 1px solid #ced4da;
+}
+
+/* Button */
+.login-card button {
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+}
