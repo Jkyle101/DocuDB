@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import axios from "axios";
 
-function Upload({ onClose }) {
+function Upload({ onClose, currentFolderId }) {
   const [file, setFile] = useState(null);
 
   const handleSubmit = async (e) => {
@@ -13,15 +13,18 @@ function Upload({ onClose }) {
 
     // attach logged-in userId from localStorage
     formData.append("userId", localStorage.getItem("userId")); 
-    // optional: also send role if needed
-    formData.append("role", localStorage.getItem("role")); 
+
+    // include folder (if inside one)
+    if (currentFolderId) {
+      formData.append("parentFolder", currentFolderId);
+    }
 
     try {
       await axios.post("http://localhost:3001/upload", formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       alert("File uploaded successfully!");
-      if (onClose) onClose();
+      if (onClose) onClose(true); // pass true to indicate refresh needed
     } catch (err) {
       console.error("Upload error:", err);
       alert("Upload failed");

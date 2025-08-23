@@ -13,12 +13,8 @@ const FileSchema = new mongoose.Schema({
   owner: { type: mongoose.Schema.Types.ObjectId, ref: "users", required: true }, 
   parentFolder: { type: mongoose.Schema.Types.ObjectId, ref: "folders", default: null }, 
 
-  sharedWith: [{ type: mongoose.Schema.Types.ObjectId, ref: "users" }], 
-  permissions: {
-    type: String,
-    enum: ["read", "write", "owner"],
-    default: "owner",
-  },
+  sharedWith: [{ type: mongoose.Schema.Types.ObjectId, ref: "users" }],
+  permissions: { type: String, enum: ["read", "write", "owner"], default: "owner" },
 });
 
 module.exports = mongoose.model("File", FileSchema);
