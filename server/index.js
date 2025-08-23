@@ -5,13 +5,14 @@ const multer = require("multer");
 const path = require("path");
 
 const UserModel = require("./models/users");
-const File = require("./models/file"); // ⬅️ use the model above
+const File = require("./models/file");
+const Folder = require("./models/folder");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// static for direct file serving (download links)
+// static for direct file serving
 app.use("/uploads", express.static("uploads"));
 
 // connect to Mongo
@@ -26,7 +27,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-/** LOGIN — return userId so the FE can store it */
+/** LOGIN */
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -35,45 +36,44 @@ app.post("/login", async (req, res) => {
     if (!user) return res.status(404).json({ error: "No record found" });
     if (user.password !== password) return res.status(401).json({ error: "The password is incorrect" });
 
-    // Return id + role
     res.json({ status: "success", role: user.role, userId: user._id.toString() });
   } catch (err) {
-    console.error("Login error:", err);
     res.status(500).json({ error: "Server error" });
   }
 });
 
-/** UPLOAD — must receive userId and save it */
+/** UPLOAD FILE */
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const { userId } = req.body;
-    if (!userId) return res.status(400).json({ error: "Missing userId in upload" });
+    const { userId, parentFolder } = req.body;
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
 
     const file = new File({
       originalName: req.file.originalname,
       filename: req.file.filename,
       mimetype: req.file.mimetype,
       size: req.file.size,
-      userId, // ⬅️ saved to DB
+      userId, // string for now
+      owner: userId, // make sure this matches a valid User _id
+      parentFolder: parentFolder || null,
     });
+    
 
     await file.save();
     res.json({ success: true, file });
   } catch (err) {
-    console.error("Upload error:", err);
     res.status(500).json({ error: "Upload failed" });
   }
 });
 
-/** LIST — admin sees all, others see only their own */
+/** LIST FILES */
 app.get("/files", async (req, res) => {
   try {
-    const { userId, role } = req.query;
-
+    const { userId, role, parentFolder } = req.query;
     let query = {};
-    // accept both "admin" and "superadmin" as admin types
+
     const isAdmin = role === "admin" || role === "superadmin";
 
     if (!isAdmin) {
@@ -81,15 +81,21 @@ app.get("/files", async (req, res) => {
       query.userId = userId;
     }
 
+    // important: only show files inside the current folder
+    if (parentFolder) {
+      query.parentFolder = parentFolder;
+    } else {
+      query.parentFolder = null; // show only root files when no folder selected
+    }
+
     const files = await File.find(query).sort({ uploadDate: -1 });
     res.json(files);
   } catch (err) {
-    console.error("Files error:", err);
     res.status(500).json({ error: "Failed to fetch files" });
   }
 });
 
-/** VIEW — stream inline with the correct Content-Type (per file) */
+/** VIEW FILE INLINE */
 app.get("/view/:filename", async (req, res) => {
   try {
     const doc = await File.findOne({ filename: req.params.filename });
@@ -104,32 +110,72 @@ app.get("/view/:filename", async (req, res) => {
   }
 });
 
-/** DOWNLOAD — force download */
+/** DOWNLOAD FILE */
 app.get("/download/:filename", (req, res) => {
   const filePath = path.join(__dirname, "uploads", req.params.filename);
   res.download(filePath);
 });
 
-
-const Folder = require("./models/folder");
-
+/** CREATE FOLDER */
 app.post("/folders", async (req, res) => {
   try {
-    const { name, parentFolder, userId } = req.body;
+    const { name, owner, parentFolder } = req.body;
+    if (!name || !owner) return res.status(400).json({ error: "Missing folder name or owner" });
 
-    const newFolder = new Folder({
+    const folder = new Folder({
       name,
-      owner: userId,
+      owner,
       parentFolder: parentFolder || null,
+      sharedWith: [],
+      permissions: "owner"
     });
 
-    await newFolder.save();
-    res.json({ status: "success", folder: newFolder });
+    await folder.save();
+    res.json({ success: true, folder });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET FOLDERS */
+app.get("/folders", async (req, res) => {
+  try {
+    const { userId, role, parentFolder } = req.query;
+
+    let query = { parentFolder: parentFolder || null };
+
+    if (role !== "admin" && role !== "superadmin") {
+      query.owner = userId;
+    }
+
+    const folders = await Folder.find(query);
+    res.json(folders);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** DELETE FOLDER */
+app.delete("/folders/:id", async (req, res) => {
+  try {
+    await Folder.findByIdAndDelete(req.params.id);
+    res.json({ status: "success" });
   } catch (err) {
     res.status(500).json({ status: "error", error: err.message });
   }
-  const File = require("./models/file");
+});
 
+/** DELETE FILE */
+app.delete("/files/:id", async (req, res) => {
+  try {
+    await File.findByIdAndDelete(req.params.id);
+    res.json({ status: "success" });
+  } catch (err) {
+    res.status(500).json({ status: "error", error: err.message });
+  }
+});
+
+/** MOVE FILE TO FOLDER */
 app.patch("/files/:id/move", async (req, res) => {
   try {
     const { newFolderId } = req.body;
@@ -143,9 +189,11 @@ app.patch("/files/:id/move", async (req, res) => {
     res.status(500).json({ status: "error", error: err.message });
   }
 });
+
+/** SHARE FOLDER */
 app.patch("/folders/:id/share", async (req, res) => {
   try {
-    const { userIds, permission } = req.body; // userIds = [user1, user2]
+    const { userIds, permission } = req.body;
     const folder = await Folder.findById(req.params.id);
 
     folder.sharedWith.push(...userIds);
@@ -158,8 +206,42 @@ app.patch("/folders/:id/share", async (req, res) => {
   }
 });
 
+/** BREADCRUMBS (for navigation path) */
+app.get("/breadcrumbs", async (req, res) => {
+  try {
+    const { folderId } = req.query;
+    if (!folderId) return res.json([]);
 
+    let breadcrumbs = [];
+    let current = await Folder.findById(folderId);
+
+    while (current) {
+      breadcrumbs.unshift({ _id: current._id, name: current.name });
+      if (!current.parentFolder) break;
+      current = await Folder.findById(current.parentFolder);
+    }
+
+    res.json(breadcrumbs);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
+/** GET ALL FOLDERS (for move modal) */
+app.get("/folders/all", async (req, res) => {
+  try {
+    const { userId, role } = req.query;
+    let query = {};
 
+    if (role !== "admin" && role !== "superadmin") {
+      query.owner = userId;
+    }
+
+    const folders = await Folder.find(query);
+    res.json(folders);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+  
 
 app.listen(3001, () => console.log("Server running on port 3001"));

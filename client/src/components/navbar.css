@@ -1,78 +1,50 @@
+/* src/components/Navbar.css */
 
-.transparent-navbar {
-    background-color: transparent !important;
-    transition: background-color 0.3s ease, backdrop-filter 0.3s ease;
-    
+/* Clamp navbar vertical padding (override any global rules) */
+.app-navbar {
+  --bs-navbar-padding-y: 0.25rem;
+  --bs-navbar-padding-x: 0.5rem;
+  padding-top: 0.25rem !important;
+  padding-bottom: 0.25rem !important;
+  margin: 0 !important; /* just in case something adds margins */
+}
+
+/* Keep everything vertically centered */
+.app-navbar .navbar-collapse {
+  align-items: center;
+}
+
+/* Logo sizing */
+.app-navbar .brand-logo {
+  height: 32px;       /* smaller = slimmer navbar */
+  display: block;
+}
+
+/* Compact controls inside navbar */
+.app-navbar .form-control {
+  height: 34px;
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+
+.app-navbar .btn {
+  --bs-btn-padding-y: 0.25rem;
+  --bs-btn-padding-x: 0.5rem;
+  line-height: 1.1;
+}
+
+/* Search takes reasonable width on desktop */
+.app-navbar .nav-search {
+  width: min(680px, 100%);
+}
+
+/* Mobile: stack neatly without adding big vertical gaps */
+@media (max-width: 991.98px) {
+  .app-navbar .navbar-collapse {
+    padding: 0.25rem 0;
   }
-  
-  
-  .glass-navbar {
-    background-color: rgba(255, 255, 255, 0.15) !important;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
-    
-    transition: background-color 0.3s ease, backdrop-filter 0.3s ease;
-  }
-  
-  
-  .navbar-nav .nav-link {
-    position: relative;
-    font-weight: 500;
-    transition: color 0.3s ease;
-    padding: 0.5rem 1rem;
-    margin: 15px;
-  }
-  
-  .navbar-nav .nav-link::after {
-    content: '';
-    position: absolute;
-    bottom: 0;
-    left: 0;
-    height: 4px;
-    width: 0%;
-    opacity: 0;
-    transition: width 0.3s ease, opacity 0.3s ease;
-  
-  }
-  
-  .navbar-nav .nav-link:hover::after {
+  .app-navbar .nav-search {
     width: 100%;
-    opacity: 1;
+    margin: 0.5rem 0;
   }
-  
-  
-  .home-links .nav-link {
-    color: white;
-    
-  }
-  
-  .home-links .nav-link::after {
-    background-color: white;
-  }
-  
-  
-  .scrolled-links .nav-link {
-    color: #222;
-    
-  }
-  
-  .scrolled-links .nav-link::after {
-    background-color: #222;
-  }
-  
-  .dropdown-menu {
-    background-color: white;
-    border-radius: 6px;
-    box-shadow: 0 6px 12px rgba(0,0,0,0.1);
-  }
-  
-  .dropdown-item {
-    color: #222;
-    transition: background-color 0.3s ease;
-  }
-  
-  .dropdown-item:hover {
-    background-color: #f1f1f1;
-  }
-  
+}
