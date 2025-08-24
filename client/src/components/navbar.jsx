@@ -2,14 +2,13 @@
 import React, { useState } from "react";
 import { FaPlus, FaSearch, FaSignOutAlt } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
-import logo from "../assets/dblogo2.png";
+import logo from "../assets/docudbllcc.png";
 import Upload from "../pages/upload";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "./Navbar.css"; // We'll create this for custom styling
 
 function Navbar() {
   const navigate = useNavigate();
-  const [showUpload, setShowUpload] = useState(false);
 
   const handleLogout = () => {
     localStorage.removeItem("isLoggedIn");
@@ -25,7 +24,7 @@ function Navbar() {
             <img
               src={logo}
               alt="DocuDB"
-              style={{ height: "50px", marginLeft:"50px" }}
+              style={{ height: "50px", marginLeft:"100px", position:"inherit"}}
               className="me-2"
             />
           </a>
@@ -59,13 +58,7 @@ function Navbar() {
 
             {/* Action buttons */}
             <div className="d-flex align-items-center ms-lg-3">
-              <button
-                className="btn btn-sm btn-primary rounded-circle me-2"
-                onClick={() => setShowUpload(true)}
-                title="Upload"
-              >
-                <FaPlus />
-              </button>
+              
               <button
                 className="btn btn-sm btn-outline-danger d-flex align-items-center"
                 onClick={handleLogout}
@@ -77,34 +70,9 @@ function Navbar() {
         </nav>
       </div>
 
-      {/* Upload Modal */}
-      {showUpload && (
-        <div className="modal fade show d-block" tabIndex="-1">
-          <div className="modal-dialog modal-dialog-centered">
-            <div className="modal-content">
-              <div className="modal-header">
-                <h5 className="modal-title">Upload Document</h5>
-                <button
-                  type="button"
-                  className="btn-close"
-                  onClick={() => setShowUpload(false)}
-                ></button>
-              </div>
-              <div className="modal-body">
-                <Upload onClose={() => setShowUpload(false)} />
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      
 
-      {/* Backdrop */}
-      {showUpload && (
-        <div
-          className="modal-backdrop fade show"
-          onClick={() => setShowUpload(false)}
-        ></div>
-      )}
+      
     </>
   );
 }

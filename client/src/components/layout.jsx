@@ -7,7 +7,8 @@ import NavBar from "./navbar";
 
 function Layout({ role }) {
   return (
-    <div className="container-fluid vh-75 d-flex flex-column">
+    <div className="container-fluid vh-50 d-flex flex-column">
+
       <div className="row flex-grow-1">
       <NavBar />
         {/* Sidebar changes depending on role */}

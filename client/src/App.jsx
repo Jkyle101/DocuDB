@@ -5,6 +5,7 @@ import AdminHome from "./pages/adminhome"; // admin page
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/layout";
 import Upload from "./pages/upload"; // upload page
+import Shared from "./pages/shared"; // shared page
 
 function App() {
   return (
@@ -12,7 +13,20 @@ function App() {
       <Routes>
         {/* Public Login */}
         <Route path="/login" element={<Login />} />
+
         <Route path="upload" element={<Upload />} />
+
+        <Route
+          path="/shared"
+          element={
+            <ProtectedRoute allowedRole="user">
+              <Layout role="user" />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<Shared />} />
+          </Route>
+
 
         {/* User Protected Routes */}
         <Route
@@ -37,6 +51,7 @@ function App() {
         >
           <Route index element={<AdminHome />} />
         </Route>
+
       </Routes>
     </Router>
   );

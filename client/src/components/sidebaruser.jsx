@@ -1,37 +1,67 @@
 // src/components/Sidebar.jsx
 import React from "react";
 import { FaFolder, FaPlus } from "react-icons/fa";
+import { NavLink } from "react-router-dom";
 import "bootstrap/dist/css/bootstrap.min.css";
 
 function Sidebar() {
   return (
-    <div className="col-2 bg-white border-end p-3">
-      <button className="btn btn-primary w-100 mb-3">
-        <FaPlus className="me-2" /> New
-      </button>
+    <div className="col-2 bg-white border-end p-3 vh-100">
       <ul className="list-unstyled">
         <li className="mb-2">
-          <a href="#" className="text-decoration-none text-dark fw-semibold">
+          <NavLink
+            to="/"
+            className={({ isActive }) =>
+              `text-decoration-none fw-semibold d-flex align-items-center ${
+                isActive ? "text-primary" : "text-dark"
+              }`
+            }
+          >
             <FaFolder className="me-2 text-warning" /> My Drive
-          </a>
+          </NavLink>
         </li>
+
         <li className="mb-2">
-          <a href="#" className="text-decoration-none text-dark">
+          <NavLink
+            to="/shared"
+            className={({ isActive }) =>
+              `text-decoration-none d-flex align-items-center ${
+                isActive ? "text-primary" : "text-dark"
+              }`
+            }
+          >
             <FaFolder className="me-2 text-secondary" /> Shared with me
-          </a>
+          </NavLink>
         </li>
+
         <li className="mb-2">
-          <a href="#" className="text-decoration-none text-dark">
+          <NavLink
+            to="/recent"
+            className={({ isActive }) =>
+              `text-decoration-none d-flex align-items-center ${
+                isActive ? "text-primary" : "text-dark"
+              }`
+            }
+          >
             <FaFolder className="me-2 text-secondary" /> Recent
-          </a>
+          </NavLink>
         </li>
+
         <li className="mb-2">
-          <a href="#" className="text-decoration-none text-dark">
+          <NavLink
+            to="/trash"
+            className={({ isActive }) =>
+              `text-decoration-none d-flex align-items-center ${
+                isActive ? "text-primary" : "text-dark"
+              }`
+            }
+          >
             <FaFolder className="me-2 text-secondary" /> Trash
-          </a>
+          </NavLink>
         </li>
       </ul>
     </div>
+  
   );
 }
 
