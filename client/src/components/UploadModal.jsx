@@ -33,8 +33,8 @@ export default function UploadModal({ onClose, onUploaded, parentFolder }) {
   };
 
   return (
-    <div className="modal d-block" tabIndex="-1">
-      <div className="modal-dialog">
+    <div className="modal d-block " tabIndex="-1">
+      <div className="modal-dialog modal-dialog-centered ">
         <div className="modal-content">
           <div className="modal-header">
             <h5 className="modal-title">Upload File</h5>

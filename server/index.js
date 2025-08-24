@@ -55,8 +55,8 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       filename: req.file.filename,
       mimetype: req.file.mimetype,
       size: req.file.size,
-      userId, // string for now
-      owner: userId, // make sure this matches a valid User _id
+      userId, 
+      owner: userId, 
       parentFolder: parentFolder || null,
     });
     
@@ -81,11 +81,11 @@ app.get("/files", async (req, res) => {
       query.userId = userId;
     }
 
-    // important: only show files inside the current folder
+    
     if (parentFolder) {
       query.parentFolder = parentFolder;
     } else {
-      query.parentFolder = null; // show only root files when no folder selected
+      query.parentFolder = null; 
     }
 
     const files = await File.find(query).sort({ uploadDate: -1 });
@@ -193,14 +193,66 @@ app.patch("/files/:id/move", async (req, res) => {
 /** SHARE FOLDER */
 app.patch("/folders/:id/share", async (req, res) => {
   try {
-    const { userIds, permission } = req.body;
-    const folder = await Folder.findById(req.params.id);
+    const { emails, permission } = req.body;
 
+    // Resolve emails to users
+    const users = await UserModel.find({ email: { $in: emails } });
+    if (!users.length) {
+      return res.status(404).json({ error: "No matching users found" });
+    }
+
+    const userIds = users.map((u) => u._id);
+
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    // ❌ allow duplicates (just push without filtering)
     folder.sharedWith.push(...userIds);
-    folder.permissions = permission || "read";
+    if (permission) {
+      folder.permissions = permission;
+    }
 
     await folder.save();
+
+    // ✅ return populated emails
+    await folder.populate("sharedWith", "email");
+
     res.json({ status: "success", folder });
+  } catch (err) {
+    res.status(500).json({ status: "error", error: err.message });
+  }
+});
+
+/** SHARE FILE */
+app.patch("/files/:id/share", async (req, res) => {
+  try {
+    const { emails, permission } = req.body;
+
+    const users = await UserModel.find({ email: { $in: emails } });
+    if (!users.length) {
+      return res.status(404).json({ error: "No matching users found" });
+    }
+
+    const userIds = users.map((u) => u._id);
+
+    const file = await File.findById(req.params.id);
+    if (!file) {
+      return res.status(404).json({ error: "File not found" });
+    }
+
+    // not allow duplicates
+    file.sharedWith.push(...userIds);
+
+    if (permission) {
+      file.permissions = permission;
+    }
+
+    await file.save();
+
+    // return populated emails`1
+    await file.populate("sharedWith", "email");
+
+    res.json({ status: "success", file });
   } catch (err) {
     res.status(500).json({ status: "error", error: err.message });
   }
@@ -242,6 +294,22 @@ app.get("/folders/all", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-  
+
+// GET /shared
+app.get("/shared", async (req, res) => {
+  try {
+    const { userId } = req.query;
+
+    // Fetch folders and files where userId is in sharedWith
+    const folders = await Folder.find({ sharedWith: userId }).lean();
+    const files = await File.find({ sharedWith: userId }).lean();
+
+    res.json({ folders, files });
+  } catch (err) {
+    console.error("Error fetching shared items:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 
 app.listen(3001, () => console.log("Server running on port 3001"));
