@@ -1,12 +1,30 @@
 // src/components/Sidebar.jsx
-import React from "react";
-import { FaFolder, FaPlus } from "react-icons/fa";
+import React, { useEffect, useState } from "react";
+import { FaFolder } from "react-icons/fa";
 import { NavLink } from "react-router-dom";
 import "bootstrap/dist/css/bootstrap.min.css";
 
 function Sidebar() {
+  const [userEmail, setUserEmail] = useState("");
+  const email = localStorage.getItem("email"); // Assuming userId is stored in localStorage
+
+  useEffect(() => {
+    // Example: Get email from localStorage (or context if you have one)
+    const email = localStorage.getItem("userEmail") || "guest@example.com";
+    setUserEmail(email);
+  }, []);
+
   return (
     <div className="col-2 bg-white border-end p-3 vh-100">
+      {/* Welcome message */}
+      <div className="mb-3 p-2 bg-light rounded text-center">
+        <small className="text-muted">Welcome</small>
+        <div className="fw-bold text-truncate" style={{ maxWidth: "100%" }}>
+          {email}
+        </div>
+      </div>
+
+      {/* Sidebar Links */}
       <ul className="list-unstyled">
         <li className="mb-2">
           <NavLink
@@ -61,7 +79,6 @@ function Sidebar() {
         </li>
       </ul>
     </div>
-  
   );
 }
 

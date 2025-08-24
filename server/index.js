@@ -137,23 +137,23 @@ app.post("/folders", async (req, res) => {
   }
 });
 
-/** GET FOLDERS */
+// GET /folders
 app.get("/folders", async (req, res) => {
   try {
-    const { userId, role, parentFolder } = req.query;
+    const { userId, parentFolder } = req.query;
 
-    let query = { parentFolder: parentFolder || null };
+    const query = { owner: userId };
+    if (parentFolder) query.parentFolder = parentFolder;
+    else query.parentFolder = null; // root level
 
-    if (role !== "admin" && role !== "superadmin") {
-      query.owner = userId;
-    }
-
-    const folders = await Folder.find(query);
+    const folders = await Folder.find(query).lean();
     res.json(folders);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
+
 
 /** DELETE FOLDER */
 app.delete("/folders/:id", async (req, res) => {
@@ -269,8 +269,12 @@ app.get("/breadcrumbs", async (req, res) => {
 
     while (current) {
       breadcrumbs.unshift({ _id: current._id, name: current.name });
+
       if (!current.parentFolder) break;
-      current = await Folder.findById(current.parentFolder);
+
+      const parent = await Folder.findById(current.parentFolder);
+      if (!parent) break; // stop if parent not found (shared root)
+      current = parent;
     }
 
     res.json(breadcrumbs);
@@ -278,6 +282,7 @@ app.get("/breadcrumbs", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 /** GET ALL FOLDERS (for move modal) */
 app.get("/folders/all", async (req, res) => {
   try {
@@ -298,11 +303,33 @@ app.get("/folders/all", async (req, res) => {
 // GET /shared
 app.get("/shared", async (req, res) => {
   try {
-    const { userId } = req.query;
+    const { userId, folderId } = req.query;
 
-    // Fetch folders and files where userId is in sharedWith
-    const folders = await Folder.find({ sharedWith: userId }).lean();
-    const files = await File.find({ sharedWith: userId }).lean();
+    let folders, files;
+
+    if (folderId) {
+      // Fetch subfolders and files inside the shared folder
+      const currentFolder = await Folder.findOne({ _id: folderId });
+
+      if (!currentFolder) {
+        return res.status(404).json({ error: "Folder not found" });
+      }
+
+      // check if user has access
+      if (
+        !currentFolder.sharedWith.includes(userId) &&
+        currentFolder.owner.toString() !== userId
+      ) {
+        return res.status(403).json({ error: "No access to this folder" });
+      }
+
+      folders = await Folder.find({ parentFolder: folderId }).lean();
+      files = await File.find({ parentFolder: folderId }).lean();
+    } else {
+      // Show all root shared folders
+      folders = await Folder.find({ sharedWith: userId }).lean();
+      files = await File.find({ sharedWith: userId, parentFolder: null }).lean();
+    }
 
     res.json({ folders, files });
   } catch (err) {
@@ -310,6 +337,9 @@ app.get("/shared", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+
+
 
 
 app.listen(3001, () => console.log("Server running on port 3001"));
