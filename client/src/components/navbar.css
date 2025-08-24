@@ -1,50 +1,22 @@
-/* src/components/Navbar.css */
-
-/* Clamp navbar vertical padding (override any global rules) */
-.app-navbar {
-  --bs-navbar-padding-y: 0.25rem;
-  --bs-navbar-padding-x: 0.5rem;
-  padding-top: 0.25rem !important;
-  padding-bottom: 0.25rem !important;
-  margin: 0 !important; /* just in case something adds margins */
+/* Navbar container reset */
+.navbar-container {
+  margin: 0;       /* Remove any outer margin */
+  padding: 0;      /* Remove any outer padding */
 }
 
-/* Keep everything vertically centered */
-.app-navbar .navbar-collapse {
-  align-items: center;
+/* Navbar spacing tweaks */
+.navbar {
+  padding: 0.5rem 1rem;  /* Smaller padding inside the navbar */
 }
 
-/* Logo sizing */
-.app-navbar .brand-logo {
-  height: 32px;       /* smaller = slimmer navbar */
-  display: block;
+/* Form input tweaks */
+.navbar .form-control {
+  height: 35px;           /* Make search input smaller */
+  font-size: 0.9rem;
 }
 
-/* Compact controls inside navbar */
-.app-navbar .form-control {
-  height: 34px;
-  padding-top: 0.25rem;
-  padding-bottom: 0.25rem;
-}
-
-.app-navbar .btn {
-  --bs-btn-padding-y: 0.25rem;
-  --bs-btn-padding-x: 0.5rem;
-  line-height: 1.1;
-}
-
-/* Search takes reasonable width on desktop */
-.app-navbar .nav-search {
-  width: min(680px, 100%);
-}
-
-/* Mobile: stack neatly without adding big vertical gaps */
-@media (max-width: 991.98px) {
-  .app-navbar .navbar-collapse {
-    padding: 0.25rem 0;
-  }
-  .app-navbar .nav-search {
-    width: 100%;
-    margin: 0.5rem 0;
-  }
+/* Action buttons */
+.navbar .btn {
+  height: 35px;
+  padding: 0 0.75rem;
 }

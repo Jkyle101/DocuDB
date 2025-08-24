@@ -23,7 +23,7 @@ export default function ShareModal({ onClose, target }) {
         <div className="modal-header"><h5 className="modal-title">Share {target.type}</h5></div>
         <div className="modal-body">
           <label className="form-label">User emails (comma separated)</label>
-          <input className="form-control mb-3" value={emails} onChange={(e)=>setEmails(e.target.value)} placeholder="user1@acme.com, user2@acme.com" />
+          <input className="form-control mb-3" value={emails} onChange={(e)=>setEmails(e.target.value)} placeholder="delacruz@llcc.edu.ph, delaserna@llcc.edu.ph" />
           <label className="form-label">Permission</label>
           <select className="form-select" value={permission} onChange={(e)=>setPermission(e.target.value)}>
             <option value="read">Read</option>
