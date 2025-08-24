@@ -19,6 +19,7 @@ function Login() {
           localStorage.setItem("isLoggedIn", "true");
           localStorage.setItem("role", result.data.role);   // 🔑 save role
           localStorage.setItem("userId", result.data.userId); // 🔑 save userId
+          localStorage.setItem("email", email); // 🔑 save email
   
           // Redirect based on role
           if (result.data.role === "admin") {
