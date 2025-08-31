@@ -12,37 +12,49 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// static for direct file serving
+// Serve uploaded files
 app.use("/uploads", express.static("uploads"));
 
-// connect to Mongo
-mongoose.connect("mongodb://127.0.0.1:27017/docudb")
-  .then(() => console.log("MongoDB connected"))
-  .catch(err => console.error(err));
+// Connect to MongoDB
+mongoose
+  .connect("mongodb://127.0.0.1:27017/docudb")
+  .then(() => console.log("✅ MongoDB connected"))
+  .catch((err) => console.error("MongoDB error:", err));
 
-// Multer storage
+// Multer storage config
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, "uploads/"),
-  filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
+  filename: (req, file, cb) =>
+    cb(null, Date.now() + path.extname(file.originalname)),
 });
 const upload = multer({ storage });
 
-/** LOGIN */
+/* ========================
+   AUTH
+======================== */
 app.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
     const user = await UserModel.findOne({ email });
 
     if (!user) return res.status(404).json({ error: "No record found" });
-    if (user.password !== password) return res.status(401).json({ error: "The password is incorrect" });
+    if (user.password !== password)
+      return res.status(401).json({ error: "Incorrect password" });
 
-    res.json({ status: "success", role: user.role, userId: user._id.toString() });
+    res.json({
+      status: "success",
+      role: user.role,
+      userId: user._id.toString(),
+    });
   } catch (err) {
     res.status(500).json({ error: "Server error" });
   }
 });
 
-/** UPLOAD FILE */
+/* ========================
+   FILES
+======================== */
+// Upload file
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
@@ -55,11 +67,11 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       filename: req.file.filename,
       mimetype: req.file.mimetype,
       size: req.file.size,
-      userId, 
-      owner: userId, 
+      userId,
+      owner: userId,
       parentFolder: parentFolder || null,
+      uploadDate: new Date(),
     });
-    
 
     await file.save();
     res.json({ success: true, file });
@@ -68,12 +80,11 @@ app.post("/upload", upload.single("file"), async (req, res) => {
   }
 });
 
-/** LIST FILES */
+// List files
 app.get("/files", async (req, res) => {
   try {
     const { userId, role, parentFolder } = req.query;
     let query = {};
-
     const isAdmin = role === "admin" || role === "superadmin";
 
     if (!isAdmin) {
@@ -81,12 +92,7 @@ app.get("/files", async (req, res) => {
       query.userId = userId;
     }
 
-    
-    if (parentFolder) {
-      query.parentFolder = parentFolder;
-    } else {
-      query.parentFolder = null; 
-    }
+    query.parentFolder = parentFolder || null;
 
     const files = await File.find(query).sort({ uploadDate: -1 });
     res.json(files);
@@ -95,7 +101,7 @@ app.get("/files", async (req, res) => {
   }
 });
 
-/** VIEW FILE INLINE */
+// View file inline
 app.get("/view/:filename", async (req, res) => {
   try {
     const doc = await File.findOne({ filename: req.params.filename });
@@ -103,69 +109,23 @@ app.get("/view/:filename", async (req, res) => {
 
     const filePath = path.join(__dirname, "uploads", req.params.filename);
     res.setHeader("Content-Type", doc.mimetype);
-    res.setHeader("Content-Disposition", `inline; filename="${doc.originalName}"`);
+    res.setHeader(
+      "Content-Disposition",
+      `inline; filename="${doc.originalName}"`
+    );
     res.sendFile(filePath);
   } catch (err) {
     res.status(500).send("Server error");
   }
 });
 
-/** DOWNLOAD FILE */
+// Download file
 app.get("/download/:filename", (req, res) => {
   const filePath = path.join(__dirname, "uploads", req.params.filename);
   res.download(filePath);
 });
 
-/** CREATE FOLDER */
-app.post("/folders", async (req, res) => {
-  try {
-    const { name, owner, parentFolder } = req.body;
-    if (!name || !owner) return res.status(400).json({ error: "Missing folder name or owner" });
-
-    const folder = new Folder({
-      name,
-      owner,
-      parentFolder: parentFolder || null,
-      sharedWith: [],
-      permissions: "owner"
-    });
-
-    await folder.save();
-    res.json({ success: true, folder });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /folders
-app.get("/folders", async (req, res) => {
-  try {
-    const { userId, parentFolder } = req.query;
-
-    const query = { owner: userId };
-    if (parentFolder) query.parentFolder = parentFolder;
-    else query.parentFolder = null; // root level
-
-    const folders = await Folder.find(query).lean();
-    res.json(folders);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-
-
-/** DELETE FOLDER */
-app.delete("/folders/:id", async (req, res) => {
-  try {
-    await Folder.findByIdAndDelete(req.params.id);
-    res.json({ status: "success" });
-  } catch (err) {
-    res.status(500).json({ status: "error", error: err.message });
-  }
-});
-
-/** DELETE FILE */
+// Delete file
 app.delete("/files/:id", async (req, res) => {
   try {
     await File.findByIdAndDelete(req.params.id);
@@ -175,7 +135,7 @@ app.delete("/files/:id", async (req, res) => {
   }
 });
 
-/** MOVE FILE TO FOLDER */
+// Move file
 app.patch("/files/:id/move", async (req, res) => {
   try {
     const { newFolderId } = req.body;
@@ -190,66 +150,22 @@ app.patch("/files/:id/move", async (req, res) => {
   }
 });
 
-/** SHARE FOLDER */
-app.patch("/folders/:id/share", async (req, res) => {
-  try {
-    const { emails, permission } = req.body;
-
-    // Resolve emails to users
-    const users = await UserModel.find({ email: { $in: emails } });
-    if (!users.length) {
-      return res.status(404).json({ error: "No matching users found" });
-    }
-
-    const userIds = users.map((u) => u._id);
-
-    const folder = await Folder.findById(req.params.id);
-    if (!folder) return res.status(404).json({ error: "Folder not found" });
-
-    // ❌ allow duplicates (just push without filtering)
-    folder.sharedWith.push(...userIds);
-    if (permission) {
-      folder.permissions = permission;
-    }
-
-    await folder.save();
-
-    // ✅ return populated emails
-    await folder.populate("sharedWith", "email");
-
-    res.json({ status: "success", folder });
-  } catch (err) {
-    res.status(500).json({ status: "error", error: err.message });
-  }
-});
-
-/** SHARE FILE */
+// Share file
 app.patch("/files/:id/share", async (req, res) => {
   try {
     const { emails, permission } = req.body;
-
     const users = await UserModel.find({ email: { $in: emails } });
-    if (!users.length) {
+    if (!users.length)
       return res.status(404).json({ error: "No matching users found" });
-    }
 
     const userIds = users.map((u) => u._id);
-
     const file = await File.findById(req.params.id);
-    if (!file) {
-      return res.status(404).json({ error: "File not found" });
-    }
+    if (!file) return res.status(404).json({ error: "File not found" });
 
-    // not allow duplicates
     file.sharedWith.push(...userIds);
-
-    if (permission) {
-      file.permissions = permission;
-    }
+    if (permission) file.permissions = permission;
 
     await file.save();
-
-    // return populated emails`1
     await file.populate("sharedWith", "email");
 
     res.json({ status: "success", file });
@@ -258,7 +174,94 @@ app.patch("/files/:id/share", async (req, res) => {
   }
 });
 
-/** BREADCRUMBS (for navigation path) */
+/* ========================
+   FOLDERS
+======================== */
+// Create folder
+app.post("/folders", async (req, res) => {
+  try {
+    const { name, owner, parentFolder } = req.body;
+    if (!name || !owner)
+      return res.status(400).json({ error: "Missing folder name or owner" });
+
+    const folder = new Folder({
+      name,
+      owner,
+      parentFolder: parentFolder || null,
+      sharedWith: [],
+      permissions: "owner",
+    });
+
+    await folder.save();
+    res.json({ success: true, folder });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get folders
+app.get("/folders", async (req, res) => {
+  try {
+    const { userId, parentFolder } = req.query;
+    const query = { owner: userId, parentFolder: parentFolder || null };
+    const folders = await Folder.find(query).lean();
+    res.json(folders);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get all folders (for move modal)
+app.get("/folders/all", async (req, res) => {
+  try {
+    const { userId, role } = req.query;
+    let query = {};
+    if (role !== "admin" && role !== "superadmin") query.owner = userId;
+    const folders = await Folder.find(query);
+    res.json(folders);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete folder
+app.delete("/folders/:id", async (req, res) => {
+  try {
+    await Folder.findByIdAndDelete(req.params.id);
+    res.json({ status: "success" });
+  } catch (err) {
+    res.status(500).json({ status: "error", error: err.message });
+  }
+});
+
+// Share folder
+app.patch("/folders/:id/share", async (req, res) => {
+  try {
+    const { emails, permission } = req.body;
+    const users = await UserModel.find({ email: { $in: emails } });
+    if (!users.length)
+      return res.status(404).json({ error: "No matching users found" });
+
+    const userIds = users.map((u) => u._id);
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    folder.sharedWith.push(...userIds);
+    if (permission) folder.permissions = permission;
+
+    await folder.save();
+    await folder.populate("sharedWith", "email");
+
+    res.json({ status: "success", folder });
+  } catch (err) {
+    res.status(500).json({ status: "error", error: err.message });
+  }
+});
+
+/* ========================
+   NAVIGATION / SHARED
+======================== */
+// Breadcrumbs
 app.get("/breadcrumbs", async (req, res) => {
   try {
     const { folderId } = req.query;
@@ -269,12 +272,8 @@ app.get("/breadcrumbs", async (req, res) => {
 
     while (current) {
       breadcrumbs.unshift({ _id: current._id, name: current.name });
-
       if (!current.parentFolder) break;
-
-      const parent = await Folder.findById(current.parentFolder);
-      if (!parent) break; // stop if parent not found (shared root)
-      current = parent;
+      current = await Folder.findById(current.parentFolder);
     }
 
     res.json(breadcrumbs);
@@ -283,39 +282,16 @@ app.get("/breadcrumbs", async (req, res) => {
   }
 });
 
-/** GET ALL FOLDERS (for move modal) */
-app.get("/folders/all", async (req, res) => {
-  try {
-    const { userId, role } = req.query;
-    let query = {};
-
-    if (role !== "admin" && role !== "superadmin") {
-      query.owner = userId;
-    }
-
-    const folders = await Folder.find(query);
-    res.json(folders);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// GET /shared
+// Shared folders/files
 app.get("/shared", async (req, res) => {
   try {
     const { userId, folderId } = req.query;
-
     let folders, files;
 
     if (folderId) {
-      // Fetch subfolders and files inside the shared folder
       const currentFolder = await Folder.findOne({ _id: folderId });
+      if (!currentFolder) return res.status(404).json({ error: "Folder not found" });
 
-      if (!currentFolder) {
-        return res.status(404).json({ error: "Folder not found" });
-      }
-
-      // check if user has access
       if (
         !currentFolder.sharedWith.includes(userId) &&
         currentFolder.owner.toString() !== userId
@@ -326,20 +302,49 @@ app.get("/shared", async (req, res) => {
       folders = await Folder.find({ parentFolder: folderId }).lean();
       files = await File.find({ parentFolder: folderId }).lean();
     } else {
-      // Show all root shared folders
       folders = await Folder.find({ sharedWith: userId }).lean();
       files = await File.find({ sharedWith: userId, parentFolder: null }).lean();
     }
 
     res.json({ folders, files });
   } catch (err) {
-    console.error("Error fetching shared items:", err);
+    console.error("Shared fetch error:", err);
     res.status(500).json({ error: err.message });
   }
 });
 
+/* ========================
+   SEARCH
+======================== */
+app.get("/search", async (req, res) => {
+  try {
+    const { userId, query, type, date } = req.query;
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
 
+    let searchQuery = { userId };
 
+    if (query) {
+      searchQuery.originalName = { $regex: query, $options: "i" };
+    }
+    if (type) {
+      searchQuery.mimetype = { $regex: type, $options: "i" };
+    }
+    if (date) {
+      const start = new Date(date);
+      const end = new Date(date);
+      end.setHours(23, 59, 59, 999);
+      searchQuery.uploadDate = { $gte: start, $lte: end };
+    }
 
+    const results = await File.find(searchQuery).sort({ uploadDate: -1 });
+    res.json(results);
+  } catch (err) {
+    console.error("Search error:", err);
+    res.status(500).json({ error: "Failed to search files" });
+  }
+});
 
-app.listen(3001, () => console.log("Server running on port 3001"));
+/* ========================
+   START SERVER
+======================== */
+app.listen(3001, () => console.log("🚀 Server running on port 3001"));

@@ -1,0 +1,61 @@
+/* Sidebar.css */
+.sidebar {
+    width: 240px;
+    min-height: 100vh;
+    transition: width 0.3s ease, background-color 0.3s ease;
+    border-radius: 12px;
+  }
+  
+  .sidebar.collapsed {
+    width: 80px;
+  }
+  
+  .sidebar.light {
+    background: #fff;
+    color: #333;
+  }
+  
+  .sidebar.dark {
+    background: #1e1e2f;
+    color: #ddd;
+  }
+  
+  .sidebar .toggle-btn {
+    padding: 1rem;
+    cursor: pointer;
+    text-align: right;
+    font-size: 1.2rem;
+  }
+  
+  .sidebar .profile img {
+    width: 40px;
+    height: 40px;
+  }
+  
+  .sidebar .search-input {
+    border-radius: 10px;
+    font-size: 0.9rem;
+  }
+  
+  .sidebar .nav-link {
+    color: inherit;
+    font-weight: 500;
+  }
+  
+  .sidebar .nav-link:hover {
+    background: rgba(0, 0, 0, 0.05);
+  }
+  
+  .sidebar.dark .nav-link:hover {
+    background: rgba(255, 255, 255, 0.1);
+  }
+  
+  .sidebar .nav-link.active {
+    background: #e63946; /* highlight color */
+    color: #fff !important;
+  }
+  
+  .sidebar .theme-toggle {
+    cursor: pointer;
+  }
+  
