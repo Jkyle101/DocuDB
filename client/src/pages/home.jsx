@@ -21,11 +21,14 @@ import {
   FaFileVideo,
 } from "react-icons/fa";
 
+import Navbar from "../components/navbar"; // ✅ keep for now (though Layout handles it)
 import CreateFolderModal from "../components/CreateFolderModal.jsx";
 import MoveModal from "../components/MoveModal";
 import ShareModal from "../components/ShareModal";
 import UploadModal from "../components/UploadModal";
 import "../pages/home.css";
+
+import { useOutletContext } from "react-router-dom"; // ✅ ADDED
 
 const API = "http://localhost:3001";
 
@@ -34,7 +37,6 @@ export default function Home() {
   const role = localStorage.getItem("role") || "user";
 
   const [currentFolderId, setCurrentFolderId] = useState(null);
-  
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
   const [breadcrumbs, setBreadcrumbs] = useState([]);
@@ -45,6 +47,9 @@ export default function Home() {
   const [showUpload, setShowUpload] = useState(false);
   const [moveTarget, setMoveTarget] = useState(null);
   const [shareTarget, setShareTarget] = useState(null);
+
+  // ⬇️ Get search results from Layout (via Outlet context)
+  const { searchResults } = useOutletContext(); // ✅ ADDED
 
   // Fetch folders + files + breadcrumbs
   const fetchFolderContents = async (folderId) => {
@@ -58,7 +63,8 @@ export default function Home() {
     setFiles(filRes.data);
     setBreadcrumbs(bcRes.data);
   };
-  // in Home.jsx
+
+  // Unused? (myFolders/myFiles from your snippet) — keep for now
   const [myFolders, setMyFolders] = useState([]);
   const [myFiles, setMyFiles] = useState([]);
 
@@ -75,6 +81,10 @@ export default function Home() {
   useEffect(() => {
     fetchFolderContents(currentFolder).catch(console.error);
   }, [currentFolder, userId, role]);
+
+  // ✅ remove local search state & handler (now handled by Layout)
+  // const [searchResults, setSearchResults] = useState(null);
+  // const handleSearch = (results) => { setSearchResults(results); };
 
   // File icons
   const iconByMime = useMemo(
@@ -121,6 +131,10 @@ export default function Home() {
     setFiles((s) => s.filter((f) => f._id !== file._id));
   };
 
+  // ✅ Use search results if available, otherwise show normal
+  const visibleFiles = searchResults || files;
+  const visibleFolders = searchResults ? [] : folders;
+
   return (
     <>
       <div className="container-fluid py-3">
@@ -134,12 +148,9 @@ export default function Home() {
               </button>
             )}
             <div className="d-flex align-items-center flex-wrap overflow-auto">
-              {/* Always show the root */}
               <span className="fw-bold me-2">Welcome to DocuDB</span>
-
-              {/* Only render breadcrumbs if currentFolder is not null */}
               {breadcrumbs.length > 1 &&
-                breadcrumbs.slice(1).map((b, index) => (
+                breadcrumbs.slice(1).map((b) => (
                   <span key={b._id} className="d-flex align-items-center">
                     <FaChevronRight className="mx-2 text-muted" />
                     <button
@@ -187,7 +198,7 @@ export default function Home() {
           <>
             {/* Folders */}
             <div className="row g-3 mb-3">
-              {folders.map((folder) => (
+              {visibleFolders.map((folder) => (
                 <div
                   key={folder._id}
                   className="col-6 col-sm-4 col-md-3 col-lg-2"
@@ -234,7 +245,7 @@ export default function Home() {
 
             {/* Files */}
             <div className="row g-3">
-              {files.map((file) => (
+              {visibleFiles.map((file) => (
                 <div
                   key={file._id}
                   className="col-6 col-sm-4 col-md-3 col-lg-2 w-25"
@@ -301,7 +312,7 @@ export default function Home() {
                 </tr>
               </thead>
               <tbody>
-                {folders.map((folder) => (
+                {visibleFolders.map((folder) => (
                   <tr key={folder._id}>
                     <td role="button" onDoubleClick={() => goInto(folder._id)}>
                       <FaFolder className="text-warning me-2" /> {folder.name}
@@ -337,7 +348,7 @@ export default function Home() {
                     </td>
                   </tr>
                 ))}
-                {files.map((file) => (
+                {visibleFiles.map((file) => (
                   <tr key={file._id}>
                     <td>
                       {iconByMime(file.mimetype)}{" "}
@@ -396,18 +407,16 @@ export default function Home() {
         {/* Modals */}
         {showCreate && (
           <>
-            {" "}
             <div className="modal-backdrop fade show"></div>
             <CreateFolderModal
               onClose={() => setShowCreate(false)}
               onCreated={(folder) => setFolders((s) => [folder, ...s])}
               parentFolder={currentFolder}
-            />{" "}
+            />
           </>
         )}
         {showUpload && (
           <>
-            {" "}
             <div className="modal-backdrop fade show"></div>
             <UploadModal
               onClose={() => setShowUpload(false)}
@@ -418,7 +427,6 @@ export default function Home() {
         )}
         {moveTarget && (
           <>
-            {" "}
             <div className="modal-backdrop fade show"></div>
             <MoveModal
               onClose={() => setMoveTarget(null)}
@@ -433,7 +441,6 @@ export default function Home() {
         )}
         {shareTarget && (
           <>
-            {" "}
             <div className="modal-backdrop fade show"></div>
             <ShareModal
               onClose={() => setShareTarget(null)}
@@ -445,3 +452,4 @@ export default function Home() {
     </>
   );
 }
+  
