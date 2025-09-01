@@ -2,44 +2,46 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
-import logo from "../assets/dblogo2.png"
+import logo from "../assets/dblogo2.png";
 
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const navigate = useNavigate();
 
+  // Use backend IP (localhost for dev, server LAN IP for other devices)
+  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
+
   const handleSubmit = (e) => {
     e.preventDefault();
+
     axios
-      .post("http://localhost:3001/login", { email, password })
+      .post(`http://localhost:3001/login`, { email, password })
       .then((result) => {
-        if (result.data.status === "success") {
-          // Save login info
-          localStorage.setItem("isLoggedIn", "true");
-          localStorage.setItem("role", result.data.role);   // 🔑 save role
-          localStorage.setItem("userId", result.data.userId); // 🔑 save userId
-          localStorage.setItem("email", email); // 🔑 save email
-  
-          // Redirect based on role
-          if (result.data.role === "admin") {
-            navigate("/admin");   
-          } else {
-            navigate("/");        
-          }
-        } else {
-          alert(result.data); // "No record Found" or "The password is incorrect"
-        }
+        // Success 200
+        localStorage.setItem("isLoggedIn", "true");
+        localStorage.setItem("role", result.data.role);
+        localStorage.setItem("userId", result.data.userId);
+        localStorage.setItem("email", email);
+
+        if (result.data.role === "admin") navigate("/admin");
+        else navigate("/");
       })
-      .catch((err) => console.log(err));
+      .catch((err) => {
+        if (err.response) {
+          // Backend responded with 4xx/5xx
+          alert(err.response.data.error || "Login failed");
+        } else {
+          // Network or other errors
+          alert("Network error: " + err.message);
+        }
+      });
   };
-  
-  
 
   return (
     <div className="d-flex justify-content-center align-items-center vh-100 bg-light">
       <div className="card p-4 shadow-lg" style={{ width: "350px" }}>
-        <img src={logo} style={{height:""}} />
+        <img src={logo} alt="DocuDB Logo" className="mb-3" />
         <form onSubmit={handleSubmit}>
           <div className="mb-3">
             <label className="form-label">Email address</label>
