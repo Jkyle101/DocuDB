@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 
 import logo from "../assets/docudbllcc.png";
-
+const API = "http://localhost:3001";
 function Navbar() {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
@@ -13,7 +13,7 @@ function Navbar() {
 
   const userId = localStorage.getItem("userId");
 
-  // 🔍 Handle input change with live search
+  //  Handle input change with live search
   const handleInputChange = async (e) => {
     const value = e.target.value;
     setQuery(value);
@@ -78,7 +78,7 @@ function Navbar() {
         </a>
 
         <div className="collapse navbar-collapse" id="navbarContent">
-          {/* 🔍 Search bar */}
+          {/* Search bar */}
           <form
             className="d-flex mx-auto w-75 w-lg-50 position-relative"
             onSubmit={handleSearch}
@@ -96,7 +96,7 @@ function Navbar() {
               <FaSearch />
             </button>
 
-            {/* 📑 Dropdown results */}
+            {/* Dropdown results */}
             {showDropdown && results.length > 0 && (
               <ul
                 className="list-group position-absolute mt-5 shadow-sm"
@@ -114,6 +114,7 @@ function Navbar() {
                     onClick={() => handleResultClick(item)}
                     style={{ cursor: "pointer" }}
                   >
+                    
                     {item.type === "folder" ? (
                       <>
                         <FaFolder size={20} className="text-warning me-2" />
@@ -122,12 +123,21 @@ function Navbar() {
                     ) : (
                       <>
                         <FaFileAlt size={20} className="text-primary me-2" />
-                        {/* ✅ Show originalName instead of filename */}
+                        {/* Show originalName instead of filename */}
                         <span>{item.originalName}</span>
+                        
                       </>
                     )}
+                    <a
+                        className="btn btn-sm btn-outline-success"
+                        href={`${API}/download/${item.originalName}`}
+                      >
+                        Download
+                      </a>
+                    
                   </li>
                 ))}
+                
               </ul>
             )}
           </form>
