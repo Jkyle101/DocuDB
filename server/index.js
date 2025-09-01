@@ -120,9 +120,21 @@ app.get("/view/:filename", async (req, res) => {
 });
 
 // Download file
-app.get("/download/:filename", (req, res) => {
-  const filePath = path.join(__dirname, "uploads", req.params.filename);
-  res.download(filePath);
+app.get("/download/:filename", async (req, res) => {
+  try {
+    const doc = await File.findOne({ filename: req.params.filename });
+    if (!doc) return res.status(404).send("File not found");
+
+    const filePath = path.join(__dirname, "uploads", req.params.filename);
+    
+    // Set the original filename for download
+    res.setHeader('Content-Disposition', `attachment; filename="${doc.originalName}"`);
+    res.setHeader('Content-Type', doc.mimetype);
+    
+    res.download(filePath, doc.originalName);
+  } catch (err) {
+    res.status(500).send("Server error");
+  }
 });
 
 // Delete file
@@ -347,4 +359,5 @@ app.get("/search", async (req, res) => {
 /* ========================
    START SERVER
 ======================== */
-app.listen(3001, () => console.log("🚀 Server running on port 3001"));
+app.listen(3001, "0.0.0.0", () => console.log("🚀 Server running on port 3001"));
+
