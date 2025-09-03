@@ -114,7 +114,6 @@ function Navbar() {
                     onClick={() => handleResultClick(item)}
                     style={{ cursor: "pointer" }}
                   >
-                    
                     {item.type === "folder" ? (
                       <>
                         <FaFolder size={20} className="text-warning me-2" />
@@ -125,19 +124,18 @@ function Navbar() {
                         <FaFileAlt size={20} className="text-primary me-2" />
                         {/* Show originalName instead of filename */}
                         <span>{item.originalName}</span>
-                        
                       </>
                     )}
+                    {/*
                     <a
                         className="btn btn-sm btn-outline-success"
                         href={`${API}/download/${item.originalName}`}
                       >
                         Download
                       </a>
-                    
+                    */}
                   </li>
                 ))}
-                
               </ul>
             )}
           </form>
