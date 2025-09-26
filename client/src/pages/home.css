@@ -42,11 +42,22 @@
 }
 
 .table-container {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
   background: white;
   border-radius: 12px;
-  overflow: hidden;
+  overflow: hidden; /* keep rounded edges */
   box-shadow: 0 2px 8px rgba(0,0,0,0.05);
 }
+
+/* NEW: add scroll wrapper */
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+}
+
+
 
 .context-menu {
   position: fixed;

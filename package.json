@@ -2,6 +2,8 @@
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.2",
     "bcryptjs": "^3.0.2",
+    "crypto": "^1.0.1",
+    "fs": "^0.0.1-security",
     "jsonwebtoken": "^9.0.2"
   }
 }
