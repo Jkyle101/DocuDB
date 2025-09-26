@@ -1,19 +1,29 @@
-import React, { useState } from "react";
-import { FaSearch, FaSignOutAlt, FaFileAlt, FaFolder } from "react-icons/fa";
+import React, { useState, useEffect } from "react";
+import { FaSearch, FaSignOutAlt, FaBars, FaTimes, FaFolder, FaFileAlt } from "react-icons/fa";
 import { useNavigate } from "react-router-dom";
 import axios from "axios";
-
-import logo from "../assets/docudbllcc.png";
+import logo from "../assets/docudbllcc.png"
 const API = "http://localhost:3001";
-function Navbar() {
+
+function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState([]);
   const [showDropdown, setShowDropdown] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
 
   const userId = localStorage.getItem("userId");
 
-  //  Handle input change with live search
+  useEffect(() => { 
+    const handleResize = () => {
+      const mobile = window.innerWidth < 992;
+      setIsMobile(mobile);
+    };
+
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
   const handleInputChange = async (e) => {
     const value = e.target.value;
     setQuery(value);
@@ -21,42 +31,42 @@ function Navbar() {
     if (!value.trim()) {
       setResults([]);
       setShowDropdown(false);
+      if (onSearch) onSearch(null);
       return;
     }
 
     try {
-      const res = await axios.get("http://localhost:3001/search", {
+      const res = await axios.get(`${API}/search`, {
         params: { query: value, userId },
       });
       setResults(res.data);
       setShowDropdown(true);
+      if (onSearch) onSearch(res.data);
     } catch (err) {
       console.error("Search failed:", err);
     }
   };
 
-  // 🔍 Handle manual form submit
   const handleSearch = async (e) => {
     e.preventDefault();
     if (!query.trim()) return;
 
     try {
-      const res = await axios.get("http://localhost:3001/search", {
+      const res = await axios.get(`${API}/search`, {
         params: { query, userId },
       });
       setResults(res.data);
       setShowDropdown(true);
+      if (onSearch) onSearch(res.data);
     } catch (err) {
       console.error("Search failed:", err);
     }
   };
 
-  // 📂 Handle click on search result
   const handleResultClick = (item) => {
     if (item.type === "folder") {
       navigate(`/folder/${item._id}`);
     } else {
-      // Files: open/download link
       if (item.url) {
         window.open(item.url, "_blank");
       }
@@ -65,98 +75,76 @@ function Navbar() {
     setQuery("");
   };
 
+  const handleLogout = () => {
+    localStorage.removeItem("isLoggedIn");
+    navigate("/login");
+  };
+
   return (
-    <div className="navbar-container position-relative">
-      <nav className="navbar navbar-expand-lg navbar-light bg-light shadow-sm">
-        <a className="navbar-brand d-flex align-items-center" href="/">
-          <img
-            src={logo}
-            alt="DocuDB"
-            style={{ height: "50px", marginLeft: "100px" }}
-            className="me-2"
-          />
-        </a>
-
-        <div className="collapse navbar-collapse" id="navbarContent">
-          {/* Search bar */}
-          <form
-            className="d-flex mx-auto w-75 w-lg-50 position-relative"
-            onSubmit={handleSearch}
+    <>
+      <nav className="navbar navbar-expand-lg navbar-dark bg-primary shadow">
+        <div className="container-fluid">
+          <button
+            className="navbar-toggler me-2"
+            type="button"
+            onClick={toggleSidebar}
           >
-            <input
-              className="form-control form-control-sm me-2"
-              type="search"
-              placeholder="Search in Drive"
-              value={query}
-              onChange={handleInputChange}
-              onFocus={() => query && setShowDropdown(true)}
-              onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+            {isSidebarOpen ? <FaTimes /> : <FaBars />}
+          </button>
+          
+          <a className="navbar-brand d-flex align-items-center" href="/">
+            <img
+              src={logo}
+              alt="DocuDB"
+              style={{ height: "40px" }}
+              className="me-2"
             />
-            <button className="btn btn-sm btn-outline-primary" type="submit">
-              <FaSearch />
-            </button>
+            <span className="d-none d-md-inline">DocuDB</span>
+          </a>
 
-            {/* Dropdown results */}
-            {showDropdown && results.length > 0 && (
-              <ul
-                className="list-group position-absolute mt-5 shadow-sm"
-                style={{
-                  width: "100%",
-                  zIndex: 1000,
-                  maxHeight: "250px",
-                  overflowY: "auto",
-                }}
-              >
-                {results.map((item) => (
-                  <li
-                    key={item._id}
-                    className="list-group-item list-group-item-action d-flex align-items-center"
-                    onClick={() => handleResultClick(item)}
-                    style={{ cursor: "pointer" }}
-                  >
-                    
-                    {item.type === "folder" ? (
-                      <>
-                        <FaFolder size={20} className="text-warning me-2" />
-                        <span>{item.name}</span>
-                      </>
-                    ) : (
-                      <>
-                        <FaFileAlt size={20} className="text-primary me-2" />
-                        {/* Show originalName instead of filename */}
-                        <span>{item.originalName}</span>
-                        
-                      </>
-                    )}
-                    <a
-                        className="btn btn-sm btn-outline-success"
-                        href={`${API}/download/${item.originalName}`}
-                      >
-                        Download
-                      </a>
-                    
-                  </li>
-                ))}
-                
-              </ul>
-            )}
-          </form>
-
-          {/* 🚪 Logout */}
-          <div className="d-flex align-items-center ms-lg-3">
-            <button
-              className="btn btn-sm btn-outline-danger d-flex align-items-center"
-              onClick={() => {
-                localStorage.removeItem("isLoggedIn");
-                navigate("/login");
-              }}
+          <div className="navbar-collapse">
+            <form
+              className="d-flex my-2 my-lg-0 mx-lg-auto w-100 w-lg-50 position-relative"
+              onSubmit={handleSearch}
             >
-              <FaSignOutAlt className="me-1" /> Logout
-            </button>
+              <div className="input-group">
+                <input
+                  className="form-control"
+                  type="search"
+                  placeholder="Search in Drive"
+                  value={query}
+                  onChange={handleInputChange}
+                  onFocus={() => query && setShowDropdown(true)}
+                  onBlur={() => setTimeout(() => setShowDropdown(false), 200)}
+                />
+                <button className="btn btn-light" type="submit">
+                  <FaSearch />
+                </button>
+              </div>
+
+            </form>
+
+            <div className="d-flex align-items-center ms-lg-3 mt-2 mt-lg-0">
+              <button
+                className="btn btn-outline-light d-flex align-items-center"
+                onClick={handleLogout}
+              >
+                <FaSignOutAlt className="me-1" /> 
+                <span className="ms-1 d-none d-md-inline">Logout</span>
+              </button>
+            </div>
           </div>
         </div>
       </nav>
-    </div>
+      
+      {/* Mobile overlay when menu is open */}
+      {isSidebarOpen && isMobile && (
+        <div 
+          className="mobile-overlay"
+          onClick={toggleSidebar}
+        ></div>
+      )}
+    </>
   );
 }
 
