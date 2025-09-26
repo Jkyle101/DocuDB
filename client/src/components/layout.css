@@ -1,0 +1,19 @@
+.layout {
+    height: 100vh; /* full viewport height */
+  }
+  
+  /* Sidebar */
+  .sidebar-wrapper {
+    width: 250px;
+    background: #fff;
+    border-right: 1px solid #dee2e6;
+    flex-shrink: 0; /* prevents shrinking */
+  }
+  
+  /* Content */
+  .content-area {
+    background-color: #f8f9fa;
+    display: flex;
+    flex-direction: column;
+  }
+  
