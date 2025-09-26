@@ -336,138 +336,168 @@ export default function Home() {
             ))}
           </div>
         ) : (
+         
           // LIST VIEW
-          <div className="table-container">
-            <table className="table table-hover align-middle">
-              <thead className="table-light">
-                <tr>
-                  <th width="40%">Name</th>
-                  <th width="15%">Type</th>
-                  <th width="15%">Size</th>
-                  <th width="20%">Modified</th>
-                  <th width="10%" className="text-center">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleFolders.map((folder) => (
-                  <tr 
-                    key={folder._id} 
-                    onContextMenu={(e) => handleContextMenu(e, { type: 'folder', data: folder })}
-                    onClick={() => setSelectedItem({ type: 'folder', data: folder })}
-                    className={selectedItem?.data?._id === folder._id ? 'table-active' : ''}
-                  >
-                    <td 
-                      role="button" 
-                      onDoubleClick={() => goInto(folder._id)}
-                      className="d-flex align-items-center"
-                    >
-                      <FaFolder className="text-warning me-2" /> 
-                      <span className="text-truncate">{folder.name}</span>
-                    </td>
-                    <td>Folder</td>
-                    <td>—</td>
-                    <td>{new Date(folder.createdAt).toLocaleDateString()}</td>
-                    <td className="text-center">
-                      <div className="btn-group">
-                        <button
-                          className="btn btn-sm btn-outline-secondary"
-                          onClick={() => goInto(folder._id)}
-                          title="Open"
-                        >
-                          <FaEye />
-                        </button>
-                        <button
-                          className="btn btn-sm btn-outline-secondary"
-                          onClick={() => setMoveTarget({ type: "folder", item: folder })}
-                          title="Move"
-                        >
-                          <FaArrowsAlt />
-                        </button>
-                        <button
-                          className="btn btn-sm btn-outline-secondary"
-                          onClick={() => setShareTarget({ type: "folder", item: folder })}
-                          title="Share"
-                        >
-                          <FaShareAlt />
-                        </button>
-                        <button
-                          className="btn btn-sm btn-outline-danger"
-                          onClick={() => deleteFolder(folder)}
-                          title="Delete"
-                        >
-                          <FaTrash />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-                {visibleFiles.map((file) => (
-                  <tr 
-                    key={file._id}
-                    onContextMenu={(e) => handleContextMenu(e, { type: 'file', data: file })}
-                    onClick={() => setSelectedItem({ type: 'file', data: file })}
-                    className={selectedItem?.data?._id === file._id ? 'table-active' : ''}
-                  >
-                    <td className="d-flex align-items-center">
-                      <span className="me-2">{iconByMime(file.mimetype)}</span>
-                      <span className="text-truncate">{file.originalName}</span>
-                    </td>
-                    <td>{file.mimetype.split('/')[1] || file.mimetype}</td>
-                    <td>{formatFileSize(file.size)}</td>
-                    <td>{new Date(file.uploadDate).toLocaleDateString()}</td>
-                    <td className="text-center">
-                      <div className="btn-group">
-                        <a
-                          className="btn btn-sm btn-outline-primary"
-                          href={`${API}/view/${file.filename}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          title="Preview"
-                        >
-                          <FaEye />
-                        </a>
-                        <a
-                          className="btn btn-sm btn-outline-success"
-                          href={`${API}/download/${file.filename}`}
-                          title="Download"
-                        >
-                          <FaCloudDownloadAlt />
-                        </a>
-                        <button
-                          className="btn btn-sm btn-outline-secondary"
-                          onClick={() => setMoveTarget({ type: "file", item: file })}
-                          title="Move"
-                        >
-                          <FaArrowsAlt />
-                        </button>
-                        <button
-                          className="btn btn-sm btn-outline-secondary"
-                          onClick={() => setShareTarget({ type: "file", item: file })}
-                          title="Share"
-                        >
-                          <FaShareAlt />
-                        </button>
-                        <button
-                          className="btn btn-sm btn-outline-danger"
-                          onClick={() => deleteFile(file)}
-                          title="Delete"
-                        >
-                          <FaTrash />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+<div className="table-container">
+  {/* ✅ Added responsive wrapper */}
+  <div className="table-responsive">
+    <table className="table table-hover align-middle">
+      <thead className="table-light">
+        <tr>
+          <th style={{ minWidth: "280px", whiteSpace: "nowrap" }}>Name</th>
+          <th style={{ minWidth: "180px", whiteSpace: "nowrap" }}>Type</th>
+          <th style={{ minWidth: "120px", whiteSpace: "nowrap" }}>Size</th>
+          <th style={{ minWidth: "180px", whiteSpace: "nowrap" }}>Modified</th>
+          <th
+            style={{ minWidth: "160px", whiteSpace: "nowrap" }}
+            className="text-center"
+          >
+            Actions
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {visibleFolders.map((folder) => (
+          <tr
+            key={folder._id}
+            onContextMenu={(e) =>
+              handleContextMenu(e, { type: "folder", data: folder })
+            }
+            onClick={() =>
+              setSelectedItem({ type: "folder", data: folder })
+            }
+            className={
+              selectedItem?.data?._id === folder._id ? "table-active" : ""
+            }
+          >
+            <td
+              role="button"
+              onDoubleClick={() => goInto(folder._id)}
+              className="d-flex align-items-center"
+            >
+              <FaFolder className="text-warning me-2" />
+              <span className="text-truncate">{folder.name}</span>
+            </td>
+            <td>Folder</td>
+            <td>—</td>
+            <td>{new Date(folder.createdAt).toLocaleDateString()}</td>
+            <td className="text-center">
+              <div className="btn-group">
+                <button
+                  className="btn btn-sm btn-outline-secondary"
+                  onClick={() => goInto(folder._id)}
+                  title="Open"
+                >
+                  <FaEye />
+                </button>
+                <button
+                  className="btn btn-sm btn-outline-secondary"
+                  onClick={() =>
+                    setMoveTarget({ type: "folder", item: folder })
+                  }
+                  title="Move"
+                >
+                  <FaArrowsAlt />
+                </button>
+                <button
+                  className="btn btn-sm btn-outline-secondary"
+                  onClick={() =>
+                    setShareTarget({ type: "folder", item: folder })
+                  }
+                  title="Share"
+                >
+                  <FaShareAlt />
+                </button>
+                <button
+                  className="btn btn-sm btn-outline-danger"
+                  onClick={() => deleteFolder(folder)}
+                  title="Delete"
+                >
+                  <FaTrash />
+                </button>
+              </div>
+            </td>
+          </tr>
+        ))}
+        {visibleFiles.map((file) => (
+          <tr
+            key={file._id}
+            onContextMenu={(e) =>
+              handleContextMenu(e, { type: "file", data: file })
+            }
+            onClick={() =>
+              setSelectedItem({ type: "file", data: file })
+            }
+            className={
+              selectedItem?.data?._id === file._id ? "table-active" : ""
+            }
+          >
+            <td className="d-flex align-items-center">
+              <span className="me-2">{iconByMime(file.mimetype)}</span>
+              <span className="text-truncate">{file.originalName}</span>
+            </td>
+            <td>{file.mimetype.split("/")[1] || file.mimetype}</td>
+            <td>{formatFileSize(file.size)}</td>
+            <td>{new Date(file.uploadDate).toLocaleDateString()}</td>
+            <td className="text-center">
+              <div className="btn-group">
+                <a
+                  className="btn btn-sm btn-outline-primary"
+                  href={`${API}/view/${file.filename}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Preview"
+                >
+                  <FaEye />
+                </a>
+                <a
+                  className="btn btn-sm btn-outline-success"
+                  href={`${API}/download/${file.filename}`}
+                  title="Download"
+                >
+                  <FaCloudDownloadAlt />
+                </a>
+                <button
+                  className="btn btn-sm btn-outline-secondary"
+                  onClick={() =>
+                    setMoveTarget({ type: "file", item: file })
+                  }
+                  title="Move"
+                >
+                  <FaArrowsAlt />
+                </button>
+                <button
+                  className="btn btn-sm btn-outline-secondary"
+                  onClick={() =>
+                    setShareTarget({ type: "file", item: file })
+                  }
+                  title="Share"
+                >
+                  <FaShareAlt />
+                </button>
+                <button
+                  className="btn btn-sm btn-outline-danger"
+                  onClick={() => deleteFile(file)}
+                  title="Delete"
+                >
+                  <FaTrash />
+                </button>
+              </div>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+</div>
+
         )}
 
         {/* Empty State */}
         {visibleFolders.length === 0 && visibleFiles.length === 0 && (
           <div className="text-center py-5 empty-state">
             <FaFolder className="text-muted mb-3" size={48} />
-            <h5 className="text-muted">This folder is empty</h5>
+            <h5 className="text-muted">This is empty</h5>
             <p className="text-muted">Upload files or create a new folder to get started</p>
             <button
               className="btn btn-primary me-2"
