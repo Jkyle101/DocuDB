@@ -15,6 +15,8 @@ const FileSchema = new mongoose.Schema({
 
   sharedWith: [{ type: mongoose.Schema.Types.ObjectId, ref: "users" }],
   permissions: { type: String, enum: ["read", "write", "owner"], default: "owner" },
+  deletedAt: { type: Date, default: null },
+
 });
 
 module.exports = mongoose.model("File", FileSchema);
