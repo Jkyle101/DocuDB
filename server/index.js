@@ -84,17 +84,19 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 app.get("/files", async (req, res) => {
   try {
     const { userId, role, parentFolder } = req.query;
-    let query = {};
+    let query = { deletedAt: null }; // exclude trashed files
     const isAdmin = role === "admin" || role === "superadmin";
 
     if (!isAdmin) {
       if (!userId) return res.status(400).json({ error: "Missing userId" });
       query.userId = userId;
     }
+    if (parentFolder) query.parentFolder = parentFolder;
+    else query.parentFolder = null;
 
-    query.parentFolder = parentFolder || null;
-
-    const files = await File.find(query).sort({ uploadDate: -1 });
+    const files = await File.find(query)
+      .populate("owner", "email")
+      .sort({ uploadDate: -1 });
     res.json(files);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch files" });
@@ -126,22 +128,28 @@ app.get("/download/:filename", async (req, res) => {
     if (!doc) return res.status(404).send("File not found");
 
     const filePath = path.join(__dirname, "uploads", req.params.filename);
-    
-    // Set the original filename for download
-    res.setHeader('Content-Disposition', `attachment; filename="${doc.originalName}"`);
-    res.setHeader('Content-Type', doc.mimetype);
-    
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${doc.originalName}"`
+    );
+    res.setHeader("Content-Type", doc.mimetype);
+
     res.download(filePath, doc.originalName);
   } catch (err) {
     res.status(500).send("Server error");
   }
 });
 
-// Delete file
+// Soft delete file → moves to Trash
 app.delete("/files/:id", async (req, res) => {
   try {
-    await File.findByIdAndDelete(req.params.id);
-    res.json({ status: "success" });
+    const file = await File.findByIdAndUpdate(
+      req.params.id,
+      { deletedAt: new Date() },
+      { new: true }
+    );
+    if (!file) return res.status(404).json({ error: "File not found" });
+    res.json({ status: "moved-to-trash", file });
   } catch (err) {
     res.status(500).json({ status: "error", error: err.message });
   }
@@ -214,9 +222,21 @@ app.post("/folders", async (req, res) => {
 // Get folders
 app.get("/folders", async (req, res) => {
   try {
-    const { userId, parentFolder } = req.query;
-    const query = { owner: userId, parentFolder: parentFolder || null };
-    const folders = await Folder.find(query).lean();
+    const { userId, role, parentFolder } = req.query;
+    let query = { deletedAt: null };
+
+    if (parentFolder) query.parentFolder = parentFolder;
+    else query.parentFolder = null;
+
+    if (role === "admin" || role === "superadmin") {
+      const folders = await Folder.find(query).populate("owner", "email");
+      return res.json(folders);
+    }
+
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    query.owner = userId;
+
+    const folders = await Folder.find(query).populate("owner", "email");
     res.json(folders);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -227,7 +247,7 @@ app.get("/folders", async (req, res) => {
 app.get("/folders/all", async (req, res) => {
   try {
     const { userId, role } = req.query;
-    let query = {};
+    let query = { deletedAt: null };
     if (role !== "admin" && role !== "superadmin") query.owner = userId;
     const folders = await Folder.find(query);
     res.json(folders);
@@ -236,11 +256,16 @@ app.get("/folders/all", async (req, res) => {
   }
 });
 
-// Delete folder
+// Soft delete folder → moves to Trash
 app.delete("/folders/:id", async (req, res) => {
   try {
-    await Folder.findByIdAndDelete(req.params.id);
-    res.json({ status: "success" });
+    const folder = await Folder.findByIdAndUpdate(
+      req.params.id,
+      { deletedAt: new Date() },
+      { new: true }
+    );
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+    res.json({ status: "moved-to-trash", folder });
   } catch (err) {
     res.status(500).json({ status: "error", error: err.message });
   }
@@ -273,7 +298,6 @@ app.patch("/folders/:id/share", async (req, res) => {
 /* ========================
    NAVIGATION / SHARED
 ======================== */
-// Breadcrumbs
 app.get("/breadcrumbs", async (req, res) => {
   try {
     const { folderId } = req.query;
@@ -294,7 +318,6 @@ app.get("/breadcrumbs", async (req, res) => {
   }
 });
 
-// Shared folders/files
 app.get("/shared", async (req, res) => {
   try {
     const { userId, folderId } = req.query;
@@ -311,11 +334,11 @@ app.get("/shared", async (req, res) => {
         return res.status(403).json({ error: "No access to this folder" });
       }
 
-      folders = await Folder.find({ parentFolder: folderId }).lean();
-      files = await File.find({ parentFolder: folderId }).lean();
+      folders = await Folder.find({ parentFolder: folderId, deletedAt: null }).lean();
+      files = await File.find({ parentFolder: folderId, deletedAt: null }).lean();
     } else {
-      folders = await Folder.find({ sharedWith: userId }).lean();
-      files = await File.find({ sharedWith: userId, parentFolder: null }).lean();
+      folders = await Folder.find({ sharedWith: userId, deletedAt: null }).lean();
+      files = await File.find({ sharedWith: userId, parentFolder: null, deletedAt: null }).lean();
     }
 
     res.json({ folders, files });
@@ -333,14 +356,10 @@ app.get("/search", async (req, res) => {
     const { userId, query, type, date } = req.query;
     if (!userId) return res.status(400).json({ error: "Missing userId" });
 
-    let searchQuery = { userId };
+    let searchQuery = { userId, deletedAt: null };
 
-    if (query) {
-      searchQuery.originalName = { $regex: query, $options: "i" };
-    }
-    if (type) {
-      searchQuery.mimetype = { $regex: type, $options: "i" };
-    }
+    if (query) searchQuery.originalName = { $regex: query, $options: "i" };
+    if (type) searchQuery.mimetype = { $regex: type, $options: "i" };
     if (date) {
       const start = new Date(date);
       const end = new Date(date);
@@ -357,7 +376,83 @@ app.get("/search", async (req, res) => {
 });
 
 /* ========================
+   TRASH MANAGEMENT
+======================== */
+app.get("/trash", async (req, res) => {
+  try {
+    const { userId, role } = req.query;
+    let fileQuery = { deletedAt: { $ne: null } };
+    let folderQuery = { deletedAt: { $ne: null } };
+
+    if (role !== "admin" && role !== "superadmin") {
+      fileQuery.userId = userId;
+      folderQuery.owner = userId;
+    }
+
+    const files = await File.find(fileQuery).sort({ deletedAt: -1 });
+    const folders = await Folder.find(folderQuery).sort({ deletedAt: -1 });
+
+    res.json({ files, folders });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch trash" });
+  }
+});
+
+// Restore file
+app.patch("/trash/files/:id/restore", async (req, res) => {
+  try {
+    const file = await File.findByIdAndUpdate(
+      req.params.id,
+      { deletedAt: null },
+      { new: true }
+    );
+    if (!file) return res.status(404).json({ error: "File not found" });
+    res.json({ status: "restored", file });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Restore folder
+app.patch("/trash/folders/:id/restore", async (req, res) => {
+  try {
+    const folder = await Folder.findByIdAndUpdate(
+      req.params.id,
+      { deletedAt: null },
+      { new: true }
+    );
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+    res.json({ status: "restored", folder });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Permanently delete file
+app.delete("/trash/files/:id", async (req, res) => {
+  try {
+    const file = await File.findByIdAndDelete(req.params.id);
+    if (!file) return res.status(404).json({ error: "File not found" });
+    res.json({ status: "permanently-deleted", file });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Permanently delete folder
+app.delete("/trash/folders/:id", async (req, res) => {
+  try {
+    const folder = await Folder.findByIdAndDelete(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+    res.json({ status: "permanently-deleted", folder });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ========================
    START SERVER
 ======================== */
-app.listen(3001, "0.0.0.0", () => console.log("🚀 Server running on port 3001"));
-
+app.listen(3001, "0.0.0.0", () =>
+  console.log("🚀 Server running on port 3001")
+);
