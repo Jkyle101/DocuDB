@@ -7,6 +7,8 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/layout";
 import Upload from "./pages/upload"; // upload page
 import Shared from "./pages/shared"; // shared page
+import Recent from "./pages/recent"; // recent page
+import Trash from "./pages/trash"; // trash page
 
 function App() {
   return (
@@ -25,7 +27,31 @@ function App() {
             </ProtectedRoute>
           }
         >
+          
           <Route index element={<Shared />} />
+          </Route>
+
+          <Route
+          path="/trash"
+          element={
+            <ProtectedRoute allowedRole="user">
+              <Layout role="user" />
+            </ProtectedRoute>
+          }
+        >
+          
+          <Route index element={<Trash />} />
+          </Route>
+
+          <Route
+          path="/recent"
+          element={
+            <ProtectedRoute allowedRole="user">
+              <Layout role="user" />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<Recent />} />
           </Route>
 
 

@@ -70,6 +70,8 @@ function Login() {
           <button type="submit" className="btn btn-primary w-100">
             Login
           </button>
+
+          <h1 className="foter">version 0.0.10 | Made Prodly by LLCC Students</h1>
         </form>
       </div>
     </div>
