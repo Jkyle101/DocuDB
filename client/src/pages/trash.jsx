@@ -17,8 +17,8 @@ import {
   FaTrashRestore,
   FaTimes,
 } from "react-icons/fa";
+import { BACKEND_URL } from "../config";
 
-const API = "http://localhost:3001";
 
 export default function Trash() {
   const userId = localStorage.getItem("userId");
@@ -31,7 +31,7 @@ export default function Trash() {
   // Fetch trash contents
   const fetchTrash = async () => {
     try {
-      const res = await axios.get(`${API}/trash`, {
+      const res = await axios.get(`${BACKEND_URL}/trash`, {
         params: { userId, role },
       });
       setFiles(res.data.files || []);
@@ -78,7 +78,7 @@ export default function Trash() {
   // Restore file/folder
   const restoreItem = async (type, id) => {
     try {
-      await axios.patch(`${API}/trash/${type}/${id}/restore`);
+      await axios.patch(`${BACKEND_URL}/trash/${type}/${id}/restore`);
       fetchTrash();
     } catch (err) {
       console.error("Failed to restore:", err);
@@ -90,7 +90,7 @@ export default function Trash() {
     if (!window.confirm("This will permanently delete the item. Continue?"))
       return;
     try {
-      await axios.delete(`${API}/trash/${type}/${id}`);
+      await axios.delete(`${BACKEND_URL}/trash/${type}/${id}`);
       fetchTrash();
     } catch (err) {
       console.error("Failed to permanently delete:", err);

@@ -20,7 +20,7 @@ import {
   FaTrash,
 } from "react-icons/fa";
 
-const API = "http://localhost:3001";
+import { BACKEND_URL } from "../config";
 
 export default function AdminHome() {
   const role = "admin"; // always admin
@@ -36,9 +36,9 @@ export default function AdminHome() {
       const params = { role, parentFolder: folderId || "" };
 
       const [fdrRes, filRes, bcRes] = await Promise.all([
-        axios.get(`${API}/folders`, { params }),
-        axios.get(`${API}/files`, { params }),
-        axios.get(`${API}/breadcrumbs`, { params: { folderId } }),
+        axios.get(`${BACKEND_URL}/folders`, { params }),
+        axios.get(`${BACKEND_URL}/files`, { params }),
+        axios.get(`${BACKEND_URL}/breadcrumbs`, { params: { folderId } }),
       ]);
 
       setFolders(fdrRes.data);
@@ -86,13 +86,13 @@ export default function AdminHome() {
   const deleteFolder = async (folder) => {
     if (!window.confirm(`Delete folder "${folder.name}" and its contents?`))
       return;
-    await axios.delete(`${API}/folders/${folder._id}`, { params: { role } });
+    await axios.delete(`${BACKEND_URL}/folders/${folder._id}`, { params: { role } });
     setFolders((s) => s.filter((f) => f._id !== folder._id));
   };
 
   const deleteFile = async (file) => {
     if (!window.confirm(`Delete file "${file.originalName}"?`)) return;
-    await axios.delete(`${API}/files/${file._id}`, { params: { role } });
+    await axios.delete(`${BACKEND_URL}/files/${file._id}`, { params: { role } });
     setFiles((s) => s.filter((f) => f._id !== file._id));
   };
 
@@ -195,7 +195,7 @@ export default function AdminHome() {
                 <div className="btn-group w-100">
                   <a
                     className="btn btn-sm btn-outline-primary"
-                    href={`${API}/view/${file.filename}`}
+                    href={`${BACKEND_URL}/view/${file.filename}`}
                     target="_blank"
                     rel="noreferrer"
                   >
@@ -203,7 +203,7 @@ export default function AdminHome() {
                   </a>
                   <a
                     className="btn btn-sm btn-outline-success"
-                    href={`${API}/download/${file.filename}`}
+                    href={`${BACKEND_URL}/download/${file.filename}`}
                   >
                     <FaCloudDownloadAlt />
                   </a>
@@ -266,7 +266,7 @@ export default function AdminHome() {
                     <div className="btn-group">
                       <a
                         className="btn btn-sm btn-outline-primary"
-                        href={`${API}/view/${file.filename}`}
+                        href={`${BACKEND_URL}/view/${file.filename}`}
                         target="_blank"
                         rel="noreferrer"
                       >
@@ -274,7 +274,7 @@ export default function AdminHome() {
                       </a>
                       <a
                         className="btn btn-sm btn-outline-success"
-                        href={`${API}/download/${file.filename}`}
+                        href={`${BACKEND_URL}/download/${file.filename}`}
                       >
                         <FaCloudDownloadAlt />
                       </a>

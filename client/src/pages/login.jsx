@@ -16,7 +16,7 @@ function Login() {
     e.preventDefault();
 
     axios
-      .post(`http://localhost:3001/login`, { email, password })
+    .post(`${BACKEND_URL}/login`, { email, password })
       .then((result) => {
         // Success 200
         localStorage.setItem("isLoggedIn", "true");

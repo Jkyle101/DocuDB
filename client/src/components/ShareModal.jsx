@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import axios from "axios";
-const API = "http://localhost:3001";
+import { BACKEND_URL } from "../config";
+
 
 export default function ShareModal({ onClose, target }) {
   const [emails, setEmails] = useState(""); // comma separated emails
@@ -16,9 +17,9 @@ export default function ShareModal({ onClose, target }) {
       permission,
     };
     if (target.type === "file") {
-      await axios.patch(`${API}/files/${target.item._id}/share`, body);
+      await axios.patch(`${BACKEND_URL}/files/${target.item._id}/share`, body);
     } else {
-      await axios.patch(`${API}/folders/${target.item._id}/share`, body);
+      await axios.patch(`${BACKEND_URL}/folders/${target.item._id}/share`, body);
     }
     onClose();
   };
