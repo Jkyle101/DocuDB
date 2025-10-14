@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import axios from "axios";
+import { BACKEND_URL } from "../config";
 
-const API = "http://localhost:3001";
 
 export default function UploadModal({ onClose, onUploaded, parentFolder }) {
   const [file, setFile] = useState(null);
@@ -20,7 +20,7 @@ export default function UploadModal({ onClose, onUploaded, parentFolder }) {
       formData.append("role", localStorage.getItem("role")); // optional
       if (parentFolder) formData.append("parentFolder", parentFolder);
 
-      const { data } = await axios.post(`${API}/upload`, formData, {
+      const { data } = await axios.post(`${BACKEND_URL}/upload`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
 

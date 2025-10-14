@@ -7,11 +7,12 @@ import {
   FaDatabase,
   FaClock,
   FaUser,
+  FaFile,
 } from "react-icons/fa";
 import Upload from "../pages/upload";
 import "bootstrap/dist/css/bootstrap.min.css";
-
-function SidebarSuperAdmin() {
+import "./sidebar.css";
+function SidebarSuperAdmin() {  
   const [showUpload, setShowUpload] = useState(false);
   const [userEmail, setUserEmail] = useState("");
 
@@ -42,10 +43,10 @@ function SidebarSuperAdmin() {
           <ul className="nav nav-pills flex-column gap-2">
             <li className="nav-item">
               <NavLink
-                to="/admin/drive"
+                to="/admin/manageusers"
                 className={({ isActive }) =>
                   `nav-link d-flex align-items-center rounded ${
-                    isActive ? "active bg-primary text-white" : "text-dark"
+                    isActive ? "bg-primary text-white" : "text-dark"
                   }`
                 }
               >
@@ -56,10 +57,10 @@ function SidebarSuperAdmin() {
 
             <li className="nav-item">
               <NavLink
-                to="/admin/shared"
+                to="/admin/systemlogs"
                 className={({ isActive }) =>
                   `nav-link d-flex align-items-center rounded ${
-                    isActive ? "active bg-primary text-white" : "text-dark"
+                    isActive ? "bg-primary text-white" : "text-dark"
                   }`
                 }
               >
@@ -70,15 +71,15 @@ function SidebarSuperAdmin() {
 
             <li className="nav-item">
               <NavLink
-                to="/admin/recent"
+                to="/admin/"
                 className={({ isActive }) =>
                   `nav-link d-flex align-items-center rounded ${
-                    isActive ? "active bg-primary text-white" : "text-dark"
+                    isActive ? "bg-primary text-white" : "text-dark"
                   }`
                 }
               >
-                <FaClock className="me-2" />
-                Recent
+                <FaFile className="me-2" />
+                Documents
               </NavLink>
             </li>
 
@@ -87,7 +88,7 @@ function SidebarSuperAdmin() {
                 to="/admin/trash"
                 className={({ isActive }) =>
                   `nav-link d-flex align-items-center rounded ${
-                    isActive ? "active bg-primary text-white" : "text-dark"
+                    isActive ? "bg-primary text-white" : "text-dark"
                   }`
                 }
               >

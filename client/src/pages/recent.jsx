@@ -20,10 +20,11 @@ import {
   FaTrash,
 } from "react-icons/fa";
 
+import { BACKEND_URL } from "../config";
 import MoveModal from "../components/MoveModal";
 import ShareModal from "../components/ShareModal";
 
-const API = "http://localhost:3001";
+
 
 export default function Recent() {
   const [files, setFiles] = useState([]);
@@ -40,7 +41,7 @@ export default function Recent() {
   useEffect(() => {
     const fetchRecent = async () => {
       try {
-        const res = await axios.get(`${API}/files`, { params: { role: "admin" } });
+        const res = await axios.get(`${BACKEND_URL}/files`, { params: { role: "admin" } });
         setFiles(res.data);
       } catch (err) {
         console.error("Failed to fetch recent files:", err);
@@ -87,7 +88,7 @@ export default function Recent() {
   // Delete file
   const deleteFile = async (file) => {
     if (!window.confirm(`Delete file "${file.originalName}"?`)) return;
-    await axios.delete(`${API}/files/${file._id}`, { params: { role: "admin" } });
+    await axios.delete(`${BACKEND_URL}/files/${file._id}`, { params: { role: "admin" } });
     setFiles((s) => s.filter((f) => f._id !== file._id));
   };
 
@@ -273,10 +274,10 @@ export default function Recent() {
             <FaFileAlt className="text-primary me-2" /> {contextMenu.item.data.originalName}
           </div>
           <div className="context-menu-divider"></div>
-          <a className="context-menu-item" href={`${API}/view/${contextMenu.item.data.filename}`} target="_blank" rel="noreferrer">
+          <a className="context-menu-item" href={`${BACKEND_URL}/view/${contextMenu.item.data.filename}`} target="_blank" rel="noreferrer">
             <FaEye className="me-2" /> Preview
           </a>
-          <a className="context-menu-item" href={`${API}/download/${contextMenu.item.data.filename}`}>
+          <a className="context-menu-item" href={`${BACKEND_URL}/download/${contextMenu.item.data.filename}`}>
             <FaCloudDownloadAlt className="me-2" /> Download
           </a>
           <button className="context-menu-item" onClick={() => setMoveTarget({ type: "file", item: contextMenu.item.data })}>

@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
@@ -8,6 +10,10 @@ const UserModel = require("./models/users");
 const File = require("./models/file");
 const Folder = require("./models/folder");
 
+// NEW: logs model
+const Log = require("./models/logs");
+const { timeStamp } = require("console");
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -15,12 +21,49 @@ app.use(express.json());
 // Serve uploaded files
 app.use("/uploads", express.static("uploads"));
 
-// Connect to MongoDB
-mongoose
-  .connect("mongodb://127.0.0.1:27017/docudb")
-  .then(() => console.log("✅ MongoDB connected"))
-  .catch((err) => console.error("MongoDB error:", err));
+/* ========================
+   LOGGING HELPER (non-destructive)
+   - creates a Log document; failures are only logged to console
+======================== */
+async function createLog(action, userId = null, details = "") {
+  try {
+    await Log.create({
+      user: userId,
+      action,
+      details: details || action,
+      timeStamp: new Date(),
+    });
+  } catch (err) {
+    // don't throw — just record to console so we don't break endpoints
+    console.error("createLog error:", err && err.message ? err.message : err);
+  }
+}
 
+/* ========================
+   MONGODB
+======================== */
+mongoose
+  .connect(process.env.MONGO_URI)
+  .then(() => {
+    console.log("✅ MongoDB connected");
+    createLog("SYSTEM", null, "MongoDB connected");
+  })
+  .catch((err) => {
+    console.error("MongoDB error:", err);
+    createLog("SYSTEM_ERROR", null, `MongoDB connection error: ${err.message || err}`);
+  });
+
+mongoose.connection.on("disconnected", () => {
+  console.warn("⚠️ MongoDB disconnected");
+  createLog("SYSTEM", null, "MongoDB disconnected");
+});
+
+const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || "0.0.0.0";
+
+/* ========================
+   MULTER
+======================== */
 // Multer storage config
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, "uploads/"),
@@ -40,6 +83,13 @@ app.post("/login", async (req, res) => {
     if (!user) return res.status(404).json({ error: "No record found" });
     if (user.password !== password)
       return res.status(401).json({ error: "Incorrect password" });
+
+    // NEW: log login
+    try {
+      await createLog("LOGIN", user._id, `${email} logged in`);
+    } catch (e) {
+      console.error("Login log failed:", e);
+    }
 
     res.json({
       status: "success",
@@ -74,6 +124,10 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     });
 
     await file.save();
+
+    // NEW: log upload
+    createLog("UPLOAD", userId, `Uploaded ${req.file.originalname}`);
+
     res.json({ success: true, file });
   } catch (err) {
     res.status(500).json({ error: "Upload failed" });
@@ -149,6 +203,10 @@ app.delete("/files/:id", async (req, res) => {
       { new: true }
     );
     if (!file) return res.status(404).json({ error: "File not found" });
+
+    // NEW: log soft delete
+    createLog("DELETE_FILE", file.owner, `Moved to trash: ${file.originalName}`);
+
     res.json({ status: "moved-to-trash", file });
   } catch (err) {
     res.status(500).json({ status: "error", error: err.message });
@@ -164,6 +222,8 @@ app.patch("/files/:id/move", async (req, res) => {
       { parentFolder: newFolderId },
       { new: true }
     );
+    // NEW: log move
+    if (file) createLog("MOVE_FILE", file.owner, `Moved ${file.originalName} to folder ${newFolderId}`);
     res.json({ status: "success", file });
   } catch (err) {
     res.status(500).json({ status: "error", error: err.message });
@@ -187,6 +247,9 @@ app.patch("/files/:id/share", async (req, res) => {
 
     await file.save();
     await file.populate("sharedWith", "email");
+
+    // NEW: log share
+    createLog("SHARE_FILE", file.owner, `Shared ${file.originalName} with ${emails.join(", ")}`);
 
     res.json({ status: "success", file });
   } catch (err) {
@@ -213,6 +276,10 @@ app.post("/folders", async (req, res) => {
     });
 
     await folder.save();
+
+    // NEW: log folder creation
+    createLog("CREATE_FOLDER", owner, `Created folder ${name}`);
+
     res.json({ success: true, folder });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -265,6 +332,10 @@ app.delete("/folders/:id", async (req, res) => {
       { new: true }
     );
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    // NEW: log folder soft delete
+    createLog("DELETE_FOLDER", folder.owner, `Moved to trash: ${folder.name}`);
+
     res.json({ status: "moved-to-trash", folder });
   } catch (err) {
     res.status(500).json({ status: "error", error: err.message });
@@ -288,6 +359,9 @@ app.patch("/folders/:id/share", async (req, res) => {
 
     await folder.save();
     await folder.populate("sharedWith", "email");
+
+    // NEW: log folder share
+    createLog("SHARE_FOLDER", folder.owner, `Shared folder ${folder.name} with ${emails.join(", ")}`);
 
     res.json({ status: "success", folder });
   } catch (err) {
@@ -407,6 +481,10 @@ app.patch("/trash/files/:id/restore", async (req, res) => {
       { new: true }
     );
     if (!file) return res.status(404).json({ error: "File not found" });
+
+    // NEW: log restore
+    createLog("RESTORE_FILE", file.owner, `Restored ${file.originalName}`);
+
     res.json({ status: "restored", file });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -422,6 +500,10 @@ app.patch("/trash/folders/:id/restore", async (req, res) => {
       { new: true }
     );
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    // NEW: log restore folder
+    createLog("RESTORE_FOLDER", folder.owner, `Restored folder ${folder.name}`);
+
     res.json({ status: "restored", folder });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -433,6 +515,10 @@ app.delete("/trash/files/:id", async (req, res) => {
   try {
     const file = await File.findByIdAndDelete(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
+
+    // NEW: log permanent delete
+    createLog("PERMANENT_DELETE_FILE", file.owner, `Permanently deleted ${file.originalName}`);
+
     res.json({ status: "permanently-deleted", file });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -444,6 +530,10 @@ app.delete("/trash/folders/:id", async (req, res) => {
   try {
     const folder = await Folder.findByIdAndDelete(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    // NEW: log permanent delete folder
+    createLog("PERMANENT_DELETE_FOLDER", folder.owner, `Permanently deleted folder ${folder.name}`);
+
     res.json({ status: "permanently-deleted", folder });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -451,8 +541,128 @@ app.delete("/trash/folders/:id", async (req, res) => {
 });
 
 /* ========================
+   USER MANAGEMENT
+======================== */
+
+// Get all users
+app.get("/users", async (req, res) => {
+  try {
+    const users = await UserModel.find().sort({ createdAt: -1 }).lean();
+    res.json(users);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+// Delete user
+app.delete("/users/:id", async (req, res) => {
+  try {
+    const user = await UserModel.findByIdAndDelete(req.params.id);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // NEW: log user deletion
+    createLog("DELETE_USER", user._id, `Deleted user ${user.email || user._id}`);
+
+    res.json({ status: "deleted", user });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete user" });
+  }
+});
+
+// Update user role (admin, superadmin, user, etc.)
+app.patch("/users/:id/role", async (req, res) => {
+  try {
+    const { role } = req.body;
+    const user = await UserModel.findByIdAndUpdate(
+      req.params.id,
+      { role },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // NEW: log role update
+    createLog("UPDATE_ROLE", user._id, `Role changed to ${role}`);
+
+    res.json({ status: "updated", user });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update role" });
+  }
+});
+
+//logs (NEW endpoint)
+app.get("/logs", async (req, res) => {
+  try {
+    const logs = await Log.find()
+      .populate("user", "email role")
+      .sort({ timeStamp: -1 })
+      .limit(100);
+    res.json(logs);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch logs" });
+  }
+});
+
+// Toggle user active/inactive
+app.patch("/users/:id/status", async (req, res) => {
+  try {
+    const { active } = req.body;
+    const user = await UserModel.findByIdAndUpdate(
+      req.params.id,
+      { active },
+      { new: true }
+    );
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // NEW: log status change
+    createLog("UPDATE_STATUS", user._id, `Status changed to ${active}`);
+
+    res.json({ status: "updated", user });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update status" });
+  }
+});
+
+app.get("/stats", async (req, res) => {
+  try {
+    const totalUsers = await UserModel.countDocuments();
+    const totalFiles = await File.countDocuments({ deletedAt: null });
+    const totalFolders = await Folder.countDocuments({ deletedAt: null });
+
+    // Group uploads by date (last 7 days)
+    const uploadsPerDay = await File.aggregate([
+      { $match: { deletedAt: null } },
+      {
+        $group: {
+          _id: { $dateToString: { format: "%Y-%m-%d", date: "$uploadDate" } },
+          uploads: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+    const uploadsData = uploadsPerDay.map(u => ({ date: u._id, uploads: u.uploads }));
+
+    // Count actions in logs
+    const actionsCount = await Log.aggregate([
+      { $group: { _id: "$action", count: { $sum: 1 } } }
+    ]);
+    const actionsData = actionsCount.map(a => ({ action: a._id, count: a.count }));
+
+    res.json({
+      totalUsers,
+      totalFiles,
+      totalFolders,
+      uploadsPerDay: uploadsData,
+      actionsCount: actionsData,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch stats" });
+  }
+});
+
+/* ========================
    START SERVER
 ======================== */
-app.listen(3001, "0.0.0.0", () =>
-  console.log("🚀 Server running on port 3001")
-);
+app.listen(PORT, HOST, () => {
+  console.log(`🚀 Server running on http://${HOST}:${PORT}`);
+  createLog("SYSTEM", null, `Server started on ${HOST}:${PORT}`);
+});

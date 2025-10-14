@@ -20,8 +20,7 @@ import {
 
 import ShareModal from "../components/ShareModal";
 import "../pages/home.css";
-
-const API = "http://localhost:3001";
+import { BACKEND_URL } from "../config";
 
 export default function Shared() {
   const userId = localStorage.getItem("userId");
@@ -41,7 +40,7 @@ export default function Shared() {
   // Fetch shared items
   const fetchShared = async (folderId = null) => {
     try {
-      const res = await axios.get(`${API}/shared`, {
+      const res = await axios.get(`${BACKEND_URL}/shared`, {
         params: { userId, folderId },
       });
       setFolders(res.data.folders || []);
@@ -214,7 +213,7 @@ export default function Shared() {
                   <div className="d-flex justify-content-center gap-1 mt-2 flex-nowrap">
                     <a
                       className="btn btn-sm btn-outline-primary"
-                      href={`${API}/view/${file.filename}`}
+                      href={`${BACKEND_URL}/view/${file.filename}`}
                       target="_blank"
                       rel="noreferrer"
                     >
@@ -222,7 +221,7 @@ export default function Shared() {
                     </a>
                     <a
                       className="btn btn-sm btn-outline-success"
-                      href={`${API}/download/${file.filename}`}
+                      href={`${BACKEND_URL}/download/${file.filename}`}
                     >
                       <FaCloudDownloadAlt />
                     </a>
@@ -291,7 +290,7 @@ export default function Shared() {
                   <td className="text-center">
                     <a
                       className="btn btn-sm btn-outline-primary me-2"
-                      href={`${API}/view/${file.filename}`}
+                      href={`${BACKEND_URL}/view/${file.filename}`}
                       target="_blank"
                       rel="noreferrer"
                     >
@@ -299,7 +298,7 @@ export default function Shared() {
                     </a>
                     <a
                       className="btn btn-sm btn-outline-success me-2"
-                      href={`${API}/download/${file.filename}`}
+                      href={`${BACKEND_URL}/download/${file.filename}`}
                     >
                       <FaCloudDownloadAlt />
                     </a>
