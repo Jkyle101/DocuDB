@@ -1,23 +1,45 @@
 import React, { useEffect, useState } from "react";
-import { FaFolder, FaUser } from "react-icons/fa";
+import { FaFolder, FaUser, FaTimes } from "react-icons/fa";
 import { NavLink } from "react-router-dom";
 import "bootstrap/dist/css/bootstrap.min.css";
 
-function Sidebar() {
-  const [userEmail, setUserEmail] = useState("");
-  const email = localStorage.getItem("email"); // Assuming userId is stored in localStorage
+function Sidebar({ onClose }) {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
+  const email = localStorage.getItem("email");
 
   useEffect(() => {
-    // Example: Get email from localStorage (or context if you have one)
-    const email = localStorage.getItem("userEmail") || "guest@example.com";
-    setUserEmail(email);
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 992);
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  const handleLinkClick = () => {
+    // Close sidebar on mobile when a link is clicked
+    if (isMobile && onClose) {
+      onClose();
+    }
+  };
 
   return (
     <div
-      className="d-flex flex-column bg-light border-end"
+      className="d-flex flex-column bg-light border-end sidebar-container"
       style={{ width: "250px", height: "100vh", padding: "1.5rem" }}
     >
+      {/* Mobile close button */}
+      {isMobile && (
+        <div className="d-flex justify-content-end mb-3">
+          <button
+            className="btn btn-sm btn-outline-secondary"
+            onClick={onClose}
+            aria-label="Close sidebar"
+          >
+            <FaTimes />
+          </button>
+        </div>
+      )}
       {/* User Info */}
       <div className="d-flex align-items-center mb-4">
         <FaUser className="text-primary me-3" />
@@ -40,6 +62,7 @@ function Sidebar() {
                   isActive ? "active bg-primary text-white" : "text-dark"
                 }`
               }
+              onClick={handleLinkClick}
             >
               <FaFolder className="me-2" />
               My Drive
@@ -54,6 +77,7 @@ function Sidebar() {
                   isActive ? "active bg-primary text-white" : "text-dark"
                 }`
               }
+              onClick={handleLinkClick}
             >
               <FaFolder className="me-2" />
               Shared with me
@@ -68,9 +92,24 @@ function Sidebar() {
                   isActive ? "active bg-primary text-white" : "text-dark"
                 }`
               }
+              onClick={handleLinkClick}
             >
               <FaFolder className="me-2" />
               Recent
+            </NavLink>
+          </li>
+          <li className="nav-item">
+            <NavLink
+              to="/groups"
+              className={({ isActive }) =>
+                `nav-link d-flex align-items-center rounded ${
+                  isActive ? "active bg-primary text-white" : "text-dark"
+                }`
+              }
+              onClick={handleLinkClick}
+            >
+              <FaFolder className="me-2" />
+              Groups
             </NavLink>
           </li>
 
@@ -82,6 +121,7 @@ function Sidebar() {
                   isActive ? "active bg-primary text-white" : "text-dark"
                 }`
               }
+              onClick={handleLinkClick}
             >
               <FaFolder className="me-2" />
               Trash

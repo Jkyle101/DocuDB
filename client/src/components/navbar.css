@@ -20,3 +20,67 @@
   height: 35px;
   padding: 0 0.75rem;
 }
+
+/* Mobile Responsive Styles */
+@media (max-width: 991.98px) {
+  .navbar {
+    padding: 0.5rem 0.75rem;
+  }
+  
+  .navbar .container-fluid {
+    padding-left: 0.5rem;
+    padding-right: 0.5rem;
+  }
+  
+  .navbar-brand {
+    font-size: 1rem;
+  }
+  
+  .navbar-brand img {
+    height: 32px !important;
+  }
+  
+  .navbar .form-control {
+    height: 32px;
+    font-size: 0.85rem;
+  }
+  
+  .navbar .btn {
+    height: 32px;
+    padding: 0 0.5rem;
+    font-size: 0.85rem;
+  }
+  
+  .navbar-toggler {
+    padding: 0.25rem 0.5rem;
+    font-size: 1rem;
+  }
+  
+  /* Stack search and logout on mobile */
+  .navbar-collapse {
+    margin-top: 0.5rem;
+  }
+}
+
+/* Small Mobile Styles */
+@media (max-width: 575.98px) {
+  .navbar {
+    padding: 0.4rem 0.5rem;
+  }
+  
+  .navbar-brand span {
+    display: none !important;
+  }
+  
+  .navbar .form-control {
+    font-size: 0.8rem;
+  }
+  
+  .navbar .btn span {
+    display: none;
+  }
+  
+  .navbar .btn {
+    padding: 0 0.4rem;
+  }
+}

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -16,9 +16,14 @@ import {
   FaList,
   FaEye,
   FaCloudDownloadAlt,
+  FaSort,
+  FaHistory,
+  FaComment,
 } from "react-icons/fa";
 
 import ShareModal from "../components/ShareModal";
+import VersionModal from "../components/VersionModal";
+import CommentsModal from "../components/CommentsModal";
 import "../pages/home.css";
 import { BACKEND_URL } from "../config";
 
@@ -28,31 +33,34 @@ export default function Shared() {
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
   const [shareTarget, setShareTarget] = useState(null);
+  const [versionTarget, setVersionTarget] = useState(null);
+  const [commentsTarget, setCommentsTarget] = useState(null);
   const [currentFolderId, setCurrentFolderId] = useState(null);
   const [view, setView] = useState("grid");
+  const [sortBy, setSortBy] = useState("date");
+  const [sortOrder, setSortOrder] = useState("desc");
 
   // Breadcrumbs
   const [breadcrumbs, setBreadcrumbs] = useState([
     { id: null, name: "Shared with Me" },
   ]);
-  const currentFolder = breadcrumbs[breadcrumbs.length - 1];
 
   // Fetch shared items
-  const fetchShared = async (folderId = null) => {
+  const fetchShared = useCallback(async (folderId = null) => {
     try {
       const res = await axios.get(`${BACKEND_URL}/shared`, {
-        params: { userId, folderId },
+        params: { userId, folderId, sortBy, sortOrder },
       });
       setFolders(res.data.folders || []);
       setFiles(res.data.files || []);
     } catch (err) {
       console.error(err);
     }
-  };
+  }, [userId, sortBy, sortOrder]);
 
   useEffect(() => {
     fetchShared(currentFolderId).catch(console.error);
-  }, [userId, currentFolderId]);
+  }, [fetchShared, currentFolderId]);
 
   // Open a folder (navigate deeper)
   const openFolder = (folder) => {
@@ -116,22 +124,67 @@ export default function Shared() {
           ))}
         </div>
 
-        {/* View Toggles */}
-        <div className="btn-group">
-          <button
-            className={`btn ${view === "grid" ? "btn-primary" : "btn-outline-primary"}`}
-            onClick={() => setView("grid")}
-            title="Grid View"
-          >
-            <FaTh />
-          </button>
-          <button
-            className={`btn ${view === "list" ? "btn-primary" : "btn-outline-primary"}`}
-            onClick={() => setView("list")}
-            title="List View"
-          >
-            <FaList />
-          </button>
+        {/* View Toggles + Sort */}
+        <div className="d-flex align-items-center gap-2">
+          <div className="btn-group">
+            <button
+              className={`btn ${view === "grid" ? "btn-primary" : "btn-outline-primary"}`}
+              onClick={() => setView("grid")}
+              title="Grid View"
+            >
+              <FaTh />
+            </button>
+            <button
+              className={`btn ${view === "list" ? "btn-primary" : "btn-outline-primary"}`}
+              onClick={() => setView("list")}
+              title="List View"
+            >
+              <FaList />
+            </button>
+          </div>
+          <div className="dropdown">
+            <button
+              className="btn btn-outline-secondary dropdown-toggle d-flex align-items-center"
+              type="button"
+              data-bs-toggle="dropdown"
+            >
+              <FaSort className="me-2" /> Sort
+            </button>
+            <ul className="dropdown-menu">
+              <li>
+                <button
+                  className="dropdown-item"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (sortBy === "date") {
+                      setSortOrder(sortOrder === "desc" ? "asc" : "desc");
+                    } else {
+                      setSortBy("date");
+                      setSortOrder("desc");
+                    }
+                  }}
+                >
+                  Date {sortBy === "date" && (sortOrder === "desc" ? "↓" : "↑")}
+                </button>
+              </li>
+              <li>
+                <button
+                  className="dropdown-item"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (sortBy === "name") {
+                      setSortOrder(sortOrder === "desc" ? "asc" : "desc");
+                    } else {
+                      setSortBy("name");
+                      setSortOrder("desc");
+                    }
+                  }}
+                >
+                  Name {sortBy === "name" && (sortOrder === "desc" ? "↓" : "↑")}
+                </button>
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
 
@@ -182,17 +235,28 @@ export default function Shared() {
                     <div className="text-truncate fw-semibold">
                       {folder.name}
                     </div>
-                  </div>
-                  <div className="d-flex justify-content-center gap-2 mt-2 flex-wrap">
-                    <button
-                      className="btn btn-sm btn-outline-secondary"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setShareTarget({ type: "folder", item: folder });
-                      }}
-                    >
-                      <FaShareAlt />
-                    </button>
+                    <div className="btn-group btn-group-sm mt-2">
+                      <button
+                        className="btn btn-outline-secondary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setVersionTarget({ type: "folder", item: folder });
+                        }}
+                        title="Version History"
+                      >
+                        <FaHistory />
+                      </button>
+                      <button
+                        className="btn btn-outline-secondary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCommentsTarget({ type: "folder", item: folder });
+                        }}
+                        title="Comments"
+                      >
+                        <FaComment />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -213,25 +277,35 @@ export default function Shared() {
                   <div className="d-flex justify-content-center gap-1 mt-2 flex-nowrap">
                     <a
                       className="btn btn-sm btn-outline-primary"
-                      href={`${BACKEND_URL}/view/${file.filename}`}
+                      href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
                       target="_blank"
                       rel="noreferrer"
+                      title="View"
                     >
                       <FaEye />
                     </a>
-                    <a
-                      className="btn btn-sm btn-outline-success"
-                      href={`${BACKEND_URL}/download/${file.filename}`}
-                    >
-                      <FaCloudDownloadAlt />
-                    </a>
+                    {file.permissions === "write" && (
+                      <a
+                        className="btn btn-sm btn-outline-success"
+                        href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
+                        title="Download"
+                      >
+                        <FaCloudDownloadAlt />
+                      </a>
+                    )}
                     <button
                       className="btn btn-sm btn-outline-secondary"
-                      onClick={() =>
-                        setShareTarget({ type: "file", item: file })
-                      }
+                      onClick={() => setVersionTarget({ type: "file", item: file })}
+                      title="Version History"
                     >
-                      <FaShareAlt />
+                      <FaHistory />
+                    </button>
+                    <button
+                      className="btn btn-sm btn-outline-secondary"
+                      onClick={() => setCommentsTarget({ type: "file", item: file })}
+                      title="Comments"
+                    >
+                      <FaComment />
                     </button>
                   </div>
                 </div>
@@ -265,15 +339,22 @@ export default function Shared() {
                   <td>Folder</td>
                   <td>{folder.ownerEmail || "—"}</td>
                   <td className="text-center">
-                    <button
-                      className="btn btn-sm btn-outline-secondary me-2"
-                      onClick={() =>
-                        setShareTarget({ type: "folder", item: folder })
-                      }
-                      title="Share"
-                    >
-                      <FaShareAlt />
-                    </button>
+                    <div className="btn-group btn-group-sm">
+                      <button
+                        className="btn btn-outline-secondary"
+                        onClick={() => setVersionTarget({ type: "folder", item: folder })}
+                        title="Version History"
+                      >
+                        <FaHistory />
+                      </button>
+                      <button
+                        className="btn btn-outline-secondary"
+                        onClick={() => setCommentsTarget({ type: "folder", item: folder })}
+                        title="Comments"
+                      >
+                        <FaComment />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -290,25 +371,35 @@ export default function Shared() {
                   <td className="text-center">
                     <a
                       className="btn btn-sm btn-outline-primary me-2"
-                      href={`${BACKEND_URL}/view/${file.filename}`}
+                      href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
                       target="_blank"
                       rel="noreferrer"
+                      title="View"
                     >
                       <FaEye />
                     </a>
-                    <a
-                      className="btn btn-sm btn-outline-success me-2"
-                      href={`${BACKEND_URL}/download/${file.filename}`}
+                    {file.permissions === "write" && (
+                      <a
+                        className="btn btn-sm btn-outline-success me-2"
+                        href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
+                        title="Download"
+                      >
+                        <FaCloudDownloadAlt />
+                      </a>
+                    )}
+                    <button
+                      className="btn btn-sm btn-outline-secondary me-2"
+                      onClick={() => setVersionTarget({ type: "file", item: file })}
+                      title="Version History"
                     >
-                      <FaCloudDownloadAlt />
-                    </a>
+                      <FaHistory />
+                    </button>
                     <button
                       className="btn btn-sm btn-outline-secondary"
-                      onClick={() =>
-                        setShareTarget({ type: "file", item: file })
-                      }
+                      onClick={() => setCommentsTarget({ type: "file", item: file })}
+                      title="Comments"
                     >
-                      <FaShareAlt />
+                      <FaComment />
                     </button>
                   </td>
                 </tr>
@@ -324,6 +415,18 @@ export default function Shared() {
           onClose={() => setShareTarget(null)}
           target={shareTarget}
         />
+      )}
+      {versionTarget && (
+        <>
+          <div className="modal-backdrop fade show"></div>
+          <VersionModal onClose={() => setVersionTarget(null)} target={versionTarget} />
+        </>
+      )}
+      {commentsTarget && (
+        <>
+          <div className="modal-backdrop fade show"></div>
+          <CommentsModal onClose={() => setCommentsTarget(null)} target={commentsTarget} />
+        </>
       )}
     </div>
   );

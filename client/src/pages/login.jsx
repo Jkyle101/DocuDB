@@ -71,7 +71,7 @@ function Login() {
             Login
           </button>
 
-          <h1 className="foter">version 0.0.10 | Made Prodly by LLCC Students</h1>
+          <h1 className="foter">version 1.0.0 | Made Prodly by LLCC Students</h1>
         </form>
       </div>
     </div>

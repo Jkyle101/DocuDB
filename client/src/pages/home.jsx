@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -22,31 +22,48 @@ import {
   FaEllipsisV,
   FaCloudDownloadAlt,
   FaEye,
+  FaSort,
+  FaSortUp,
+  FaSortDown,
+  FaHistory,
+  FaComment,
+  FaUsers,
 } from "react-icons/fa";
+
+import { FaFileSignature } from "react-icons/fa"; // ✅ new icon for Rename
+import RenameModal from "../components/RenameModal.jsx"; // ✅ new modal component
 
 import CreateFolderModal from "../components/CreateFolderModal.jsx";
 import MoveModal from "../components/MoveModal";
 import ShareModal from "../components/ShareModal";
+import ManageSharesModal from "../components/ManageSharesModal";
 import UploadModal from "../components/UploadModal";
+import VersionModal from "../components/VersionModal.jsx";
+import CommentsModal from "../components/CommentsModal.jsx";
 import { useOutletContext } from "react-router-dom";
 import { BACKEND_URL } from "../config.js";
-
 
 export default function Home() {
   const userId = localStorage.getItem("userId");
   const role = localStorage.getItem("role") || "user";
 
-  const [currentFolderId, setCurrentFolderId] = useState(null);
+  const [renameTarget, setRenameTarget] = useState(null); // ✅ for rename modal
+
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
   const [breadcrumbs, setBreadcrumbs] = useState([]);
   const [currentFolder, setCurrentFolder] = useState(null);
 
   const [view, setView] = useState("grid");
+  const [sortBy, setSortBy] = useState("date");
+  const [sortOrder, setSortOrder] = useState("desc");
   const [showCreate, setShowCreate] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [moveTarget, setMoveTarget] = useState(null);
   const [shareTarget, setShareTarget] = useState(null);
+  const [manageSharesTarget, setManageSharesTarget] = useState(null);
+  const [versionTarget, setVersionTarget] = useState(null);
+  const [commentsTarget, setCommentsTarget] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
   const [contextMenu, setContextMenu] = useState({
     visible: false,
@@ -66,8 +83,14 @@ export default function Home() {
   }, [currentFolder, searchResults]);
 
   // Fetch folders + files + breadcrumbs
-  const fetchFolderContents = async (folderId) => {
-    const params = { userId, role, parentFolder: folderId || "" };
+  const fetchFolderContents = useCallback(async (folderId) => {
+    const params = { 
+      userId, 
+      role, 
+      parentFolder: folderId || "",
+      sortBy,
+      sortOrder
+    };
     const [fdrRes, filRes, bcRes] = await Promise.all([
       axios.get(`${BACKEND_URL}/folders`, { params }),
       axios.get(`${BACKEND_URL}/files`, { params }),
@@ -76,23 +99,11 @@ export default function Home() {
     setFolders(fdrRes.data);
     setFiles(filRes.data);
     setBreadcrumbs(bcRes.data);
-  };
-
-  const [myFolders, setMyFolders] = useState([]);
-
-  useEffect(() => {
-    const fetchMyDrive = async () => {
-      const res = await axios.get(`${BACKEND_URL}/folders`, {
-        params: { userId, parentFolder: currentFolderId },
-      });
-      setMyFolders(res.data);
-    };
-    fetchMyDrive();
-  }, [currentFolderId]);
+  }, [userId, role, sortBy, sortOrder]);
 
   useEffect(() => {
     fetchFolderContents(currentFolder).catch(console.error);
-  }, [currentFolder, userId, role]);
+  }, [fetchFolderContents, currentFolder]);
 
   // File icons
   const iconByMime = useMemo(
@@ -100,9 +111,19 @@ export default function Home() {
       if (!mimetype) return <FaFileAlt className="file-icon text-secondary" />;
       if (mimetype.includes("pdf"))
         return <FaFilePdf className="file-icon text-danger" />;
-      if (mimetype.includes("docx") || mimetype.includes("vnd.openxmlformats-officedocument.wordprocessingml.document"))
+      if (
+        mimetype.includes("docx") ||
+        mimetype.includes(
+          "vnd.openxmlformats-officedocument.wordprocessingml.document"
+        )
+      )
         return <FaFileWord className="file-icon text-primary" />;
-      if (mimetype.includes("xlsx") || mimetype.includes("vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+      if (
+        mimetype.includes("xlsx") ||
+        mimetype.includes(
+          "vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        )
+      )
         return <FaFileExcel className="file-icon text-success" />;
       if (mimetype.includes("image"))
         return <FaFileImage className="file-icon text-warning" />;
@@ -150,16 +171,16 @@ export default function Home() {
     });
   };
 
-  const handleClick = () => {
-    setContextMenu({ ...contextMenu, visible: false });
-  };
+  const handleClick = useCallback(() => {
+    setContextMenu((prev) => ({ ...prev, visible: false }));
+  }, []);
 
   useEffect(() => {
     document.addEventListener("click", handleClick);
     return () => {
       document.removeEventListener("click", handleClick);
     };
-  }, []);
+  }, [handleClick]);
 
   // Format file size
   const formatFileSize = (bytes) => {
@@ -197,7 +218,7 @@ export default function Home() {
             <div className="d-flex align-items-center flex-wrap overflow-auto">
               <span className="fw-bold me-2 text-primary">My Drive</span>
               {breadcrumbs.length > 0 &&
-                breadcrumbs.map((b, index) => (
+                breadcrumbs.map((b) => (
                   <span
                     key={b._id || "root"}
                     className="d-flex align-items-center"
@@ -235,6 +256,49 @@ export default function Home() {
               >
                 <FaList />
               </button>
+            </div>
+            <div className="dropdown">
+              <button
+                className="btn btn-outline-secondary dropdown-toggle d-flex align-items-center"
+                type="button"
+                data-bs-toggle="dropdown"
+              >
+                <FaSort className="me-2" /> Sort
+              </button>
+              <ul className="dropdown-menu">
+                <li>
+                  <button
+                    className="dropdown-item"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (sortBy === "date") {
+                        setSortOrder(sortOrder === "desc" ? "asc" : "desc");
+                      } else {
+                        setSortBy("date");
+                        setSortOrder("desc");
+                      }
+                    }}
+                  >
+                    Date {sortBy === "date" && (sortOrder === "desc" ? "↓" : "↑")}
+                  </button>
+                </li>
+                <li>
+                  <button
+                    className="dropdown-item"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (sortBy === "name") {
+                        setSortOrder(sortOrder === "desc" ? "asc" : "desc");
+                      } else {
+                        setSortBy("name");
+                        setSortOrder("desc");
+                      }
+                    }}
+                  >
+                    Name {sortBy === "name" && (sortOrder === "desc" ? "↓" : "↑")}
+                  </button>
+                </li>
+              </ul>
             </div>
             <button
               className="btn btn-primary d-flex align-items-center"
@@ -281,7 +345,9 @@ export default function Home() {
                 onContextMenu={(e) =>
                   handleContextMenu(e, { type: "folder", data: folder })
                 }
-                onClick={() => setSelectedItem({ type: "folder", data: folder })}
+                onClick={() =>
+                  setSelectedItem({ type: "folder", data: folder })
+                }
               >
                 <div
                   className={`card folder-card h-100 ${
@@ -309,9 +375,44 @@ export default function Home() {
                         <FaEllipsisV />
                       </button>
                     </div>
-                    <FaFolder size={42} className="text-warning mb-3 folder-icon" />
+                    <FaFolder
+                      size={42}
+                      className="text-warning mb-3 folder-icon"
+                    />
                     <h6 className="card-title text-truncate">{folder.name}</h6>
                     <p className="text-muted small mb-0">Folder</p>
+                    <div className="btn-group btn-group-sm mt-2">
+                      <button
+                        className="btn btn-outline-secondary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          goInto(folder._id);
+                        }}
+                        title="Open"
+                      >
+                        <FaEye />
+                      </button>
+                      <button
+                        className="btn btn-outline-secondary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setVersionTarget({ type: "folder", item: folder });
+                        }}
+                        title="Version History"
+                      >
+                        <FaHistory />
+                      </button>
+                      <button
+                        className="btn btn-outline-secondary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCommentsTarget({ type: "folder", item: folder });
+                        }}
+                        title="Comments"
+                      >
+                        <FaComment />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -353,24 +454,48 @@ export default function Home() {
                     <h6 className="card-title text-truncate">
                       {file.originalName}
                     </h6>
-                    <p className="text-muted small">{formatFileSize(file.size)}</p>
+                    <p className="text-muted small">
+                      {formatFileSize(file.size)}
+                    </p>
                     <div className="btn-group w-100" role="group">
                       <a
                         className="btn btn-sm btn-outline-primary"
-                        href={`${BACKEND_URL}/view/${file.filename}`}
+                        href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
                         target="_blank"
                         rel="noreferrer"
                         title="Preview"
+                        onClick={(e) => e.stopPropagation()}
                       >
                         <FaEye />
                       </a>
                       <a
                         className="btn btn-sm btn-outline-success"
-                        href={`${BACKEND_URL}/download/${file.filename}`}
+                        href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
                         title="Download"
+                        onClick={(e) => e.stopPropagation()}
                       >
                         <FaCloudDownloadAlt />
                       </a>
+                      <button
+                        className="btn btn-sm btn-outline-secondary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setVersionTarget({ type: "file", item: file });
+                        }}
+                        title="Version History"
+                      >
+                        <FaHistory />
+                      </button>
+                      <button
+                        className="btn btn-sm btn-outline-secondary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCommentsTarget({ type: "file", item: file });
+                        }}
+                        title="Comments"
+                      >
+                        <FaComment />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -402,7 +527,9 @@ export default function Home() {
                         setSelectedItem({ type: "folder", data: folder })
                       }
                       className={
-                        selectedItem?.data?._id === folder._id ? "table-active" : ""
+                        selectedItem?.data?._id === folder._id
+                          ? "table-active"
+                          : ""
                       }
                     >
                       <td
@@ -424,6 +551,24 @@ export default function Home() {
                             title="Open"
                           >
                             <FaEye />
+                          </button>
+                          <button
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() =>
+                              setVersionTarget({ type: "folder", item: folder })
+                            }
+                            title="Version History"
+                          >
+                            <FaHistory />
+                          </button>
+                          <button
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() =>
+                              setCommentsTarget({ type: "folder", item: folder })
+                            }
+                            title="Comments"
+                          >
+                            <FaComment />
                           </button>
                           <button
                             className="btn btn-sm btn-outline-secondary"
@@ -450,6 +595,15 @@ export default function Home() {
                           >
                             <FaTrash />
                           </button>
+                          <button
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() =>
+                              setRenameTarget({ type: "folder", data: folder })
+                            }
+                            title="Rename"
+                          >
+                            <FaFileSignature />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -464,12 +618,18 @@ export default function Home() {
                         setSelectedItem({ type: "file", data: file })
                       }
                       className={
-                        selectedItem?.data?._id === file._id ? "table-active" : ""
+                        selectedItem?.data?._id === file._id
+                          ? "table-active"
+                          : ""
                       }
                     >
                       <td className="d-flex align-items-center">
-                        <span className="me-2">{iconByMime(file.mimetype)}</span>
-                        <span className="text-truncate">{file.originalName}</span>
+                        <span className="me-2">
+                          {iconByMime(file.mimetype)}
+                        </span>
+                        <span className="text-truncate">
+                          {file.originalName}
+                        </span>
                       </td>
                       <td>{file.mimetype.split("/")[1] || file.mimetype}</td>
                       <td>{formatFileSize(file.size)}</td>
@@ -478,7 +638,7 @@ export default function Home() {
                         <div className="btn-group">
                           <a
                             className="btn btn-sm btn-outline-primary"
-                            href={`${BACKEND_URL}/view/${file.filename}`}
+                            href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
                             target="_blank"
                             rel="noreferrer"
                             title="Preview"
@@ -487,11 +647,29 @@ export default function Home() {
                           </a>
                           <a
                             className="btn btn-sm btn-outline-success"
-                            href={`${BACKEND_URL}/download/${file.filename}`}
+                            href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
                             title="Download"
                           >
                             <FaCloudDownloadAlt />
                           </a>
+                          <button
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() =>
+                              setVersionTarget({ type: "file", item: file })
+                            }
+                            title="Version History"
+                          >
+                            <FaHistory />
+                          </button>
+                          <button
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() =>
+                              setCommentsTarget({ type: "file", item: file })
+                            }
+                            title="Comments"
+                          >
+                            <FaComment />
+                          </button>
                           <button
                             className="btn btn-sm btn-outline-secondary"
                             onClick={() =>
@@ -517,6 +695,15 @@ export default function Home() {
                           >
                             <FaTrash />
                           </button>
+                          <button
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() =>
+                              setRenameTarget({ type: "file", data: file })
+                            }
+                            title="Rename"
+                          >
+                            <FaFileSignature />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -531,7 +718,10 @@ export default function Home() {
         {(visibleFolders.length > itemsToShow ||
           visibleFiles.length > itemsToShow) && (
           <div className="text-center mt-4">
-            <button className="btn btn-outline-primary" onClick={handleLoadMore}>
+            <button
+              className="btn btn-outline-primary"
+              onClick={handleLoadMore}
+            >
               Load More
             </button>
           </div>
@@ -592,7 +782,10 @@ export default function Home() {
                 <button
                   className="context-menu-item"
                   onClick={() =>
-                    setMoveTarget({ type: "folder", item: contextMenu.item.data })
+                    setMoveTarget({
+                      type: "folder",
+                      item: contextMenu.item.data,
+                    })
                   }
                 >
                   <FaArrowsAlt className="me-2" /> Move
@@ -608,6 +801,39 @@ export default function Home() {
                 >
                   <FaShareAlt className="me-2" /> Share
                 </button>
+                <button
+                  className="context-menu-item"
+                  onClick={() =>
+                    setManageSharesTarget({
+                      type: "folder",
+                      item: contextMenu.item.data,
+                    })
+                  }
+                >
+                  <FaUsers className="me-2" /> Manage Shares
+                </button>
+                <button
+                  className="context-menu-item"
+                  onClick={() =>
+                    setVersionTarget({
+                      type: "folder",
+                      item: contextMenu.item.data,
+                    })
+                  }
+                >
+                  <FaHistory className="me-2" /> Version History
+                </button>
+                <button
+                  className="context-menu-item"
+                  onClick={() =>
+                    setCommentsTarget({
+                      type: "folder",
+                      item: contextMenu.item.data,
+                    })
+                  }
+                >
+                  <FaComment className="me-2" /> Comments
+                </button>
                 <div className="context-menu-divider"></div>
                 <button
                   className="context-menu-item text-danger"
@@ -615,12 +841,18 @@ export default function Home() {
                 >
                   <FaTrash className="me-2" /> Delete
                 </button>
+                <button
+                  className="context-menu-item"
+                  onClick={() => setRenameTarget(contextMenu.item)}
+                >
+                  <FaFileSignature className="me-2" /> Rename
+                </button>
               </>
             ) : (
               <>
                 <a
                   className="context-menu-item"
-                  href={`${BACKEND_URL}/view/${contextMenu.item.data.filename}`}
+                  href={`${BACKEND_URL}/view/${contextMenu.item.data.filename}?userId=${userId}`}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -628,7 +860,7 @@ export default function Home() {
                 </a>
                 <a
                   className="context-menu-item"
-                  href={`${BACKEND_URL}/download/${contextMenu.item.data.filename}`}
+                  href={`${BACKEND_URL}/download/${contextMenu.item.data.filename}?userId=${userId}`}
                 >
                   <FaCloudDownloadAlt className="me-2" /> Download
                 </a>
@@ -643,10 +875,46 @@ export default function Home() {
                 <button
                   className="context-menu-item"
                   onClick={() =>
-                    setShareTarget({ type: "file", item: contextMenu.item.data })
+                    setShareTarget({
+                      type: "file",
+                      item: contextMenu.item.data,
+                    })
                   }
                 >
                   <FaShareAlt className="me-2" /> Share
+                </button>
+                <button
+                  className="context-menu-item"
+                  onClick={() =>
+                    setManageSharesTarget({
+                      type: "file",
+                      item: contextMenu.item.data,
+                    })
+                  }
+                >
+                  <FaShareAlt className="me-2" /> Manage Shares
+                </button>
+                <button
+                  className="context-menu-item"
+                  onClick={() =>
+                    setVersionTarget({
+                      type: "file",
+                      item: contextMenu.item.data,
+                    })
+                  }
+                >
+                  <FaHistory className="me-2" /> Version History
+                </button>
+                <button
+                  className="context-menu-item"
+                  onClick={() =>
+                    setCommentsTarget({
+                      type: "file",
+                      item: contextMenu.item.data,
+                    })
+                  }
+                >
+                  <FaComment className="me-2" /> Comments
                 </button>
                 <div className="context-menu-divider"></div>
                 <button
@@ -654,6 +922,12 @@ export default function Home() {
                   onClick={() => deleteFile(contextMenu.item.data)}
                 >
                   <FaTrash className="me-2" /> Delete
+                </button>
+                <button
+                  className="context-menu-item"
+                  onClick={() => setRenameTarget(contextMenu.item)}
+                >
+                  <FaFileSignature className="me-2" /> Rename
                 </button>
               </>
             )}
@@ -698,7 +972,61 @@ export default function Home() {
         {shareTarget && (
           <>
             <div className="modal-backdrop fade show"></div>
-            <ShareModal onClose={() => setShareTarget(null)} target={shareTarget} />
+            <ShareModal
+              onClose={() => setShareTarget(null)}
+              target={shareTarget}
+            />
+          </>
+        )}
+        {manageSharesTarget && (
+          <>
+            <div className="modal-backdrop fade show"></div>
+            <ManageSharesModal
+              onClose={() => setManageSharesTarget(null)}
+              target={manageSharesTarget}
+              onUpdated={() => fetchFolderContents(currentFolder)}
+            />
+          </>
+        )}
+        {/* ✅ Rename Modal */}
+        {renameTarget && (
+          <>
+            <div className="modal-backdrop fade show"></div>
+            <RenameModal
+              item={renameTarget}
+              onClose={() => setRenameTarget(null)}
+              onRenamed={(updated) => {
+                setRenameTarget(null);
+                if (renameTarget.type === "file") {
+                  setFiles((prev) =>
+                    prev.map((f) => (f._id === updated._id ? updated : f))
+                  );
+                } else {
+                  setFolders((prev) =>
+                    prev.map((f) => (f._id === updated._id ? updated : f))
+                  );
+                }
+              }}
+            />
+          </>
+        )}
+        {versionTarget && (
+          <>
+            <div className="modal-backdrop fade show"></div>
+            <VersionModal
+              onClose={() => setVersionTarget(null)}
+              target={versionTarget}
+              onRestored={() => fetchFolderContents(currentFolder)}
+            />
+          </>
+        )}
+        {commentsTarget && (
+          <>
+            <div className="modal-backdrop fade show"></div>
+            <CommentsModal
+              onClose={() => setCommentsTarget(null)}
+              target={commentsTarget}
+            />
           </>
         )}
       </div>

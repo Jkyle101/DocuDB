@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -29,7 +29,7 @@ export default function Trash() {
   const [view, setView] = useState("grid");
 
   // Fetch trash contents
-  const fetchTrash = async () => {
+  const fetchTrash = useCallback(async () => {
     try {
       const res = await axios.get(`${BACKEND_URL}/trash`, {
         params: { userId, role },
@@ -39,11 +39,11 @@ export default function Trash() {
     } catch (err) {
       console.error("Failed to fetch trash:", err);
     }
-  };
+  }, [userId, role]);
 
   useEffect(() => {
     fetchTrash();
-  }, [userId, role]);
+  }, [fetchTrash]);
 
   // File icons
   const iconByMime = useMemo(

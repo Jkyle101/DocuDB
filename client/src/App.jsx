@@ -9,8 +9,10 @@ import Upload from "./pages/upload"; // upload page
 import Shared from "./pages/shared"; // shared page
 import Recent from "./pages/recent"; // recent page
 import Trash from "./pages/trash"; // trash page
+import MyGroups from "./pages/mygroups"; // my groups page
 import ManageUsers from "./pages/adminside/manageusers"; // manage users page
 import SystemLogs from "./pages/adminside/systemlogs.jsx"; //system logs
+import ManageGroups from "./pages/adminside/managegroups"; // manage groups page
 
 function App() {
   return (
@@ -66,6 +68,17 @@ function App() {
           <Route index element={<Recent />} />
         </Route>
 
+        <Route
+          path="/groups"
+          element={
+            <ProtectedRoute allowedRole="user">
+              <Layout role="user" />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<MyGroups />} />
+        </Route>
+
         {/* Admin Protected Routes */}
         <Route
           path="/admin"
@@ -97,6 +110,16 @@ function App() {
           }
         >
           <Route index element={<SystemLogs />} />
+        </Route>
+        <Route
+          path="/admin/groups"
+          element={
+            <ProtectedRoute allowedRole="admin">
+              <Layout role="admin" />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<ManageGroups />} />
         </Route>
       </Routes>
     </Router>
