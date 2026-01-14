@@ -1338,6 +1338,21 @@ app.put("/files/:id/rename", async (req, res) => {
    GROUPS MANAGEMENT
 ======================== */
 
+// Get groups for a specific user (groups where user is a member)
+app.get("/users/:id/groups", async (req, res) => {
+  try {
+    const userId = req.params.id;
+    const groups = await Group.find({ members: userId })
+      .populate("members", "email")
+      .populate("leaders", "email")
+      .populate("createdBy", "email")
+      .sort({ createdAt: -1 });
+    res.json(groups);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get all groups
 app.get("/groups", async (req, res) => {
   try {
