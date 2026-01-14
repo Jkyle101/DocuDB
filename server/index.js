@@ -1338,6 +1338,250 @@ app.put("/files/:id/rename", async (req, res) => {
    GROUPS MANAGEMENT
 ======================== */
 
+// Create group
+app.post("/groups", async (req, res) => {
+  try {
+    const { name, description, createdBy } = req.body;
+    if (!name || !createdBy) {
+      return res.status(400).json({ error: "Name and createdBy are required" });
+    }
+
+    const group = new Group({
+      name,
+      description,
+      createdBy,
+      members: [], // Start with no members
+      leaders: [],
+      notifications: [],
+      announcements: [],
+      sharedFiles: [],
+      sharedFolders: []
+    });
+
+    await group.save();
+
+    // Log group creation
+    createLog("CREATE_GROUP", createdBy, `Created group "${name}"`);
+
+    res.json({ success: true, group });
+  } catch (err) {
+    console.error("Create group error:", err);
+    res.status(500).json({ error: "Failed to create group" });
+  }
+});
+
+// Update group
+app.patch("/groups/:id", async (req, res) => {
+  try {
+    const { name, description } = req.body;
+    if (!name) {
+      return res.status(400).json({ error: "Name is required" });
+    }
+
+    const group = await Group.findByIdAndUpdate(
+      req.params.id,
+      { name, description },
+      { new: true }
+    )
+      .populate("members", "email")
+      .populate("leaders", "email")
+      .populate("createdBy", "email");
+
+    if (!group) return res.status(404).json({ error: "Group not found" });
+
+    // Log group update
+    createLog("UPDATE_GROUP", group.createdBy, `Updated group "${name}"`);
+
+    res.json(group);
+  } catch (err) {
+    console.error("Update group error:", err);
+    res.status(500).json({ error: "Failed to update group" });
+  }
+});
+
+// Delete group
+app.delete("/groups/:id", async (req, res) => {
+  try {
+    const group = await Group.findByIdAndDelete(req.params.id);
+    if (!group) return res.status(404).json({ error: "Group not found" });
+
+    // Log group deletion
+    createLog("DELETE_GROUP", group.createdBy, `Deleted group "${group.name}"`);
+
+    res.json({ success: true, message: "Group deleted successfully" });
+  } catch (err) {
+    console.error("Delete group error:", err);
+    res.status(500).json({ error: "Failed to delete group" });
+  }
+});
+
+// Add members to group
+app.patch("/groups/:groupId/members", async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { userIds } = req.body;
+
+    if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ error: "userIds array is required" });
+    }
+
+    const group = await Group.findById(groupId);
+    if (!group) return res.status(404).json({ error: "Group not found" });
+
+    // Add new members (avoid duplicates)
+    const existingMemberIds = group.members.map(id => id.toString());
+    const newMembers = userIds.filter(id => !existingMemberIds.includes(id.toString()));
+
+    group.members.push(...newMembers);
+    await group.save();
+
+    await group.populate("members", "email");
+
+    // Log member addition
+    createLog("ADD_GROUP_MEMBERS", group.createdBy, `Added ${newMembers.length} members to group "${group.name}"`);
+
+    res.json({ success: true, group });
+  } catch (err) {
+    console.error("Add members error:", err);
+    res.status(500).json({ error: "Failed to add members" });
+  }
+});
+
+// Remove member from group
+app.delete("/groups/:groupId/members/:userId", async (req, res) => {
+  try {
+    const { groupId, userId } = req.params;
+
+    const group = await Group.findById(groupId);
+    if (!group) return res.status(404).json({ error: "Group not found" });
+
+    // Remove from members
+    group.members = group.members.filter(id => id.toString() !== userId);
+
+    // Also remove from leaders if they were a leader
+    group.leaders = group.leaders.filter(id => id.toString() !== userId);
+
+    await group.save();
+
+    await group.populate("members", "email");
+    await group.populate("leaders", "email");
+
+    // Log member removal
+    createLog("REMOVE_GROUP_MEMBER", group.createdBy, `Removed member from group "${group.name}"`);
+
+    res.json({ success: true, group });
+  } catch (err) {
+    console.error("Remove member error:", err);
+    res.status(500).json({ error: "Failed to remove member" });
+  }
+});
+
+// Toggle leader status
+app.patch("/groups/:groupId/leaders", async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { userId, action } = req.body; // action: "add" or "remove"
+
+    const group = await Group.findById(groupId);
+    if (!group) return res.status(404).json({ error: "Group not found" });
+
+    if (action === "add") {
+      // Add to leaders if not already
+      if (!group.leaders.some(id => id.toString() === userId)) {
+        group.leaders.push(userId);
+      }
+    } else if (action === "remove") {
+      // Remove from leaders
+      group.leaders = group.leaders.filter(id => id.toString() !== userId);
+    } else {
+      return res.status(400).json({ error: "Invalid action. Use 'add' or 'remove'" });
+    }
+
+    await group.save();
+
+    await group.populate("members", "email");
+    await group.populate("leaders", "email");
+
+    // Log leader change
+    createLog("TOGGLE_GROUP_LEADER", group.createdBy, `${action === "add" ? "Promoted" : "Demoted"} leader in group "${group.name}"`);
+
+    res.json({ success: true, group });
+  } catch (err) {
+    console.error("Toggle leader error:", err);
+    res.status(500).json({ error: "Failed to toggle leader status" });
+  }
+});
+
+// Add notification to group
+app.post("/groups/:groupId/notifications", async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { title, message, createdBy } = req.body;
+
+    if (!title || !message || !createdBy) {
+      return res.status(400).json({ error: "Title, message, and createdBy are required" });
+    }
+
+    const group = await Group.findById(groupId);
+    if (!group) return res.status(404).json({ error: "Group not found" });
+
+    const notification = {
+      title,
+      message,
+      createdBy,
+      createdAt: new Date()
+    };
+
+    group.notifications.push(notification);
+    await group.save();
+
+    await group.populate("notifications.createdBy", "email");
+
+    // Log notification
+    createLog("ADD_GROUP_NOTIFICATION", createdBy, `Added notification to group "${group.name}": ${title}`);
+
+    res.json({ success: true, group });
+  } catch (err) {
+    console.error("Add notification error:", err);
+    res.status(500).json({ error: "Failed to add notification" });
+  }
+});
+
+// Add announcement to group
+app.post("/groups/:groupId/announcements", async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { title, content, createdBy } = req.body;
+
+    if (!title || !content || !createdBy) {
+      return res.status(400).json({ error: "Title, content, and createdBy are required" });
+    }
+
+    const group = await Group.findById(groupId);
+    if (!group) return res.status(404).json({ error: "Group not found" });
+
+    const announcement = {
+      title,
+      content,
+      createdBy,
+      createdAt: new Date()
+    };
+
+    group.announcements.push(announcement);
+    await group.save();
+
+    await group.populate("announcements.createdBy", "email");
+
+    // Log announcement
+    createLog("ADD_GROUP_ANNOUNCEMENT", createdBy, `Added announcement to group "${group.name}": ${title}`);
+
+    res.json({ success: true, group });
+  } catch (err) {
+    console.error("Add announcement error:", err);
+    res.status(500).json({ error: "Failed to add announcement" });
+  }
+});
+
 // Get groups for a specific user (groups where user is a member)
 app.get("/users/:id/groups", async (req, res) => {
   try {
