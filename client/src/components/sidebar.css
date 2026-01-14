@@ -1,81 +1,57 @@
-/* Sidebar.css */
-.sidebar {
-  width: 240px;
-  min-height: 100vh;
-  transition: width 0.3s ease, background-color 0.3s ease;
-  border-radius: 12px;
+/* Clean Admin Sidebar Styles */
+.sidebar-admin-clean {
+  transition: all 0.3s ease;
 }
 
-.sidebar.collapsed {
-  width: 80px;
-}
-
-.sidebar.light {
-  background: #fff;
-  color: #333;
-}
-
-.sidebar.dark {
-  background: #1e1e2f;
-  color: #ddd;
-}
-
-.sidebar .toggle-btn {
-  padding: 1rem;
-  cursor: pointer;
-  text-align: right;
-  font-size: 1.2rem;
-}
-
-.sidebar .profile img {
-  width: 40px;
-  height: 40px;
-}
-
-.sidebar .search-input {
-  border-radius: 10px;
-  font-size: 0.9rem;
-}
-
-.sidebar .nav-link {
-  color: inherit;
-  font-weight: 500;
-}
-
-.sidebar .nav-link:hover {
-  background: rgba(0, 0, 0, 0.05);
-}
-
-.sidebar.dark .nav-link:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.sidebar .nav-link.active {
-  background: #e63946; /* highlight color */
-  color: #fff !important;
-}
-
-.sidebar .theme-toggle {
-  cursor: pointer;
-}
-
-/* Admin sidebar styles */
-.sidebar-container .nav-link {
+.sidebar-admin-clean .nav-link {
   transition: all 0.2s ease;
+  border-radius: 6px;
+  margin-bottom: 2px;
 }
 
-.sidebar-container .nav-link:hover {
+.sidebar-admin-clean .nav-link:hover {
   background-color: rgba(0, 123, 255, 0.1);
   color: #0056b3;
+  text-decoration: none;
 }
 
-.sidebar-container .nav-link.active {
+.sidebar-admin-clean .nav-link.active {
   background-color: #007bff !important;
   color: white !important;
-  border-color: #007bff !important;
+  box-shadow: 0 2px 4px rgba(0,123,255,0.2);
 }
 
-.sidebar-container .nav-link:focus {
+.sidebar-admin-clean .nav-link:focus {
   box-shadow: none;
   outline: none;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 991.98px) {
+  .sidebar-admin-clean {
+    width: 100% !important;
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1050;
+    box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+  }
+}
+
+/* Custom scrollbar */
+.sidebar-admin-clean::-webkit-scrollbar {
+  width: 6px;
+}
+
+.sidebar-admin-clean::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.sidebar-admin-clean::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 3px;
+}
+
+.sidebar-admin-clean::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
 }

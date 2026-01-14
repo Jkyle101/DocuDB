@@ -3,7 +3,8 @@ import axios from "axios";
 import {
   FaUsers, FaPlus, FaEdit, FaTrash, FaShareAlt, FaBell, FaBullhorn,
   FaTimes, FaCheck, FaSearch, FaFilter, FaChartBar, FaCrown,
-  FaShieldAlt, FaUser, FaCalendarAlt, FaSync, FaInfoCircle
+  FaShieldAlt, FaUser, FaCalendarAlt, FaSync, FaInfoCircle, FaHistory,
+  FaFileAlt, FaFolder
 } from "react-icons/fa";
 import {
   PieChart, Pie, Cell, ResponsiveContainer,
@@ -249,6 +250,21 @@ export default function ManageGroups() {
     }
   };
 
+  const handleUnshareFromGroup = async (groupId, type, itemId) => {
+    if (!window.confirm(`Remove this ${type} from the group?`)) return;
+    try {
+      await axios.patch(`${BACKEND_URL}/groups/${groupId}/unshare`, {
+        type,
+        itemId,
+      });
+      alert(`${type} removed from group successfully`);
+      fetchGroups(); // Refresh to show updated shared items
+    } catch (err) {
+      console.error("Failed to unshare:", err);
+      alert("Failed to remove item from group");
+    }
+  };
+
   const handleDeleteGroup = async (id) => {
     if (!window.confirm("Delete this group?")) return;
     try {
@@ -295,6 +311,22 @@ export default function ManageGroups() {
             onClick={() => setActiveTab("manage")}
           >
             <FaUsers className="me-1" /> Manage Groups
+          </button>
+        </li>
+        <li className="nav-item">
+          <button
+            className={`nav-link ${activeTab === "shared" ? "active" : ""}`}
+            onClick={() => setActiveTab("shared")}
+          >
+            <FaShareAlt className="me-1" /> Shared Items
+          </button>
+        </li>
+        <li className="nav-item">
+          <button
+            className={`nav-link ${activeTab === "history" ? "active" : ""}`}
+            onClick={() => setActiveTab("history")}
+          >
+            <FaHistory className="me-1" /> Activity History
           </button>
         </li>
       </ul>
@@ -594,6 +626,256 @@ export default function ManageGroups() {
               )}
             </div>
           )}
+        </>
+      )}
+
+      {/* Shared Items Tab */}
+      {activeTab === "shared" && (
+        <>
+          <div className="row">
+            {groups.map((group) => (
+              <div key={group._id} className="col-12 mb-4">
+                <div className="card shadow-sm">
+                  <div className="card-header d-flex justify-content-between align-items-center">
+                    <div className="d-flex align-items-center">
+                      <div className="avatar-circle bg-primary text-white me-3 d-flex align-items-center justify-content-center" style={{width: '40px', height: '40px', borderRadius: '50%', fontSize: '16px', fontWeight: 'bold'}}>
+                        {group.name.charAt(0).toUpperCase()}
+                      </div>
+                      <div>
+                        <h6 className="mb-0 fw-bold">{group.name}</h6>
+                        <small className="text-muted">
+                          {group.sharedFiles?.length || 0} files, {group.sharedFolders?.length || 0} folders shared
+                        </small>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="card-body">
+                    {/* Shared Files */}
+                    {group.sharedFiles && group.sharedFiles.length > 0 && (
+                      <div className="mb-4">
+                        <h6 className="text-primary mb-3">
+                          <FaFileAlt className="me-2" />
+                          Shared Files ({group.sharedFiles.length})
+                        </h6>
+                        <div className="row g-3">
+                          {group.sharedFiles.map((sharedFile, index) => (
+                            <div key={index} className="col-md-6 col-lg-4">
+                              <div className="card border-light shadow-sm">
+                                <div className="card-body">
+                                  <div className="d-flex align-items-start justify-content-between">
+                                    <div className="flex-grow-1">
+                                      <h6 className="card-title mb-1 text-truncate">
+                                        {sharedFile.fileId?.originalName || 'Unknown File'}
+                                      </h6>
+                                      <p className="card-text small text-muted mb-2">
+                                        Permission: <span className={`badge ${sharedFile.permission === 'write' ? 'bg-success' : 'bg-info'}`}>
+                                          {sharedFile.permission === 'write' ? 'Read & Write' : 'Read Only'}
+                                        </span>
+                                      </p>
+                                      <small className="text-muted">
+                                        Shared by: {sharedFile.sharedBy?.email || 'Unknown'}<br/>
+                                        {new Date(sharedFile.sharedAt).toLocaleDateString()}
+                                      </small>
+                                    </div>
+                                    <button
+                                      className="btn btn-sm btn-outline-danger ms-2"
+                                      onClick={() => handleUnshareFromGroup(group._id, 'file', sharedFile.fileId?._id)}
+                                      title="Remove from group"
+                                    >
+                                      <FaTimes />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Shared Folders */}
+                    {group.sharedFolders && group.sharedFolders.length > 0 && (
+                      <div>
+                        <h6 className="text-success mb-3">
+                          <FaFolder className="me-2" />
+                          Shared Folders ({group.sharedFolders.length})
+                        </h6>
+                        <div className="row g-3">
+                          {group.sharedFolders.map((sharedFolder, index) => (
+                            <div key={index} className="col-md-6 col-lg-4">
+                              <div className="card border-light shadow-sm">
+                                <div className="card-body">
+                                  <div className="d-flex align-items-start justify-content-between">
+                                    <div className="flex-grow-1">
+                                      <h6 className="card-title mb-1 text-truncate">
+                                        {sharedFolder.folderId?.name || 'Unknown Folder'}
+                                      </h6>
+                                      <p className="card-text small text-muted mb-2">
+                                        Permission: <span className={`badge ${sharedFolder.permission === 'write' ? 'bg-success' : 'bg-info'}`}>
+                                          {sharedFolder.permission === 'write' ? 'Read & Write' : 'Read Only'}
+                                        </span>
+                                      </p>
+                                      <small className="text-muted">
+                                        Shared by: {sharedFolder.sharedBy?.email || 'Unknown'}<br/>
+                                        {new Date(sharedFolder.sharedAt).toLocaleDateString()}
+                                      </small>
+                                    </div>
+                                    <button
+                                      className="btn btn-sm btn-outline-danger ms-2"
+                                      onClick={() => handleUnshareFromGroup(group._id, 'folder', sharedFolder.folderId?._id)}
+                                      title="Remove from group"
+                                    >
+                                      <FaTimes />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* No shared items */}
+                    {(!group.sharedFiles || group.sharedFiles.length === 0) &&
+                     (!group.sharedFolders || group.sharedFolders.length === 0) && (
+                      <div className="text-center py-4">
+                        <FaShareAlt className="text-muted mb-3" size={48} />
+                        <p className="text-muted mb-0">No files or folders are currently shared with this group.</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Empty State for Shared Items */}
+          {groups.length === 0 && (
+            <div className="text-center py-5">
+              <FaShareAlt className="text-muted mb-3" size={64} />
+              <h5 className="text-muted">No Groups Available</h5>
+              <p className="text-muted">Create groups first to manage shared items.</p>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* Activity History Tab */}
+      {activeTab === "history" && (
+        <>
+          <div className="card shadow-sm">
+            <div className="card-header">
+              <h6 className="mb-0">
+                <FaHistory className="me-2" />
+                Group Activity Timeline
+              </h6>
+            </div>
+            <div className="card-body">
+              <div className="timeline">
+                {groups.length > 0 ? (
+                  groups.flatMap(group => [
+                    // Group creation activity
+                    {
+                      id: `create-${group._id}`,
+                      type: 'group_created',
+                      title: 'Group Created',
+                      description: `"${group.name}" was created`,
+                      timestamp: group.createdAt,
+                      group: group.name,
+                      icon: <FaUsers className="text-success" />
+                    },
+                    // Member activities
+                    ...(group.members?.map(member => ({
+                      id: `member-${group._id}-${member._id}`,
+                      type: 'member_added',
+                      title: 'Member Added',
+                      description: `${member.email || member._id} joined "${group.name}"`,
+                      timestamp: group.createdAt, // Using group creation as approximation
+                      group: group.name,
+                      icon: <FaUser className="text-primary" />
+                    })) || []),
+                    // Shared file activities
+                    ...(group.sharedFiles?.map((sharedFile, index) => ({
+                      id: `file-${group._id}-${sharedFile.fileId?._id || index}`,
+                      type: 'file_shared',
+                      title: 'File Shared',
+                      description: `"${sharedFile.fileId?.originalName || 'Unknown File'}" shared with "${group.name}"`,
+                      timestamp: sharedFile.sharedAt,
+                      group: group.name,
+                      icon: <FaFileAlt className="text-info" />,
+                      details: `Permission: ${sharedFile.permission === 'write' ? 'Read & Write' : 'Read Only'}`
+                    })) || []),
+                    // Shared folder activities
+                    ...(group.sharedFolders?.map((sharedFolder, index) => ({
+                      id: `folder-${group._id}-${sharedFolder.folderId?._id || index}`,
+                      type: 'folder_shared',
+                      title: 'Folder Shared',
+                      description: `"${sharedFolder.folderId?.name || 'Unknown Folder'}" shared with "${group.name}"`,
+                      timestamp: sharedFolder.sharedAt,
+                      group: group.name,
+                      icon: <FaFolder className="text-warning" />,
+                      details: `Permission: ${sharedFolder.permission === 'write' ? 'Read & Write' : 'Read Only'}`
+                    })) || []),
+                    // Notification activities
+                    ...(group.notifications?.map((notification, index) => ({
+                      id: `notification-${group._id}-${index}`,
+                      type: 'notification_added',
+                      title: 'Notification Added',
+                      description: `"${notification.title}" sent to "${group.name}"`,
+                      timestamp: notification.createdAt,
+                      group: group.name,
+                      icon: <FaBell className="text-warning" />,
+                      details: notification.message
+                    })) || []),
+                    // Announcement activities
+                    ...(group.announcements?.map((announcement, index) => ({
+                      id: `announcement-${group._id}-${index}`,
+                      type: 'announcement_added',
+                      title: 'Announcement Added',
+                      description: `"${announcement.title}" posted to "${group.name}"`,
+                      timestamp: announcement.createdAt,
+                      group: group.name,
+                      icon: <FaBullhorn className="text-danger" />,
+                      details: announcement.content
+                    })) || [])
+                  ])
+                  .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+                  .slice(0, 50) // Limit to 50 most recent activities
+                  .map(activity => (
+                    <div key={activity.id} className="timeline-item">
+                      <div className="timeline-marker">
+                        {activity.icon}
+                      </div>
+                      <div className="timeline-content">
+                        <div className="d-flex justify-content-between align-items-start">
+                          <div>
+                            <h6 className="mb-1">{activity.title}</h6>
+                            <p className="mb-1 text-muted">{activity.description}</p>
+                            {activity.details && (
+                              <p className="mb-1 small text-muted">{activity.details}</p>
+                            )}
+                            <small className="text-muted">
+                              Group: {activity.group}
+                            </small>
+                          </div>
+                          <small className="text-muted timeline-date">
+                            {new Date(activity.timestamp).toLocaleString()}
+                          </small>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-center py-4">
+                    <FaHistory className="text-muted mb-3" size={48} />
+                    <h6 className="text-muted">No Activity Yet</h6>
+                    <p className="text-muted mb-0">Group activities will appear here as they occur.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </>
       )}
 
