@@ -1398,6 +1398,80 @@ app.get("/groups/:id", async (req, res) => {
   }
 });
 
+// Share file/folder to group
+app.patch("/groups/:groupId/share", async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { type, itemId, permission } = req.body;
+
+    const group = await Group.findById(groupId);
+    if (!group) return res.status(404).json({ error: "Group not found" });
+
+    // Check if item is already shared
+    const isAlreadyShared = type === "file"
+      ? group.sharedFiles.some(sf => sf.fileId.toString() === itemId)
+      : group.sharedFolders.some(sf => sf.folderId.toString() === itemId);
+
+    if (isAlreadyShared) {
+      return res.status(400).json({ error: `${type} is already shared with this group` });
+    }
+
+    const userId = req.body.userId || "admin"; // Get from request or default to admin
+
+    const sharedItem = {
+      [type === "file" ? "fileId" : "folderId"]: itemId,
+      permission: permission || "read",
+      sharedBy: userId,
+      sharedAt: new Date()
+    };
+
+    if (type === "file") {
+      group.sharedFiles.push(sharedItem);
+    } else {
+      group.sharedFolders.push(sharedItem);
+    }
+
+    await group.save();
+
+    // Log the action
+    createLog("GROUP_SHARE", userId, `Shared ${type} ${itemId} with group "${group.name}"`);
+
+    res.json({ success: true, group });
+  } catch (err) {
+    console.error("Group share error:", err);
+    res.status(500).json({ error: "Failed to share item with group" });
+  }
+});
+
+// Unshare file/folder from group
+app.patch("/groups/:groupId/unshare", async (req, res) => {
+  try {
+    const { groupId } = req.params;
+    const { type, itemId } = req.body;
+
+    const group = await Group.findById(groupId);
+    if (!group) return res.status(404).json({ error: "Group not found" });
+
+    const userId = req.body.userId || "admin"; // Get from request or default to admin
+
+    if (type === "file") {
+      group.sharedFiles = group.sharedFiles.filter(sf => sf.fileId.toString() !== itemId);
+    } else {
+      group.sharedFolders = group.sharedFolders.filter(sf => sf.folderId.toString() !== itemId);
+    }
+
+    await group.save();
+
+    // Log the action
+    createLog("GROUP_UNSHARE", userId, `Removed ${type} ${itemId} from group "${group.name}"`);
+
+    res.json({ success: true, group });
+  } catch (err) {
+    console.error("Group unshare error:", err);
+    res.status(500).json({ error: "Failed to remove item from group" });
+  }
+});
+
 /* ========================
    START SERVER
 ======================== */

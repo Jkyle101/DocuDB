@@ -14,19 +14,22 @@ import {
 import Upload from "../pages/upload";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "./sidebar.css";
-function SidebarSuperAdmin({ onClose }) {  
+function SidebarSuperAdmin({ onClose }) {
   const [showUpload, setShowUpload] = useState(false);
   const [userEmail, setUserEmail] = useState("");
+  const [userRole, setUserRole] = useState("");
   const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
 
   useEffect(() => {
-    const email = localStorage.getItem("userEmail") || "admin@example.com";
+    const email = localStorage.getItem("email") || "admin@example.com";
+    const role = localStorage.getItem("role") || "admin";
     setUserEmail(email);
-    
+    setUserRole(role);
+
     const handleResize = () => {
       setIsMobile(window.innerWidth < 992);
     };
-    
+
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -41,12 +44,17 @@ function SidebarSuperAdmin({ onClose }) {
   return (
     <>
       <div
-        className="d-flex flex-column bg-light border-end sidebar-container"
-        style={{ width: "250px", height: "100vh", padding: "1.5rem" }}
+        className="d-flex flex-column sidebar-admin-clean"
+        style={{
+          width: "250px",
+          height: "100vh",
+          backgroundColor: "#f8f9fa",
+          borderRight: "1px solid #e9ecef"
+        }}
       >
         {/* Mobile close button */}
         {isMobile && (
-          <div className="d-flex justify-content-end mb-3">
+          <div className="d-flex justify-content-end p-2 border-bottom">
             <button
               className="btn btn-sm btn-outline-secondary"
               onClick={onClose}
@@ -56,81 +64,114 @@ function SidebarSuperAdmin({ onClose }) {
             </button>
           </div>
         )}
+
+        {/* Header */}
+        <div className="p-3 border-bottom bg-white">
+          <h5 className="mb-1 text-primary">Admin Panel</h5>
+          <small className="text-muted">Management Console</small>
+        </div>
+
         {/* User Info */}
-        <div className="d-flex align-items-center mb-4">
-          <FaUser className="text-primary me-3" />
-          <div>
-            <div className="fw-bold text-truncate" style={{ maxWidth: "180px" }}>
-              {userEmail}
+        <div className="p-3 border-bottom">
+          <div className="d-flex align-items-center">
+            <div className="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center me-3"
+                 style={{width: '40px', height: '40px'}}>
+              <FaUser size={16} />
             </div>
-            <small className="text-muted">Super Admin</small>
+            <div className="flex-grow-1">
+              <div className="fw-medium small text-truncate" style={{maxWidth: '160px'}}>
+                {userEmail}
+              </div>
+              <div className="small text-muted">{userRole.charAt(0).toUpperCase() + userRole.slice(1)}</div>
+            </div>
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-grow-1">
-          <ul className="nav nav-pills flex-column gap-2">
-            <li className="nav-item">
-              <NavLink
-                to="/admin/manageusers"
-                className={({ isActive }) =>
-                  `nav-link d-flex align-items-center rounded ${
-                    isActive ? "active bg-primary text-white" : "text-dark"
-                  }`
-                }
-                onClick={handleLinkClick}
-              >
-                <FaUsers className="me-2" />
-                Manage Users
-              </NavLink>
-            </li>
+        <nav className="flex-grow-1 p-2">
+          <div className="mb-3">
+            <h6 className="px-3 py-2 mb-2 text-muted small fw-bold text-uppercase"
+                style={{letterSpacing: '0.5px'}}>
+              Management
+            </h6>
+            <ul className="nav nav-pills flex-column gap-1">
+              <li className="nav-item">
+                <NavLink
+                  to="/admin/manageusers"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${
+                      isActive ? "active bg-primary text-white" : "text-dark"
+                    }`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaUsers className="me-2" size={16} />
+                  Manage Users
+                </NavLink>
+              </li>
 
-            <li className="nav-item">
-              <NavLink
-                to="/admin/systemlogs"
-                className={({ isActive }) =>
-                  `nav-link d-flex align-items-center rounded ${
-                    isActive ? "active bg-primary text-white" : "text-dark"
-                  }`
-                }
-                onClick={handleLinkClick}
-              >
-                <FaDatabase className="me-2" />
-                System Logs
-              </NavLink>
-            </li>
+              <li className="nav-item">
+                <NavLink
+                  to="/admin/groups"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${
+                      isActive ? "active bg-primary text-white" : "text-dark"
+                    }`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaUserFriends className="me-2" size={16} />
+                  Groups
+                </NavLink>
+              </li>
+            </ul>
+          </div>
 
-            <li className="nav-item">
-              <NavLink
-                to="/admin/"
-                className={({ isActive }) =>
-                  `nav-link d-flex align-items-center rounded ${
-                    isActive ? "active bg-primary text-white" : "text-dark"
-                  }`
-                }
-                onClick={handleLinkClick}
-              >
-                <FaFile className="me-2" />
-                Documents
-              </NavLink>
-            </li>
+          <div>
+            <h6 className="px-3 py-2 mb-2 text-muted small fw-bold text-uppercase"
+                style={{letterSpacing: '0.5px'}}>
+              System
+            </h6>
+            <ul className="nav nav-pills flex-column gap-1">
+              <li className="nav-item">
+                <NavLink
+                  to="/admin/"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${
+                      isActive ? "active bg-primary text-white" : "text-dark"
+                    }`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaFile className="me-2" size={16} />
+                  Documents
+                </NavLink>
+              </li>
 
-            <li className="nav-item">
-              <NavLink
-                to="/admin/groups"
-                className={({ isActive }) =>
-                  `nav-link d-flex align-items-center rounded ${
-                    isActive ? "active bg-primary text-white" : "text-dark"
-                  }`
-                }
-                onClick={handleLinkClick}
-              >
-                <FaUserFriends className="me-2" />
-                Groups
-              </NavLink>
-            </li>
-          </ul>
+              <li className="nav-item">
+                <NavLink
+                  to="/admin/systemlogs"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${
+                      isActive ? "active bg-primary text-white" : "text-dark"
+                    }`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaDatabase className="me-2" size={16} />
+                  System Logs
+                </NavLink>
+              </li>
+            </ul>
+          </div>
         </nav>
+
+        {/* Footer */}
+        <div className="p-3 border-top bg-light">
+          <small className="text-muted d-block text-center">
+            © 2024 DocuDB Admin
+          </small>
+        </div>
       </div>
 
       {/* Upload Modal */}
