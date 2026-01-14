@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
 
@@ -6,6 +6,81 @@ import { BACKEND_URL } from "../config";
 export default function ShareModal({ onClose, target }) {
   const [emails, setEmails] = useState(""); // comma separated emails
   const [permission, setPermission] = useState("read");
+  const [allUsers, setAllUsers] = useState([]);
+  const [suggestions, setSuggestions] = useState([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const inputRef = useRef(null);
+  const suggestionsRef = useRef(null);
+
+  // Fetch all users when modal opens
+  useEffect(() => {
+    const fetchUsers = async () => {
+      try {
+        const res = await axios.get(`${BACKEND_URL}/users`);
+        setAllUsers(res.data);
+      } catch (err) {
+        console.error("Failed to fetch users:", err);
+      }
+    };
+    fetchUsers();
+  }, []);
+
+  // Get the current input value (last email being typed)
+  const getCurrentInput = () => {
+    const parts = emails.split(",");
+    return parts[parts.length - 1]?.trim() || "";
+  };
+
+  const currentInput = getCurrentInput();
+
+  // Filter suggestions based on current input - only show when typing
+  useEffect(() => {
+    const addedEmails = emails
+      .split(",")
+      .map((e) => e.trim())
+      .filter(Boolean);
+    const lastPart = currentInput.toLowerCase();
+
+    if (lastPart) {
+      const filtered = allUsers.filter(
+        (user) =>
+          user.email.toLowerCase().includes(lastPart) &&
+          !addedEmails.includes(user.email)
+      );
+      setSuggestions(filtered.slice(0, 5)); // Show max 5 suggestions
+      setShowSuggestions(filtered.length > 0);
+    } else {
+      // Don't show suggestions when input is empty
+      setSuggestions([]);
+      setShowSuggestions(false);
+    }
+  }, [emails, allUsers, currentInput]);
+
+  // Handle clicking outside to close suggestions
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (
+        suggestionsRef.current &&
+        !suggestionsRef.current.contains(event.target) &&
+        inputRef.current &&
+        !inputRef.current.contains(event.target)
+      ) {
+        setShowSuggestions(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const handleSuggestionClick = (userEmail) => {
+    const parts = emails.split(",").map((e) => e.trim()).filter(Boolean);
+    if (!parts.includes(userEmail)) {
+      parts.push(userEmail);
+      setEmails(parts.join(", "));
+    }
+    setShowSuggestions(false);
+    inputRef.current?.focus();
+  };
 
   const submit = async () => {
     // backend will resolve emails → userIds
@@ -33,12 +108,34 @@ export default function ShareModal({ onClose, target }) {
           </div>
           <div className="modal-body">
             <label className="form-label">User emails (comma separated)</label>
-            <input
-              className="form-control mb-3"
-              value={emails}
-              onChange={(e) => setEmails(e.target.value)}
-              placeholder="delacruz@llcc.edu.ph, delaserna@llcc.edu.ph"
-            />
+            <div className="position-relative">
+              <input
+                ref={inputRef}
+                className="form-control mb-3"
+                value={emails}
+                onChange={(e) => setEmails(e.target.value)}
+                onFocus={() => setShowSuggestions(suggestions.length > 0)}
+                placeholder="Type email to search users... (comma separated)"
+              />
+              {showSuggestions && suggestions.length > 0 && (
+                <div
+                  ref={suggestionsRef}
+                  className="list-group position-absolute w-100"
+                  style={{ zIndex: 1000, maxHeight: "200px", overflowY: "auto", top: "100%" }}
+                >
+                  {suggestions.map((user) => (
+                    <button
+                      key={user._id}
+                      type="button"
+                      className="list-group-item list-group-item-action"
+                      onClick={() => handleSuggestionClick(user.email)}
+                    >
+                      {user.email}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <label className="form-label">Permission</label>
             <select
               className="form-select"

@@ -103,3 +103,61 @@
   text-align: center;
   margin-top: 50px;
 }
+
+/* Mobile Responsive Styles */
+@media (max-width: 991.98px) {
+  .file-manager-container {
+    min-height: calc(100vh - 60px);
+  }
+  
+  .empty-state {
+    padding: 2rem 1.5rem;
+    margin-top: 1rem;
+  }
+  
+  .stats-card {
+    margin-bottom: 1rem;
+  }
+  
+  .folder-card, .file-card {
+    margin-bottom: 0.75rem;
+  }
+  
+  .file-icon {
+    font-size: 1.8rem;
+  }
+  
+  .table-container {
+    border-radius: 8px;
+  }
+  
+  .context-menu {
+    min-width: 180px;
+    font-size: 0.9rem;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .empty-state {
+    padding: 1.5rem 1rem;
+  }
+  
+  .file-icon {
+    font-size: 1.5rem;
+  }
+  
+  .context-menu {
+    min-width: 160px;
+    font-size: 0.85rem;
+    padding: 0.25rem 0;
+  }
+  
+  .context-menu-item {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.85rem;
+  }
+  
+  .stats-card {
+    padding: 1rem !important;
+  }
+}

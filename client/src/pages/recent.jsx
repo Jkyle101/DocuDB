@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -17,38 +17,54 @@ import {
   FaEllipsisV,
   FaArrowsAlt,
   FaShareAlt,
+  FaComment,
+  FaHistory,
   FaTrash,
 } from "react-icons/fa";
 
 import { BACKEND_URL } from "../config";
 import MoveModal from "../components/MoveModal";
 import ShareModal from "../components/ShareModal";
+import VersionModal from "../components/VersionModal";
+import CommentsModal from "../components/CommentsModal";
 
 
 
 export default function Recent() {
+  const userId = localStorage.getItem("userId");
+  const role = localStorage.getItem("role") || "user";
+  
   const [files, setFiles] = useState([]);
   const [view, setView] = useState("grid");
-  const [sortBy, setSortBy] = useState("newest");
+  const [sortBy, setSortBy] = useState("date");
+  const [sortOrder, setSortOrder] = useState("desc");
   const [moveTarget, setMoveTarget] = useState(null);
   const [shareTarget, setShareTarget] = useState(null);
+  const [versionTarget, setVersionTarget] = useState(null);
+  const [commentsTarget, setCommentsTarget] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
   const [contextMenu, setContextMenu] = useState({ visible: false, x: 0, y: 0, item: null });
 
   const [limit, setLimit] = useState(20);
 
-  // Fetch recent files
+  // Fetch recent files - only files uploaded by the current user
   useEffect(() => {
     const fetchRecent = async () => {
       try {
-        const res = await axios.get(`${BACKEND_URL}/files`, { params: { role: "admin" } });
+        // Pass userId to filter files by the current user
+        // Backend will automatically filter by userId for non-admin users
+        const res = await axios.get(`${BACKEND_URL}/files`, {
+          params: { userId, role, sortBy, sortOrder },
+        });
         setFiles(res.data);
       } catch (err) {
         console.error("Failed to fetch recent files:", err);
       }
     };
-    fetchRecent();
-  }, []);
+    if (userId) {
+      fetchRecent();
+    }
+  }, [userId, role, sortBy, sortOrder]);
 
   // File icons
   const iconByMime = useMemo(
@@ -74,21 +90,21 @@ export default function Recent() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
-  // Sorting
-  const sortedFiles = [...files].sort((a, b) => {
-    if (sortBy === "newest") return new Date(b.uploadDate) - new Date(a.uploadDate);
-    if (sortBy === "oldest") return new Date(a.uploadDate) - new Date(b.uploadDate);
-    if (sortBy === "name") return a.originalName.localeCompare(b.originalName);
-    if (sortBy === "size") return b.size - a.size;
-    return 0;
-  });
+  const sortedFiles = useMemo(() => {
+    const dir = sortOrder === "asc" ? 1 : -1;
+    return [...files].sort((a, b) => {
+      if (sortBy === "name") return dir * a.originalName.localeCompare(b.originalName);
+      if (sortBy === "size") return dir * ((a.size || 0) - (b.size || 0));
+      return dir * (new Date(a.uploadDate).getTime() - new Date(b.uploadDate).getTime());
+    });
+  }, [files, sortBy, sortOrder]);
 
   const visibleFiles = sortedFiles.slice(0, limit);
 
   // Delete file
   const deleteFile = async (file) => {
     if (!window.confirm(`Delete file "${file.originalName}"?`)) return;
-    await axios.delete(`${BACKEND_URL}/files/${file._id}`, { params: { role: "admin" } });
+    await axios.delete(`${BACKEND_URL}/files/${file._id}`, { params: { userId, role } });
     setFiles((s) => s.filter((f) => f._id !== file._id));
   };
 
@@ -104,14 +120,14 @@ export default function Recent() {
     });
   };
 
-  const handleClick = () => {
-    setContextMenu({ ...contextMenu, visible: false });
-  };
+  const handleClick = useCallback(() => {
+    setContextMenu((prev) => ({ ...prev, visible: false }));
+  }, []);
 
   useEffect(() => {
     document.addEventListener("click", handleClick);
     return () => document.removeEventListener("click", handleClick);
-  }, []);
+  }, [handleClick]);
 
   return (
     
@@ -141,10 +157,51 @@ export default function Recent() {
               <FaSort className="me-2" /> Sort
             </button>
             <ul className="dropdown-menu">
-              <li><button className="dropdown-item" onClick={() => setSortBy("newest")}>Newest First</button></li>
-              <li><button className="dropdown-item" onClick={() => setSortBy("oldest")}>Oldest First</button></li>
-              <li><button className="dropdown-item" onClick={() => setSortBy("name")}>Name (A–Z)</button></li>
-              <li><button className="dropdown-item" onClick={() => setSortBy("size")}>File Size</button></li>
+              <li>
+                <button
+                  className="dropdown-item"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (sortBy === "date") setSortOrder(sortOrder === "desc" ? "asc" : "desc");
+                    else {
+                      setSortBy("date");
+                      setSortOrder("desc");
+                    }
+                  }}
+                >
+                  Date {sortBy === "date" && (sortOrder === "desc" ? "↓" : "↑")}
+                </button>
+              </li>
+              <li>
+                <button
+                  className="dropdown-item"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (sortBy === "name") setSortOrder(sortOrder === "desc" ? "asc" : "desc");
+                    else {
+                      setSortBy("name");
+                      setSortOrder("desc");
+                    }
+                  }}
+                >
+                  Name {sortBy === "name" && (sortOrder === "desc" ? "↓" : "↑")}
+                </button>
+              </li>
+              <li>
+                <button
+                  className="dropdown-item"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (sortBy === "size") setSortOrder(sortOrder === "desc" ? "asc" : "desc");
+                    else {
+                      setSortBy("size");
+                      setSortOrder("desc");
+                    }
+                  }}
+                >
+                  Size {sortBy === "size" && (sortOrder === "desc" ? "↓" : "↑")}
+                </button>
+              </li>
             </ul>
           </div>
         </div>
@@ -198,6 +255,41 @@ export default function Recent() {
                   <div className="mb-3">{iconByMime(file.mimetype)}</div>
                   <h6 className="card-title text-truncate">{file.originalName}</h6>
                   <p className="text-muted small">{formatFileSize(file.size)}</p>
+                  <p className="text-muted small">
+                    {file.owner?._id?.toString() === userId || file.owner?.toString() === userId
+                      ? "You own the file"
+                      : `Owner: ${file.owner?.email || "—"}`}
+                  </p>
+                  <div className="btn-group btn-group-sm">
+                    <a
+                      className="btn btn-outline-secondary"
+                      href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      title="Preview"
+                    >
+                      <FaEye />
+                    </a>
+                    <a
+                      className="btn btn-outline-secondary"
+                      href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
+                      onClick={(e) => e.stopPropagation()}
+                      title="Download"
+                    >
+                      <FaCloudDownloadAlt />
+                    </a>
+                    <button
+                      className="btn btn-outline-secondary"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setCommentsTarget({ type: "file", item: file });
+                      }}
+                      title="Comments"
+                    >
+                      <FaComment />
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
@@ -209,10 +301,11 @@ export default function Recent() {
           <table className="table table-hover align-middle">
             <thead className="table-light">
               <tr>
-                <th width="40%">Name</th>
-                <th width="15%">Type</th>
-                <th width="15%">Size</th>
-                <th width="20%">Modified</th>
+                <th width="35%">Name</th>
+                <th width="12%">Type</th>
+                <th width="12%">Size</th>
+                <th width="16%">Modified</th>
+                <th width="15%">Owner</th>
                 <th width="10%" className="text-center">Actions</th>
               </tr>
             </thead>
@@ -231,21 +324,57 @@ export default function Recent() {
                   <td>{file.mimetype.split("/")[1] || file.mimetype}</td>
                   <td>{formatFileSize(file.size)}</td>
                   <td>{new Date(file.uploadDate).toLocaleDateString()}</td>
+                  <td>
+                    {file.owner?._id?.toString() === userId || file.owner?.toString() === userId
+                      ? "You own the file"
+                      : file.owner?.email || "—"}
+                  </td>
                   <td className="text-center">
-                    <button
-                      className="btn btn-sm btn-light"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setContextMenu({
-                          visible: true,
-                          x: e.pageX,
-                          y: e.pageY,
-                          item: { type: "file", data: file },
-                        });
-                      }}
-                    >
-                      <FaEllipsisV />
-                    </button>
+                    <div className="btn-group btn-group-sm">
+                      <a
+                        className="btn btn-outline-secondary"
+                        href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => e.stopPropagation()}
+                        title="Preview"
+                      >
+                        <FaEye />
+                      </a>
+                      <a
+                        className="btn btn-outline-secondary"
+                        href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Download"
+                      >
+                        <FaCloudDownloadAlt />
+                      </a>
+                      <button
+                        className="btn btn-outline-secondary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCommentsTarget({ type: "file", item: file });
+                        }}
+                        title="Comments"
+                      >
+                        <FaComment />
+                      </button>
+                      <button
+                        className="btn btn-outline-secondary"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setContextMenu({
+                            visible: true,
+                            x: e.pageX,
+                            y: e.pageY,
+                            item: { type: "file", data: file },
+                          });
+                        }}
+                        title="More"
+                      >
+                        <FaEllipsisV />
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -274,10 +403,10 @@ export default function Recent() {
             <FaFileAlt className="text-primary me-2" /> {contextMenu.item.data.originalName}
           </div>
           <div className="context-menu-divider"></div>
-          <a className="context-menu-item" href={`${BACKEND_URL}/view/${contextMenu.item.data.filename}`} target="_blank" rel="noreferrer">
+          <a className="context-menu-item" href={`${BACKEND_URL}/view/${contextMenu.item.data.filename}?userId=${userId}`} target="_blank" rel="noreferrer">
             <FaEye className="me-2" /> Preview
           </a>
-          <a className="context-menu-item" href={`${BACKEND_URL}/download/${contextMenu.item.data.filename}`}>
+          <a className="context-menu-item" href={`${BACKEND_URL}/download/${contextMenu.item.data.filename}?userId=${userId}`}>
             <FaCloudDownloadAlt className="me-2" /> Download
           </a>
           <button className="context-menu-item" onClick={() => setMoveTarget({ type: "file", item: contextMenu.item.data })}>
@@ -285,6 +414,18 @@ export default function Recent() {
           </button>
           <button className="context-menu-item" onClick={() => setShareTarget({ type: "file", item: contextMenu.item.data })}>
             <FaShareAlt className="me-2" /> Share
+          </button>
+          <button
+            className="context-menu-item"
+            onClick={() => setVersionTarget({ type: "file", item: contextMenu.item.data })}
+          >
+            <FaHistory className="me-2" /> Version History
+          </button>
+          <button
+            className="context-menu-item"
+            onClick={() => setCommentsTarget({ type: "file", item: contextMenu.item.data })}
+          >
+            <FaComment className="me-2" /> Comments
           </button>
           <div className="context-menu-divider"></div>
           <button className="context-menu-item text-danger" onClick={() => deleteFile(contextMenu.item.data)}>
@@ -318,6 +459,18 @@ export default function Recent() {
         <>
           <div className="modal-backdrop fade show"></div>
           <ShareModal onClose={() => setShareTarget(null)} target={shareTarget} />
+        </>
+      )}
+      {versionTarget && (
+        <>
+          <div className="modal-backdrop fade show"></div>
+          <VersionModal onClose={() => setVersionTarget(null)} target={versionTarget} />
+        </>
+      )}
+      {commentsTarget && (
+        <>
+          <div className="modal-backdrop fade show"></div>
+          <CommentsModal onClose={() => setCommentsTarget(null)} target={commentsTarget} />
         </>
       )}
     </div>

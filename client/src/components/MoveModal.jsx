@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-
-const API = "http://localhost:3001";
+import { BACKEND_URL } from "../config";
 
 export default function MoveModal({ onClose, target, currentFolder, onMoved }) {
   const userId = localStorage.getItem("userId");
@@ -13,7 +12,7 @@ export default function MoveModal({ onClose, target, currentFolder, onMoved }) {
   // Load all folders user can see
   useEffect(() => {
     axios
-      .get(`${API}/folders/all`, { params: { userId, role } })
+      .get(`${BACKEND_URL}/folders/all`, { params: { userId, role } })
       .then((res) => setAllFolders(res.data))
       .catch(console.error);
   }, [userId, role]);
@@ -22,15 +21,18 @@ export default function MoveModal({ onClose, target, currentFolder, onMoved }) {
   const move = async () => {
     try {
       if (target.type === "file") {
-        await axios.patch(`${API}/files/${target.item._id}/move`, {
+        await axios.patch(`${BACKEND_URL}/files/${target.item._id}/move`, {
           newFolderId: dest || null,
+          userId,
         });
       } else {
-        await axios.patch(`${API}/folders/${target.item._id}/move`, {
+        await axios.patch(`${BACKEND_URL}/folders/${target.item._id}/move`, {
           newFolderId: dest || null,
+          userId,
         });
       }
       if (onMoved) onMoved(currentFolder); // 🔑 refresh parent folder
+      onClose();
     } catch (err) {
       console.error("Error moving:", err);
     }

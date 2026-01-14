@@ -8,25 +8,54 @@ import {
   FaClock,
   FaUser,
   FaFile,
+  FaTimes,
+  FaUserFriends,
 } from "react-icons/fa";
 import Upload from "../pages/upload";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "./sidebar.css";
-function SidebarSuperAdmin() {  
+function SidebarSuperAdmin({ onClose }) {  
   const [showUpload, setShowUpload] = useState(false);
   const [userEmail, setUserEmail] = useState("");
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
 
   useEffect(() => {
     const email = localStorage.getItem("userEmail") || "admin@example.com";
     setUserEmail(email);
+    
+    const handleResize = () => {
+      setIsMobile(window.innerWidth < 992);
+    };
+    
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  const handleLinkClick = () => {
+    // Close sidebar on mobile when a link is clicked
+    if (isMobile && onClose) {
+      onClose();
+    }
+  };
 
   return (
     <>
       <div
-        className="d-flex flex-column bg-light border-end"
+        className="d-flex flex-column bg-light border-end sidebar-container"
         style={{ width: "250px", height: "100vh", padding: "1.5rem" }}
       >
+        {/* Mobile close button */}
+        {isMobile && (
+          <div className="d-flex justify-content-end mb-3">
+            <button
+              className="btn btn-sm btn-outline-secondary"
+              onClick={onClose}
+              aria-label="Close sidebar"
+            >
+              <FaTimes />
+            </button>
+          </div>
+        )}
         {/* User Info */}
         <div className="d-flex align-items-center mb-4">
           <FaUser className="text-primary me-3" />
@@ -46,9 +75,10 @@ function SidebarSuperAdmin() {
                 to="/admin/manageusers"
                 className={({ isActive }) =>
                   `nav-link d-flex align-items-center rounded ${
-                    isActive ? "bg-primary text-white" : "text-dark"
+                    isActive ? "active bg-primary text-white" : "text-dark"
                   }`
                 }
+                onClick={handleLinkClick}
               >
                 <FaUsers className="me-2" />
                 Manage Users
@@ -60,9 +90,10 @@ function SidebarSuperAdmin() {
                 to="/admin/systemlogs"
                 className={({ isActive }) =>
                   `nav-link d-flex align-items-center rounded ${
-                    isActive ? "bg-primary text-white" : "text-dark"
+                    isActive ? "active bg-primary text-white" : "text-dark"
                   }`
                 }
+                onClick={handleLinkClick}
               >
                 <FaDatabase className="me-2" />
                 System Logs
@@ -74,9 +105,10 @@ function SidebarSuperAdmin() {
                 to="/admin/"
                 className={({ isActive }) =>
                   `nav-link d-flex align-items-center rounded ${
-                    isActive ? "bg-primary text-white" : "text-dark"
+                    isActive ? "active bg-primary text-white" : "text-dark"
                   }`
                 }
+                onClick={handleLinkClick}
               >
                 <FaFile className="me-2" />
                 Documents
@@ -85,15 +117,16 @@ function SidebarSuperAdmin() {
 
             <li className="nav-item">
               <NavLink
-                to="/admin/trash"
+                to="/admin/groups"
                 className={({ isActive }) =>
                   `nav-link d-flex align-items-center rounded ${
-                    isActive ? "bg-primary text-white" : "text-dark"
+                    isActive ? "active bg-primary text-white" : "text-dark"
                   }`
                 }
+                onClick={handleLinkClick}
               >
-                <FaCog className="me-2" />
-                Settings
+                <FaUserFriends className="me-2" />
+                Groups
               </NavLink>
             </li>
           </ul>

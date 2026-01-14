@@ -5,6 +5,7 @@ const logSchema = new mongoose.Schema({
   action: String, // e.g., "upload", "delete", "login"
   details: String,
   date: { type: Date, default: Date.now },
+  timeStamp: { type: Date, default: Date.now },
 });
 
 module.exports = mongoose.model("Log", logSchema);

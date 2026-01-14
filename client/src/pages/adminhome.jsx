@@ -1,5 +1,5 @@
 // src/pages/AdminHome.jsx
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -17,6 +17,7 @@ import {
   FaFileVideo,
   FaCloudDownloadAlt,
   FaEye,
+  FaSort,
   FaTrash,
 } from "react-icons/fa";
 
@@ -29,11 +30,13 @@ export default function AdminHome() {
   const [files, setFiles] = useState([]);
   const [breadcrumbs, setBreadcrumbs] = useState([]);
   const [view, setView] = useState("grid");
+  const [sortBy, setSortBy] = useState("date");
+  const [sortOrder, setSortOrder] = useState("desc");
 
   // ✅ Fetch folders + files + breadcrumbs
-  const fetchFolderContents = async (folderId) => {
+  const fetchFolderContents = useCallback(async (folderId) => {
     try {
-      const params = { role, parentFolder: folderId || "" };
+      const params = { role, parentFolder: folderId || "", sortBy, sortOrder };
 
       const [fdrRes, filRes, bcRes] = await Promise.all([
         axios.get(`${BACKEND_URL}/folders`, { params }),
@@ -47,11 +50,11 @@ export default function AdminHome() {
     } catch (err) {
       console.error("Error fetching admin contents:", err);
     }
-  };
+  }, [role, sortBy, sortOrder]);
 
   useEffect(() => {
     fetchFolderContents(currentFolderId);
-  }, [currentFolderId]);
+  }, [fetchFolderContents, currentFolderId]);
 
   // File icons
   const iconByMime = useMemo(
@@ -88,12 +91,6 @@ export default function AdminHome() {
       return;
     await axios.delete(`${BACKEND_URL}/folders/${folder._id}`, { params: { role } });
     setFolders((s) => s.filter((f) => f._id !== folder._id));
-  };
-
-  const deleteFile = async (file) => {
-    if (!window.confirm(`Delete file "${file.originalName}"?`)) return;
-    await axios.delete(`${BACKEND_URL}/files/${file._id}`, { params: { role } });
-    setFiles((s) => s.filter((f) => f._id !== file._id));
   };
 
   // Format file size
@@ -137,26 +134,71 @@ export default function AdminHome() {
           </div>
         </div>
 
-        {/* View Toggles */}
-        <div className="btn-group" role="group">
-          <button
-            className={`btn ${
-              view === "grid" ? "btn-primary" : "btn-outline-primary"
-            }`}
-            onClick={() => setView("grid")}
-            title="Grid View"
-          >
-            <FaTh />
-          </button>
-          <button
-            className={`btn ${
-              view === "list" ? "btn-primary" : "btn-outline-primary"
-            }`}
-            onClick={() => setView("list")}
-            title="List View"
-          >
-            <FaList />
-          </button>
+        {/* View Toggles + Sort */}
+        <div className="d-flex align-items-center gap-2">
+          <div className="btn-group" role="group">
+            <button
+              className={`btn ${
+                view === "grid" ? "btn-primary" : "btn-outline-primary"
+              }`}
+              onClick={() => setView("grid")}
+              title="Grid View"
+            >
+              <FaTh />
+            </button>
+            <button
+              className={`btn ${
+                view === "list" ? "btn-primary" : "btn-outline-primary"
+              }`}
+              onClick={() => setView("list")}
+              title="List View"
+            >
+              <FaList />
+            </button>
+          </div>
+          <div className="dropdown">
+            <button
+              className="btn btn-outline-secondary dropdown-toggle d-flex align-items-center"
+              type="button"
+              data-bs-toggle="dropdown"
+            >
+              <FaSort className="me-2" /> Sort
+            </button>
+            <ul className="dropdown-menu">
+              <li>
+                <button
+                  className="dropdown-item"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (sortBy === "date") {
+                      setSortOrder(sortOrder === "desc" ? "asc" : "desc");
+                    } else {
+                      setSortBy("date");
+                      setSortOrder("desc");
+                    }
+                  }}
+                >
+                  Date {sortBy === "date" && (sortOrder === "desc" ? "↓" : "↑")}
+                </button>
+              </li>
+              <li>
+                <button
+                  className="dropdown-item"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (sortBy === "name") {
+                      setSortOrder(sortOrder === "desc" ? "asc" : "desc");
+                    } else {
+                      setSortBy("name");
+                      setSortOrder("desc");
+                    }
+                  }}
+                >
+                  Name {sortBy === "name" && (sortOrder === "desc" ? "↓" : "↑")}
+                </button>
+              </li>
+            </ul>
+          </div>
         </div>
       </div>
 
@@ -174,12 +216,7 @@ export default function AdminHome() {
                 <FaFolder size={42} className="text-warning mb-3" />
                 <h6 className="card-title text-truncate">{folder.name}</h6>
                 <p className="text-muted small">Owner: {folder.owner?.email}</p>
-                <button
-                  className="btn btn-sm btn-outline-danger mt-2"
-                  onClick={() => deleteFolder(folder)}
-                >
-                  <FaTrash /> Delete
-                </button>
+                
               </div>
             </div>
           ))}
@@ -207,12 +244,7 @@ export default function AdminHome() {
                   >
                     <FaCloudDownloadAlt />
                   </a>
-                  <button
-                    className="btn btn-sm btn-outline-danger"
-                    onClick={() => deleteFile(file)}
-                  >
-                    <FaTrash />
-                  </button>
+                  
                 </div>
               </div>
             </div>
@@ -278,12 +310,7 @@ export default function AdminHome() {
                       >
                         <FaCloudDownloadAlt />
                       </a>
-                      <button
-                        className="btn btn-sm btn-outline-danger"
-                        onClick={() => deleteFile(file)}
-                      >
-                        <FaTrash />
-                      </button>
+                      
                     </div>
                   </td>
                 </tr>

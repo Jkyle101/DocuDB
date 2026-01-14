@@ -58,3 +58,24 @@
 .sidebar .theme-toggle {
   cursor: pointer;
 }
+
+/* Admin sidebar styles */
+.sidebar-container .nav-link {
+  transition: all 0.2s ease;
+}
+
+.sidebar-container .nav-link:hover {
+  background-color: rgba(0, 123, 255, 0.1);
+  color: #0056b3;
+}
+
+.sidebar-container .nav-link.active {
+  background-color: #007bff !important;
+  color: white !important;
+  border-color: #007bff !important;
+}
+
+.sidebar-container .nav-link:focus {
+  box-shadow: none;
+  outline: none;
+}
