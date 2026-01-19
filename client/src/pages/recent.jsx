@@ -13,7 +13,6 @@ import {
   FaFileVideo,
   FaCloudDownloadAlt,
   FaEye,
-  FaSort,
   FaEllipsisV,
   FaArrowsAlt,
   FaShareAlt,
@@ -36,8 +35,6 @@ export default function Recent() {
   
   const [files, setFiles] = useState([]);
   const [view, setView] = useState("grid");
-  const [sortBy, setSortBy] = useState("date");
-  const [sortOrder, setSortOrder] = useState("desc");
   const [moveTarget, setMoveTarget] = useState(null);
   const [shareTarget, setShareTarget] = useState(null);
   const [versionTarget, setVersionTarget] = useState(null);
@@ -54,7 +51,7 @@ export default function Recent() {
         // Pass userId to filter files by the current user
         // Backend will automatically filter by userId for non-admin users
         const res = await axios.get(`${BACKEND_URL}/files`, {
-          params: { userId, role, sortBy, sortOrder },
+          params: { userId, role },
         });
         setFiles(res.data);
       } catch (err) {
@@ -64,7 +61,7 @@ export default function Recent() {
     if (userId) {
       fetchRecent();
     }
-  }, [userId, role, sortBy, sortOrder]);
+  }, [userId, role]);
 
   // File icons
   const iconByMime = useMemo(
@@ -90,16 +87,7 @@ export default function Recent() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
-  const sortedFiles = useMemo(() => {
-    const dir = sortOrder === "asc" ? 1 : -1;
-    return [...files].sort((a, b) => {
-      if (sortBy === "name") return dir * a.originalName.localeCompare(b.originalName);
-      if (sortBy === "size") return dir * ((a.size || 0) - (b.size || 0));
-      return dir * (new Date(a.uploadDate).getTime() - new Date(b.uploadDate).getTime());
-    });
-  }, [files, sortBy, sortOrder]);
-
-  const visibleFiles = sortedFiles.slice(0, limit);
+  const visibleFiles = files.slice(0, limit);
 
   // Delete file
   const deleteFile = async (file) => {
@@ -136,7 +124,7 @@ export default function Recent() {
       <div className="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
         <h4 className="fw-bold text-primary mb-0">Recent Files</h4>
 
-        {/* View + Sort */}
+        {/* View */}
         <div className="d-flex align-items-center gap-2 flex-wrap">
           <div className="btn-group" role="group">
             <button className={`btn ${view === "grid" ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setView("grid")}>
@@ -145,64 +133,6 @@ export default function Recent() {
             <button className={`btn ${view === "list" ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setView("list")}>
               <FaList />
             </button>
-          </div>
-
-          {/* Sort dropdown */}
-          <div className="dropdown">
-            <button
-              className="btn btn-outline-secondary dropdown-toggle d-flex align-items-center"
-              type="button"
-              data-bs-toggle="dropdown"
-            >
-              <FaSort className="me-2" /> Sort
-            </button>
-            <ul className="dropdown-menu">
-              <li>
-                <button
-                  className="dropdown-item"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (sortBy === "date") setSortOrder(sortOrder === "desc" ? "asc" : "desc");
-                    else {
-                      setSortBy("date");
-                      setSortOrder("desc");
-                    }
-                  }}
-                >
-                  Date {sortBy === "date" && (sortOrder === "desc" ? "↓" : "↑")}
-                </button>
-              </li>
-              <li>
-                <button
-                  className="dropdown-item"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (sortBy === "name") setSortOrder(sortOrder === "desc" ? "asc" : "desc");
-                    else {
-                      setSortBy("name");
-                      setSortOrder("desc");
-                    }
-                  }}
-                >
-                  Name {sortBy === "name" && (sortOrder === "desc" ? "↓" : "↑")}
-                </button>
-              </li>
-              <li>
-                <button
-                  className="dropdown-item"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (sortBy === "size") setSortOrder(sortOrder === "desc" ? "asc" : "desc");
-                    else {
-                      setSortBy("size");
-                      setSortOrder("desc");
-                    }
-                  }}
-                >
-                  Size {sortBy === "size" && (sortOrder === "desc" ? "↓" : "↑")}
-                </button>
-              </li>
-            </ul>
           </div>
         </div>
       </div>

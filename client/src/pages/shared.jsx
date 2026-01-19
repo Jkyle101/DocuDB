@@ -16,7 +16,6 @@ import {
   FaList,
   FaEye,
   FaCloudDownloadAlt,
-  FaSort,
   FaHistory,
   FaComment,
 } from "react-icons/fa";
@@ -37,8 +36,6 @@ export default function Shared() {
   const [commentsTarget, setCommentsTarget] = useState(null);
   const [currentFolderId, setCurrentFolderId] = useState(null);
   const [view, setView] = useState("grid");
-  const [sortBy, setSortBy] = useState("date");
-  const [sortOrder, setSortOrder] = useState("desc");
 
   // Breadcrumbs
   const [breadcrumbs, setBreadcrumbs] = useState([
@@ -49,14 +46,14 @@ export default function Shared() {
   const fetchShared = useCallback(async (folderId = null) => {
     try {
       const res = await axios.get(`${BACKEND_URL}/shared`, {
-        params: { userId, folderId, sortBy, sortOrder },
+        params: { userId, folderId },
       });
       setFolders(res.data.folders || []);
       setFiles(res.data.files || []);
     } catch (err) {
       console.error(err);
     }
-  }, [userId, sortBy, sortOrder]);
+  }, [userId]);
 
   useEffect(() => {
     fetchShared(currentFolderId).catch(console.error);
@@ -124,7 +121,7 @@ export default function Shared() {
           ))}
         </div>
 
-        {/* View Toggles + Sort */}
+        {/* View Toggles */}
         <div className="d-flex align-items-center gap-2">
           <div className="btn-group">
             <button
@@ -141,49 +138,6 @@ export default function Shared() {
             >
               <FaList />
             </button>
-          </div>
-          <div className="dropdown">
-            <button
-              className="btn btn-outline-secondary dropdown-toggle d-flex align-items-center"
-              type="button"
-              data-bs-toggle="dropdown"
-            >
-              <FaSort className="me-2" /> Sort
-            </button>
-            <ul className="dropdown-menu">
-              <li>
-                <button
-                  className="dropdown-item"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (sortBy === "date") {
-                      setSortOrder(sortOrder === "desc" ? "asc" : "desc");
-                    } else {
-                      setSortBy("date");
-                      setSortOrder("desc");
-                    }
-                  }}
-                >
-                  Date {sortBy === "date" && (sortOrder === "desc" ? "↓" : "↑")}
-                </button>
-              </li>
-              <li>
-                <button
-                  className="dropdown-item"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    if (sortBy === "name") {
-                      setSortOrder(sortOrder === "desc" ? "asc" : "desc");
-                    } else {
-                      setSortBy("name");
-                      setSortOrder("desc");
-                    }
-                  }}
-                >
-                  Name {sortBy === "name" && (sortOrder === "desc" ? "↓" : "↑")}
-                </button>
-              </li>
-            </ul>
           </div>
         </div>
       </div>

@@ -22,9 +22,6 @@ import {
   FaEllipsisV,
   FaCloudDownloadAlt,
   FaEye,
-  FaSort,
-  FaSortUp,
-  FaSortDown,
   FaHistory,
   FaComment,
   FaUsers,
@@ -55,8 +52,6 @@ export default function Home() {
   const [currentFolder, setCurrentFolder] = useState(null);
 
   const [view, setView] = useState("grid");
-  const [sortBy, setSortBy] = useState("date");
-  const [sortOrder, setSortOrder] = useState("desc");
   const [showCreate, setShowCreate] = useState(false);
   const [showUpload, setShowUpload] = useState(false);
   const [moveTarget, setMoveTarget] = useState(null);
@@ -84,12 +79,10 @@ export default function Home() {
 
   // Fetch folders + files + breadcrumbs
   const fetchFolderContents = useCallback(async (folderId) => {
-    const params = { 
-      userId, 
-      role, 
+    const params = {
+      userId,
+      role,
       parentFolder: folderId || "",
-      sortBy,
-      sortOrder
     };
     const [fdrRes, filRes, bcRes] = await Promise.all([
       axios.get(`${BACKEND_URL}/folders`, { params }),
@@ -99,7 +92,7 @@ export default function Home() {
     setFolders(fdrRes.data);
     setFiles(filRes.data);
     setBreadcrumbs(bcRes.data);
-  }, [userId, role, sortBy, sortOrder]);
+  }, [userId, role]);
 
   useEffect(() => {
     fetchFolderContents(currentFolder).catch(console.error);
@@ -256,49 +249,6 @@ export default function Home() {
               >
                 <FaList />
               </button>
-            </div>
-            <div className="dropdown">
-              <button
-                className="btn btn-outline-secondary dropdown-toggle d-flex align-items-center"
-                type="button"
-                data-bs-toggle="dropdown"
-              >
-                <FaSort className="me-2" /> Sort
-              </button>
-              <ul className="dropdown-menu">
-                <li>
-                  <button
-                    className="dropdown-item"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      if (sortBy === "date") {
-                        setSortOrder(sortOrder === "desc" ? "asc" : "desc");
-                      } else {
-                        setSortBy("date");
-                        setSortOrder("desc");
-                      }
-                    }}
-                  >
-                    Date {sortBy === "date" && (sortOrder === "desc" ? "↓" : "↑")}
-                  </button>
-                </li>
-                <li>
-                  <button
-                    className="dropdown-item"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      if (sortBy === "name") {
-                        setSortOrder(sortOrder === "desc" ? "asc" : "desc");
-                      } else {
-                        setSortBy("name");
-                        setSortOrder("desc");
-                      }
-                    }}
-                  >
-                    Name {sortBy === "name" && (sortOrder === "desc" ? "↓" : "↑")}
-                  </button>
-                </li>
-              </ul>
             </div>
             <button
               className="btn btn-primary d-flex align-items-center"
