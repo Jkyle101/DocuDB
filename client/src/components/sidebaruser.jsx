@@ -154,7 +154,7 @@ function Sidebar({ onClose }) {
           <div>
             <h6 className="px-3 py-2 mb-2 text-muted small fw-bold text-uppercase"
                 style={{letterSpacing: '0.5px'}}>
-              Management
+             
             </h6>
             <ul className="nav nav-pills flex-column gap-1">
               {/* Trash removed from user side */}

@@ -91,10 +91,6 @@ function SidebarSuperAdmin({ onClose }) {
         {/* Navigation */}
         <nav className="flex-grow-1 p-2">
           <div className="mb-3">
-            <h6 className="px-3 py-2 mb-2 text-muted small fw-bold text-uppercase"
-                style={{letterSpacing: '0.5px'}}>
-              Management
-            </h6>
             <ul className="nav nav-pills flex-column gap-1">
               <li className="nav-item">
                 <NavLink
