@@ -13,6 +13,7 @@ import MyGroups from "./pages/mygroups"; // my groups page
 import ManageUsers from "./pages/adminside/manageusers"; // manage users page
 import SystemLogs from "./pages/adminside/systemlogs.jsx"; //system logs
 import ManageGroups from "./pages/adminside/managegroups"; // manage groups page
+import AdminTrash from "./pages/adminside/trash"; // admin trash page
 
 function App() {
   return (
@@ -46,16 +47,7 @@ function App() {
           <Route index element={<Shared />} />
         </Route>
 
-        <Route
-          path="/trash"
-          element={
-            <ProtectedRoute allowedRole="user">
-              <Layout role="user" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<Trash />} />
-        </Route>
+
 
         <Route
           path="/recent"
@@ -120,6 +112,16 @@ function App() {
           }
         >
           <Route index element={<ManageGroups />} />
+        </Route>
+        <Route
+          path="/admin/trash"
+          element={
+            <ProtectedRoute allowedRole="admin">
+              <Layout role="admin" />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<AdminTrash />} />
         </Route>
       </Routes>
     </Router>

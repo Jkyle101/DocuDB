@@ -228,9 +228,34 @@ app.get("/files", async (req, res) => {
       sortOptions.uploadDate = -1; // default: newest first
     }
 
-    const files = await File.find(query)
+    // First get files matching the query
+    let files = await File.find(query)
       .populate("owner", "email")
       .sort(sortOptions);
+
+    // Filter out files whose parent folders are deleted
+    if (files.length > 0) {
+      const parentFolderIds = files
+        .map(f => f.parentFolder)
+        .filter(id => id !== null && id !== undefined);
+
+      if (parentFolderIds.length > 0) {
+        // Get all parent folders that are not deleted
+        const existingFolders = await Folder.find({
+          _id: { $in: parentFolderIds },
+          deletedAt: null
+        }).select('_id');
+
+        const existingFolderIds = new Set(existingFolders.map(f => f._id.toString()));
+
+        // Filter files to only include those with no parent folder or parent folder that exists and is not deleted
+        files = files.filter(file => {
+          const parentId = file.parentFolder?.toString();
+          return !parentId || existingFolderIds.has(parentId);
+        });
+      }
+    }
+
     res.json(files);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch files" });
@@ -842,9 +867,14 @@ app.get("/trash", async (req, res) => {
   }
 });
 
-// Restore file
+// Restore file (Admin only)
 app.patch("/trash/files/:id/restore", async (req, res) => {
   try {
+    const { role } = req.query;
+    if (role !== "admin" && role !== "superadmin") {
+      return res.status(403).json({ error: "Only admins can restore files" });
+    }
+
     const file = await File.findByIdAndUpdate(
       req.params.id,
       { deletedAt: null },
@@ -861,9 +891,14 @@ app.patch("/trash/files/:id/restore", async (req, res) => {
   }
 });
 
-// Restore folder
+// Restore folder (Admin only)
 app.patch("/trash/folders/:id/restore", async (req, res) => {
   try {
+    const { role } = req.query;
+    if (role !== "admin" && role !== "superadmin") {
+      return res.status(403).json({ error: "Only admins can restore folders" });
+    }
+
     const folder = await Folder.findByIdAndUpdate(
       req.params.id,
       { deletedAt: null },
@@ -880,9 +915,14 @@ app.patch("/trash/folders/:id/restore", async (req, res) => {
   }
 });
 
-// Permanently delete file
+// Permanently delete file (Admin only)
 app.delete("/trash/files/:id", async (req, res) => {
   try {
+    const { role } = req.query;
+    if (role !== "admin" && role !== "superadmin") {
+      return res.status(403).json({ error: "Only admins can permanently delete files" });
+    }
+
     const file = await File.findByIdAndDelete(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
 
@@ -895,9 +935,14 @@ app.delete("/trash/files/:id", async (req, res) => {
   }
 });
 
-// Permanently delete folder
+// Permanently delete folder (Admin only)
 app.delete("/trash/folders/:id", async (req, res) => {
   try {
+    const { role } = req.query;
+    if (role !== "admin" && role !== "superadmin") {
+      return res.status(403).json({ error: "Only admins can permanently delete folders" });
+    }
+
     const folder = await Folder.findByIdAndDelete(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
 
