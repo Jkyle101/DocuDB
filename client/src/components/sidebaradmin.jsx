@@ -9,6 +9,7 @@ import {
   FaUser,
   FaFile,
   FaTimes,
+  FaTrash,
   FaUserFriends,
 } from "react-icons/fa";
 import Upload from "../pages/upload";
@@ -145,6 +146,21 @@ function SidebarSuperAdmin({ onClose }) {
                 >
                   <FaFile className="me-2" size={16} />
                   Documents
+                </NavLink>
+              </li>
+
+              <li className="nav-item">
+                <NavLink
+                  to="/admin/trash"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${
+                      isActive ? "active bg-primary text-white" : "text-dark"
+                    }`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaTrash className="me-2" size={16} />
+                  Trash Management
                 </NavLink>
               </li>
 

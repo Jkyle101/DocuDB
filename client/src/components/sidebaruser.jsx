@@ -157,20 +157,7 @@ function Sidebar({ onClose }) {
               Management
             </h6>
             <ul className="nav nav-pills flex-column gap-1">
-              <li className="nav-item">
-                <NavLink
-                  to="/trash"
-                  className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${
-                      isActive ? "active bg-primary text-white" : "text-dark"
-                    }`
-                  }
-                  onClick={handleLinkClick}
-                >
-                  <FaTrash className="me-2" size={16} />
-                  Trash
-                </NavLink>
-              </li>
+              {/* Trash removed from user side */}
             </ul>
           </div>
         </nav>
