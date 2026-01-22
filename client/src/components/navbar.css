@@ -334,6 +334,8 @@
   min-width: 280px;
   padding: 0;
   background: #ffffff;
+  position: absolute;
+  z-index: 1050;
 }
 
 .dropdown-header-google {
@@ -648,4 +650,44 @@
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+/* Settings Modal Styles */
+.user-avatar-modal {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 3px solid #ffffff;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  margin: 0 auto;
+}
+
+.user-avatar-img-modal {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
+.notification-badge-modal {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  background: #ef4444;
+  color: white;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  min-width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid white;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
 }

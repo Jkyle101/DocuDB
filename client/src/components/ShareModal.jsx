@@ -83,20 +83,26 @@ export default function ShareModal({ onClose, target }) {
   };
 
   const submit = async () => {
-    // backend will resolve emails → userIds
-    const body = {
-      emails: emails
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-      permission,
-    };
-    if (target.type === "file") {
-      await axios.patch(`${BACKEND_URL}/files/${target.item._id}/share`, body);
-    } else {
-      await axios.patch(`${BACKEND_URL}/folders/${target.item._id}/share`, body);
+    try {
+      // backend will resolve emails → userIds
+      const body = {
+        emails: emails
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+        permission,
+      };
+      if (target.type === "file") {
+        await axios.patch(`${BACKEND_URL}/files/${target.item._id}/share`, body);
+      } else {
+        await axios.patch(`${BACKEND_URL}/folders/${target.item._id}/share`, body);
+      }
+      // Modal closes automatically after successful sharing
+      onClose();
+    } catch (err) {
+      console.error("Share failed:", err.response?.data || err.message);
+      alert(err.response?.data?.error || "Error sharing item");
     }
-    onClose();
   };
 
   return (

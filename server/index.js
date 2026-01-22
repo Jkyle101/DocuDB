@@ -1433,6 +1433,129 @@ app.patch("/users/:id/status", async (req, res) => {
   }
 });
 
+// Admin: Create single user
+app.post("/admin/users", async (req, res) => {
+  try {
+    const { email, password, name, role } = req.body;
+
+    // Validate required fields
+    if (!email || !password) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+
+    // Check if user already exists
+    const existingUser = await UserModel.findOne({ email });
+    if (existingUser) {
+      return res.status(409).json({ error: "User with this email already exists" });
+    }
+
+    // Validate role
+    if (role && !["user", "admin"].includes(role)) {
+      return res.status(400).json({ error: "Invalid role. Must be 'user' or 'admin'" });
+    }
+
+    // Create new user
+    const newUser = new UserModel({
+      email,
+      password, // Will be hashed by the model
+      name: name || "",
+      role: role || "user",
+      active: true
+    });
+
+    await newUser.save();
+
+    // Log user creation
+    createLog("CREATE_USER", newUser._id, `Admin created user: ${email}`);
+
+    // Return user without password
+    const { password: _, ...userWithoutPassword } = newUser.toObject();
+    res.json({ success: true, user: userWithoutPassword });
+  } catch (err) {
+    console.error("Create user error:", err);
+    res.status(500).json({ error: "Failed to create user" });
+  }
+});
+
+// Admin: Bulk import users
+app.post("/admin/users/bulk", async (req, res) => {
+  try {
+    const { users } = req.body;
+
+    if (!users || !Array.isArray(users) || users.length === 0) {
+      return res.status(400).json({ error: "Users array is required" });
+    }
+
+    if (users.length > 1000) {
+      return res.status(400).json({ error: "Maximum 1000 users can be imported at once" });
+    }
+
+    let successful = 0;
+    let failed = 0;
+    const errors = [];
+
+    for (let i = 0; i < users.length; i++) {
+      const user = users[i];
+
+      try {
+        // Validate required fields
+        if (!user.email || !user.password) {
+          errors.push(`Row ${i + 1}: Email and password are required`);
+          failed++;
+          continue;
+        }
+
+        // Check if user already exists
+        const existingUser = await UserModel.findOne({ email: user.email });
+        if (existingUser) {
+          errors.push(`Row ${i + 1}: User with email ${user.email} already exists`);
+          failed++;
+          continue;
+        }
+
+        // Validate role
+        const userRole = user.role || "user";
+        if (!["user", "admin"].includes(userRole)) {
+          errors.push(`Row ${i + 1}: Invalid role '${userRole}'. Must be 'user' or 'admin'`);
+          failed++;
+          continue;
+        }
+
+        // Create new user
+        const newUser = new UserModel({
+          email: user.email,
+          password: user.password,
+          name: user.name || "",
+          role: userRole,
+          active: true
+        });
+
+        await newUser.save();
+        successful++;
+
+        // Log user creation
+        createLog("BULK_CREATE_USER", newUser._id, `Bulk imported user: ${user.email}`);
+
+      } catch (userErr) {
+        console.error(`Error creating user ${user.email}:`, userErr);
+        errors.push(`Row ${i + 1}: ${userErr.message || "Unknown error"}`);
+        failed++;
+      }
+    }
+
+    res.json({
+      successful,
+      failed,
+      total: users.length,
+      errors: errors.length > 0 ? errors : undefined
+    });
+
+  } catch (err) {
+    console.error("Bulk import error:", err);
+    res.status(500).json({ error: "Bulk import failed" });
+  }
+});
+
 // Get user statistics
 app.get("/users/stats", async (req, res) => {
   try {
@@ -2379,7 +2502,6 @@ app.get("/notifications/:userId", async (req, res) => {
     }
 
     const notifications = await Notification.find({ userId })
-      .populate("userId", "email name")
       .sort({ createdAt: -1 })
       .limit(100); // Limit to prevent too many results
 

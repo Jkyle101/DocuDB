@@ -17,6 +17,7 @@ export default function CreateFolderModal({ onClose, onCreated, parentFolder }) 
       });
 
       onCreated(data.folder);
+      // Modal closes automatically after successful creation
       onClose();
     } catch (err) {
       console.error("Create folder failed:", err.response?.data || err.message);

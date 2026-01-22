@@ -33,6 +33,7 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [lastNotificationCount, setLastNotificationCount] = useState(0);
   const [isMobileSearchExpanded, setIsMobileSearchExpanded] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
   const userId = localStorage.getItem("userId");
   const role = localStorage.getItem("role") || "user";
@@ -470,7 +471,10 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
 
                 <li>
                   <Link to="/help" className="dropdown-item dropdown-item-google"
-                        onClick={() => document.querySelector('#settingsDropdown').click()}>
+                        onClick={() => {
+                          document.querySelector('#settingsDropdown').click();
+                          setIsMobileSearchExpanded(false);
+                        }}>
                     <FaQuestionCircle />
                     <span>Help & feedback</span>
                   </Link>
@@ -571,6 +575,88 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
                 )}
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Settings Modal */}
+      {isSettingsModalOpen && (
+        <div className="modal d-block" tabIndex="-1">
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  <FaCog className="me-2" />
+                  Settings & Account
+                </h5>
+                <button type="button" className="btn-close" onClick={() => setIsSettingsModalOpen(false)}></button>
+              </div>
+              <div className="modal-body">
+                <div className="text-center mb-4">
+                  <div className="user-avatar-modal mb-3">
+                    {localStorage.getItem('profilePicture') ? (
+                      <img
+                        src={`${BACKEND_URL}/uploads/${localStorage.getItem('profilePicture')}`}
+                        alt="Profile"
+                        className="user-avatar-img-modal"
+                      />
+                    ) : (
+                      <FaUser size={40} />
+                    )}
+                  </div>
+                  <h6>{localStorage.getItem("email")}</h6>
+                  <small className="text-muted">{role}</small>
+                </div>
+
+                <div className="d-grid gap-2">
+                  <Link
+                    to="/settings"
+                    className="btn btn-outline-primary d-flex align-items-center justify-content-start"
+                    onClick={() => setIsSettingsModalOpen(false)}
+                  >
+                    <FaCog className="me-2" />
+                    Settings
+                  </Link>
+
+                  <Link
+                    to="/help"
+                    className="btn btn-outline-info d-flex align-items-center justify-content-start"
+                    onClick={() => setIsSettingsModalOpen(false)}
+                  >
+                    <FaQuestionCircle className="me-2" />
+                    Help & Feedback
+                  </Link>
+
+                  {!isAdminPage && (
+                    <Link
+                      to="/notifications"
+                      className="btn btn-outline-warning d-flex align-items-center justify-content-start position-relative"
+                      onClick={() => setIsSettingsModalOpen(false)}
+                    >
+                      <FaBell className="me-2" />
+                      Notifications
+                      {unreadNotifications > 0 && (
+                        <span className="notification-badge-modal">
+                          {unreadNotifications > 99 ? '99+' : unreadNotifications}
+                        </span>
+                      )}
+                    </Link>
+                  )}
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button
+                  className="btn btn-outline-danger"
+                  onClick={() => {
+                    setIsSettingsModalOpen(false);
+                    handleLogout();
+                  }}
+                >
+                  <FaSignOutAlt className="me-2" />
+                  Sign Out
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -740,66 +826,15 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
               </Link>
             )}
 
-            {/* Settings Dropdown */}
-            <div className="dropdown">
-              <button
-                className="navbar-icon-google"
-                type="button"
-                id="settingsDropdown"
-                data-bs-toggle="dropdown"
-                aria-expanded="false"
-                title="Settings"
-              >
-                <FaCog size={20} />
-              </button>
-
-              <ul className="dropdown-menu dropdown-menu-google" aria-labelledby="settingsDropdown">
-                <li>
-                  <div className="dropdown-header-google">
-                    <div className="user-info-google">
-                      <div className="user-avatar-dropdown-google">
-                        <FaUser size={16} />
-                      </div>
-                      <div className="user-details-google">
-                        <div className="user-email-google">{localStorage.getItem("email")}</div>
-                        <div className="user-role-google">{role}</div>
-                      </div>
-                    </div>
-                  </div>
-                </li>
-
-                <li><hr className="dropdown-divider-google" /></li>
-
-                <li>
-                  <Link to="/settings" className="dropdown-item dropdown-item-google"
-                        onClick={() => document.querySelector('#settingsDropdown').click()}>
-                    <FaCog />
-                    <span>Settings</span>
-                  </Link>
-                </li>
-
-                <li>
-                  <Link to="/help" className="dropdown-item dropdown-item-google"
-                        onClick={() => document.querySelector('#settingsDropdown').click()}>
-                    <FaQuestionCircle />
-                    <span>Help & feedback</span>
-                  </Link>
-                </li>
-
-                <li><hr className="dropdown-divider-google" /></li>
-
-                <li>
-                  <button
-                    className="dropdown-item dropdown-item-google dropdown-item-danger-google"
-                    type="button"
-                    onClick={handleLogout}
-                  >
-                    <FaSignOutAlt />
-                    <span>Sign out</span>
-                  </button>
-                </li>
-              </ul>
-            </div>
+            {/* Settings Button */}
+            <button
+              className="navbar-icon-google"
+              type="button"
+              onClick={() => setIsSettingsModalOpen(true)}
+              title="Settings"
+            >
+              <FaCog size={20} />
+            </button>
           </div>
         </div>
       </nav>

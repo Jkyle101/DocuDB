@@ -62,8 +62,6 @@ export default function Home() {
   const [selectedItem, setSelectedItem] = useState(null);
   const [contextMenu, setContextMenu] = useState({
     visible: false,
-    x: 0,
-    y: 0,
     item: null,
   });
 
@@ -158,8 +156,6 @@ export default function Home() {
     setSelectedItem(item);
     setContextMenu({
       visible: true,
-      x: e.pageX,
-      y: e.pageY,
       item: item,
     });
   };
@@ -315,12 +311,7 @@ export default function Home() {
                         className="btn btn-sm btn-light"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setContextMenu({
-                            visible: true,
-                            x: e.pageX,
-                            y: e.pageY,
-                            item: { type: "folder", data: folder },
-                          });
+                          handleContextMenu(e, { type: "folder", data: folder });
                         }}
                       >
                         <FaEllipsisV />
@@ -396,12 +387,7 @@ export default function Home() {
                         className="btn btn-sm btn-light"
                         onClick={(e) => {
                           e.stopPropagation();
-                          setContextMenu({
-                            visible: true,
-                            x: e.pageX,
-                            y: e.pageY,
-                            item: { type: "file", data: file },
-                          });
+                          handleContextMenu(e, { type: "file", data: file });
                         }}
                       >
                         <FaEllipsisV />
@@ -734,187 +720,249 @@ export default function Home() {
           </div>
         )}
 
-        {/* Context Menu */}
+        {/* File/Folder Actions Modal */}
         {contextMenu.visible && (
-          <div
-            className="context-menu show"
-            style={{ top: contextMenu.y, left: contextMenu.x }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="context-menu-header">
-              {contextMenu.item.type === "folder" ? (
-                <>
-                  <FaFolder className="text-warning me-2" />{" "}
-                  {contextMenu.item.data.name}
-                </>
-              ) : (
-                <>
-                  <FaFileAlt className="text-primary me-2" />{" "}
-                  {contextMenu.item.data.originalName}
-                </>
-              )}
+          <div className="modal d-block" tabIndex="-1">
+            <div className="modal-dialog modal-dialog-centered">
+              <div className="modal-content">
+                <div className="modal-header">
+                  <h5 className="modal-title">
+                    {contextMenu.item.type === "folder" ? (
+                      <>
+                        <FaFolder className="text-warning me-2" />
+                        {contextMenu.item.data.name}
+                      </>
+                    ) : (
+                      <>
+                        <FaFileAlt className="text-primary me-2" />
+                        {contextMenu.item.data.originalName}
+                      </>
+                    )}
+                  </h5>
+                  <button
+                    type="button"
+                    className="btn-close"
+                    onClick={() => setContextMenu({ visible: false, item: null })}
+                  ></button>
+                </div>
+                <div className="modal-body">
+                  <div className="d-grid gap-2">
+                    {contextMenu.item.type === "folder" ? (
+                      <>
+                        <button
+                          className="btn btn-outline-primary d-flex align-items-center"
+                          onClick={() => {
+                            goInto(contextMenu.item.data._id);
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaEye className="me-2" />
+                          Open Folder
+                        </button>
+                        <button
+                          className="btn btn-outline-secondary d-flex align-items-center"
+                          onClick={() => {
+                            setMoveTarget({
+                              type: "folder",
+                              item: contextMenu.item.data,
+                            });
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaArrowsAlt className="me-2" />
+                          Move
+                        </button>
+                        <button
+                          className="btn btn-outline-info d-flex align-items-center"
+                          onClick={() => {
+                            setShareTarget({
+                              type: "folder",
+                              item: contextMenu.item.data,
+                            });
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaShareAlt className="me-2" />
+                          Share
+                        </button>
+                        <button
+                          className="btn btn-outline-warning d-flex align-items-center"
+                          onClick={() => {
+                            setManageSharesTarget({
+                              type: "folder",
+                              item: contextMenu.item.data,
+                            });
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaUsers className="me-2" />
+                          Manage Shares
+                        </button>
+                        <button
+                          className="btn btn-outline-secondary d-flex align-items-center"
+                          onClick={() => {
+                            setVersionTarget({
+                              type: "folder",
+                              item: contextMenu.item.data,
+                            });
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaHistory className="me-2" />
+                          Version History
+                        </button>
+                        <button
+                          className="btn btn-outline-secondary d-flex align-items-center"
+                          onClick={() => {
+                            setCommentsTarget({
+                              type: "folder",
+                              item: contextMenu.item.data,
+                            });
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaComment className="me-2" />
+                          Comments
+                        </button>
+                        <hr />
+                        <button
+                          className="btn btn-outline-success d-flex align-items-center"
+                          onClick={() => {
+                            setRenameTarget(contextMenu.item);
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaFileSignature className="me-2" />
+                          Rename
+                        </button>
+                        <button
+                          className="btn btn-outline-danger d-flex align-items-center"
+                          onClick={() => {
+                            deleteFolder(contextMenu.item.data);
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaTrash className="me-2" />
+                          Delete
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <a
+                          className="btn btn-outline-primary d-flex align-items-center"
+                          href={`${BACKEND_URL}/view/${contextMenu.item.data.filename}?userId=${userId}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          onClick={() => setContextMenu({ visible: false, item: null })}
+                        >
+                          <FaEye className="me-2" />
+                          Preview
+                        </a>
+                        <a
+                          className="btn btn-outline-success d-flex align-items-center"
+                          href={`${BACKEND_URL}/download/${contextMenu.item.data.filename}?userId=${userId}`}
+                          onClick={() => setContextMenu({ visible: false, item: null })}
+                        >
+                          <FaCloudDownloadAlt className="me-2" />
+                          Download
+                        </a>
+                        <button
+                          className="btn btn-outline-secondary d-flex align-items-center"
+                          onClick={() => {
+                            setMoveTarget({ type: "file", item: contextMenu.item.data });
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaArrowsAlt className="me-2" />
+                          Move
+                        </button>
+                        <button
+                          className="btn btn-outline-info d-flex align-items-center"
+                          onClick={() => {
+                            setShareTarget({
+                              type: "file",
+                              item: contextMenu.item.data,
+                            });
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaShareAlt className="me-2" />
+                          Share
+                        </button>
+                        <button
+                          className="btn btn-outline-warning d-flex align-items-center"
+                          onClick={() => {
+                            setManageSharesTarget({
+                              type: "file",
+                              item: contextMenu.item.data,
+                            });
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaUsers className="me-2" />
+                          Manage Shares
+                        </button>
+                        <button
+                          className="btn btn-outline-secondary d-flex align-items-center"
+                          onClick={() => {
+                            setVersionTarget({
+                              type: "file",
+                              item: contextMenu.item.data,
+                            });
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaHistory className="me-2" />
+                          Version History
+                        </button>
+                        <button
+                          className="btn btn-outline-secondary d-flex align-items-center"
+                          onClick={() => {
+                            setCommentsTarget({
+                              type: "file",
+                              item: contextMenu.item.data,
+                            });
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaComment className="me-2" />
+                          Comments
+                        </button>
+                        <hr />
+                        <button
+                          className="btn btn-outline-success d-flex align-items-center"
+                          onClick={() => {
+                            setRenameTarget(contextMenu.item);
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaFileSignature className="me-2" />
+                          Rename
+                        </button>
+                        <button
+                          className="btn btn-outline-danger d-flex align-items-center"
+                          onClick={() => {
+                            deleteFile(contextMenu.item.data);
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaTrash className="me-2" />
+                          Delete
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+                <div className="modal-footer">
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setContextMenu({ visible: false, item: null })}
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
             </div>
-            <div className="context-menu-divider"></div>
-            {contextMenu.item.type === "folder" ? (
-              <>
-                <button
-                  className="context-menu-item"
-                  onClick={() => goInto(contextMenu.item.data._id)}
-                >
-                  <FaEye className="me-2" /> Open
-                </button>
-                <button
-                  className="context-menu-item"
-                  onClick={() =>
-                    setMoveTarget({
-                      type: "folder",
-                      item: contextMenu.item.data,
-                    })
-                  }
-                >
-                  <FaArrowsAlt className="me-2" /> Move
-                </button>
-                <button
-                  className="context-menu-item"
-                  onClick={() =>
-                    setShareTarget({
-                      type: "folder",
-                      item: contextMenu.item.data,
-                    })
-                  }
-                >
-                  <FaShareAlt className="me-2" /> Share
-                </button>
-                <button
-                  className="context-menu-item"
-                  onClick={() =>
-                    setManageSharesTarget({
-                      type: "folder",
-                      item: contextMenu.item.data,
-                    })
-                  }
-                >
-                  <FaUsers className="me-2" /> Manage Shares
-                </button>
-                <button
-                  className="context-menu-item"
-                  onClick={() =>
-                    setVersionTarget({
-                      type: "folder",
-                      item: contextMenu.item.data,
-                    })
-                  }
-                >
-                  <FaHistory className="me-2" /> Version History
-                </button>
-                <button
-                  className="context-menu-item"
-                  onClick={() =>
-                    setCommentsTarget({
-                      type: "folder",
-                      item: contextMenu.item.data,
-                    })
-                  }
-                >
-                  <FaComment className="me-2" /> Comments
-                </button>
-                <div className="context-menu-divider"></div>
-                <button
-                  className="context-menu-item text-danger"
-                  onClick={() => deleteFolder(contextMenu.item.data)}
-                >
-                  <FaTrash className="me-2" /> Delete
-                </button>
-                <button
-                  className="context-menu-item"
-                  onClick={() => setRenameTarget(contextMenu.item)}
-                >
-                  <FaFileSignature className="me-2" /> Rename
-                </button>
-              </>
-            ) : (
-              <>
-                <a
-                  className="context-menu-item"
-                  href={`${BACKEND_URL}/view/${contextMenu.item.data.filename}?userId=${userId}`}
-                  target="_blank"
-                  rel="noreferrer"
-                >
-                  <FaEye className="me-2" /> Preview
-                </a>
-                <a
-                  className="context-menu-item"
-                  href={`${BACKEND_URL}/download/${contextMenu.item.data.filename}?userId=${userId}`}
-                >
-                  <FaCloudDownloadAlt className="me-2" /> Download
-                </a>
-                <button
-                  className="context-menu-item"
-                  onClick={() =>
-                    setMoveTarget({ type: "file", item: contextMenu.item.data })
-                  }
-                >
-                  <FaArrowsAlt className="me-2" /> Move
-                </button>
-                <button
-                  className="context-menu-item"
-                  onClick={() =>
-                    setShareTarget({
-                      type: "file",
-                      item: contextMenu.item.data,
-                    })
-                  }
-                >
-                  <FaShareAlt className="me-2" /> Share
-                </button>
-                <button
-                  className="context-menu-item"
-                  onClick={() =>
-                    setManageSharesTarget({
-                      type: "file",
-                      item: contextMenu.item.data,
-                    })
-                  }
-                >
-                  <FaShareAlt className="me-2" /> Manage Shares
-                </button>
-                <button
-                  className="context-menu-item"
-                  onClick={() =>
-                    setVersionTarget({
-                      type: "file",
-                      item: contextMenu.item.data,
-                    })
-                  }
-                >
-                  <FaHistory className="me-2" /> Version History
-                </button>
-                <button
-                  className="context-menu-item"
-                  onClick={() =>
-                    setCommentsTarget({
-                      type: "file",
-                      item: contextMenu.item.data,
-                    })
-                  }
-                >
-                  <FaComment className="me-2" /> Comments
-                </button>
-                <div className="context-menu-divider"></div>
-                <button
-                  className="context-menu-item text-danger"
-                  onClick={() => deleteFile(contextMenu.item.data)}
-                >
-                  <FaTrash className="me-2" /> Delete
-                </button>
-                <button
-                  className="context-menu-item"
-                  onClick={() => setRenameTarget(contextMenu.item)}
-                >
-                  <FaFileSignature className="me-2" /> Rename
-                </button>
-              </>
-            )}
           </div>
         )}
 

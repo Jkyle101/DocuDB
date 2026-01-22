@@ -1,9 +1,9 @@
-import React, { useEffect, useState, useMemo } from "react";
+import React, { useEffect, useState, useMemo, useRef } from "react";
 import axios from "axios";
 import { useOutletContext } from "react-router-dom";
 import {
   FaEnvelope, FaSync, FaUsers, FaUserCheck, FaUserTimes, FaUserCog,
-  FaSearch, FaFilter, FaUserPlus,
+  FaSearch, FaFilter, FaUserPlus, FaUpload, FaFileExcel, FaFileCode,
   FaCalendarAlt, FaShieldAlt, FaUser, FaChartBar, FaCrown, FaKey, FaCheck, FaTimes
 } from "react-icons/fa";
 import {
@@ -21,6 +21,16 @@ export default function ManageUsers() {
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
+
+  // User creation states
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [showBulkImportModal, setShowBulkImportModal] = useState(false);
+  const [newUser, setNewUser] = useState({ email: "", password: "", name: "", role: "user" });
+  const [bulkUsers, setBulkUsers] = useState([]);
+  const [bulkImportResults, setBulkImportResults] = useState(null);
+  const [importing, setImporting] = useState(false);
+
+  const fileInputRef = useRef(null);
 
   // Get user role and search results
   const role = localStorage.getItem("role") || "user";
@@ -198,6 +208,133 @@ export default function ManageUsers() {
       console.error("Failed to reject password request:", err);
       alert("Failed to reject password change request.");
     }
+  };
+
+  // Add single user
+  const addUser = async () => {
+    if (!newUser.email || !newUser.password) {
+      alert("Email and password are required.");
+      return;
+    }
+
+    try {
+      await axios.post(`${BACKEND_URL}/admin/users`, newUser);
+      alert("User added successfully!");
+      setNewUser({ email: "", password: "", name: "", role: "user" });
+      setShowAddUserModal(false);
+      fetchUsers();
+    } catch (err) {
+      console.error("Failed to add user:", err);
+      alert(err.response?.data?.error || "Failed to add user.");
+    }
+  };
+
+  // Handle file upload for bulk import
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+
+    const allowedTypes = [
+      'application/json',
+      'text/csv',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel'
+    ];
+
+    if (!allowedTypes.includes(file.type)) {
+      alert("Please upload a JSON, CSV, or Excel file.");
+      return;
+    }
+
+    try {
+      const fileContent = await readFileContent(file);
+      const parsedUsers = parseUserData(fileContent, file.type);
+      setBulkUsers(parsedUsers);
+    } catch (err) {
+      console.error("Error reading file:", err);
+      alert("Error reading file. Please check the format.");
+    }
+  };
+
+  // Read file content
+  const readFileContent = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = (e) => resolve(e.target.result);
+      reader.onerror = reject;
+      reader.readAsText(file);
+    });
+  };
+
+  // Parse user data from different file formats
+  const parseUserData = (content, fileType) => {
+    try {
+      if (fileType === 'application/json') {
+        const data = JSON.parse(content);
+        return Array.isArray(data) ? data : [data];
+      } else if (fileType.includes('csv') || fileType.includes('excel')) {
+        // Simple CSV parsing (assuming first row is headers)
+        const lines = content.split('\n').filter(line => line.trim());
+        if (lines.length < 2) throw new Error("CSV must have at least a header row and one data row");
+
+        const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+        const emailIndex = headers.indexOf('email');
+        const passwordIndex = headers.indexOf('password');
+        const nameIndex = headers.indexOf('name');
+
+        if (emailIndex === -1 || passwordIndex === -1) {
+          throw new Error("CSV must contain 'email' and 'password' columns");
+        }
+
+        return lines.slice(1).map((line, index) => {
+          const values = line.split(',').map(v => v.trim());
+          return {
+            email: values[emailIndex],
+            password: values[passwordIndex],
+            name: nameIndex >= 0 ? values[nameIndex] : '',
+            role: 'user',
+            lineNumber: index + 2
+          };
+        });
+      }
+      throw new Error("Unsupported file format");
+    } catch (err) {
+      throw new Error(`Error parsing file: ${err.message}`);
+    }
+  };
+
+  // Bulk import users
+  const bulkImportUsers = async () => {
+    if (bulkUsers.length === 0) return;
+
+    setImporting(true);
+    try {
+      const response = await axios.post(`${BACKEND_URL}/admin/users/bulk`, {
+        users: bulkUsers
+      });
+
+      setBulkImportResults(response.data);
+      alert(`Bulk import completed! ${response.data.successful} users added, ${response.data.failed} failed.`);
+
+      // Reset form
+      setBulkUsers([]);
+      setBulkImportResults(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      setShowBulkImportModal(false);
+      fetchUsers();
+    } catch (err) {
+      console.error("Bulk import failed:", err);
+      alert(err.response?.data?.error || "Bulk import failed.");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  // Reset bulk import
+  const resetBulkImport = () => {
+    setBulkUsers([]);
+    setBulkImportResults(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   return (
@@ -420,10 +557,38 @@ export default function ManageUsers() {
                 <FaUserCog className="me-2" />
                 User Management
               </h6>
-              <button className="btn btn-sm btn-outline-primary">
-                <FaUserPlus className="me-1" />
-                Add User
-              </button>
+              <div className="dropdown">
+                <button
+                  className="btn btn-sm btn-outline-primary dropdown-toggle"
+                  type="button"
+                  id="addUserDropdown"
+                  data-bs-toggle="dropdown"
+                  aria-expanded="false"
+                >
+                  <FaUserPlus className="me-1" />
+                  Add User
+                </button>
+                <ul className="dropdown-menu" aria-labelledby="addUserDropdown">
+                  <li>
+                    <button
+                      className="dropdown-item"
+                      onClick={() => setShowAddUserModal(true)}
+                    >
+                      <FaUserPlus className="me-2" />
+                      Add Single User
+                    </button>
+                  </li>
+                  <li>
+                    <button
+                      className="dropdown-item"
+                      onClick={() => setShowBulkImportModal(true)}
+                    >
+                      <FaUpload className="me-2" />
+                      Bulk Import Users
+                    </button>
+                  </li>
+                </ul>
+              </div>
             </div>
             <div className="card-body p-0">
               <div className="table-responsive">
@@ -633,6 +798,222 @@ export default function ManageUsers() {
                   )}
                 </tbody>
               </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Single User Modal */}
+      {showAddUserModal && (
+        <div className="modal d-block" tabIndex="-1">
+          <div className="modal-dialog modal-dialog-centered">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  <FaUserPlus className="me-2" />
+                  Add New User
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setShowAddUserModal(false)}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <form onSubmit={(e) => { e.preventDefault(); addUser(); }}>
+                  <div className="mb-3">
+                    <label className="form-label">Email Address</label>
+                    <input
+                      type="email"
+                      className="form-control"
+                      value={newUser.email}
+                      onChange={(e) => setNewUser({ ...newUser, email: e.target.value })}
+                      placeholder="user@example.com"
+                      required
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Password</label>
+                    <input
+                      type="password"
+                      className="form-control"
+                      value={newUser.password}
+                      onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
+                      placeholder="Enter password"
+                      required
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Full Name (Optional)</label>
+                    <input
+                      type="text"
+                      className="form-control"
+                      value={newUser.name}
+                      onChange={(e) => setNewUser({ ...newUser, name: e.target.value })}
+                      placeholder="John Doe"
+                    />
+                  </div>
+                  <div className="mb-3">
+                    <label className="form-label">Role</label>
+                    <select
+                      className="form-select"
+                      value={newUser.role}
+                      onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
+                    >
+                      <option value="user">User</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                  </div>
+                </form>
+              </div>
+              <div className="modal-footer">
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setShowAddUserModal(false)}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={addUser}
+                  disabled={!newUser.email || !newUser.password}
+                >
+                  <FaUserPlus className="me-2" />
+                  Add User
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Import Modal */}
+      {showBulkImportModal && (
+        <div className="modal d-block" tabIndex="-1">
+          <div className="modal-dialog modal-dialog-centered modal-lg">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">
+                  <FaUpload className="me-2" />
+                  Bulk Import Users
+                </h5>
+                <button
+                  type="button"
+                  className="btn-close"
+                  onClick={() => setShowBulkImportModal(false)}
+                ></button>
+              </div>
+              <div className="modal-body">
+                <div className="alert alert-info">
+                  <strong>Supported Formats:</strong> JSON, CSV, Excel files
+                  <br />
+                  <strong>Required Columns:</strong> email, password
+                  <br />
+                  <strong>Optional Columns:</strong> name
+                  <br />
+                  <strong>Default Role:</strong> user
+                </div>
+
+                <div className="mb-3">
+                  <label className="form-label">Upload File</label>
+                  <input
+                    type="file"
+                    className="form-control"
+                    ref={fileInputRef}
+                    onChange={handleFileUpload}
+                    accept=".json,.csv,.xlsx,.xls"
+                  />
+                </div>
+
+                {bulkUsers.length > 0 && (
+                  <div className="mb-3">
+                    <h6>Preview ({bulkUsers.length} users)</h6>
+                    <div className="table-responsive" style={{ maxHeight: "300px", overflowY: "auto" }}>
+                      <table className="table table-sm">
+                        <thead>
+                          <tr>
+                            <th>#</th>
+                            <th>Email</th>
+                            <th>Password</th>
+                            <th>Name</th>
+                            <th>Role</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {bulkUsers.slice(0, 10).map((user, index) => (
+                            <tr key={index}>
+                              <td>{index + 1}</td>
+                              <td>{user.email}</td>
+                              <td>••••••••</td>
+                              <td>{user.name || "—"}</td>
+                              <td>{user.role}</td>
+                            </tr>
+                          ))}
+                          {bulkUsers.length > 10 && (
+                            <tr>
+                              <td colSpan="5" className="text-muted text-center">
+                                ... and {bulkUsers.length - 10} more users
+                              </td>
+                            </tr>
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+
+                {bulkImportResults && (
+                  <div className="mb-3">
+                    <h6>Import Results</h6>
+                    <div className="alert alert-success">
+                      <strong>Success:</strong> {bulkImportResults.successful} users added
+                    </div>
+                    {bulkImportResults.failed > 0 && (
+                      <div className="alert alert-warning">
+                        <strong>Failed:</strong> {bulkImportResults.failed} users failed to import
+                        {bulkImportResults.errors && (
+                          <ul className="mt-2 mb-0">
+                            {bulkImportResults.errors.slice(0, 5).map((error, index) => (
+                              <li key={index} className="small">{error}</li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <div className="modal-footer">
+                <button
+                  className="btn btn-secondary"
+                  onClick={resetBulkImport}
+                >
+                  Reset
+                </button>
+                <button
+                  className="btn btn-secondary"
+                  onClick={() => setShowBulkImportModal(false)}
+                >
+                  Close
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={bulkImportUsers}
+                  disabled={bulkUsers.length === 0 || importing}
+                >
+                  {importing ? (
+                    <>
+                      <span className="spinner-border spinner-border-sm me-2" role="status"></span>
+                      Importing...
+                    </>
+                  ) : (
+                    <>
+                      <FaUpload className="me-2" />
+                      Import {bulkUsers.length} Users
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
           </div>
         </div>

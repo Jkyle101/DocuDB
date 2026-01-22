@@ -32,15 +32,17 @@ export default function MoveModal({ onClose, target, currentFolder, onMoved }) {
         });
       }
       if (onMoved) onMoved(currentFolder); // 🔑 refresh parent folder
+      // Modal closes automatically after successful move
       onClose();
     } catch (err) {
       console.error("Error moving:", err);
+      alert("Error moving item");
     }
   };
 
   return (
     <div className="modal d-block" tabIndex="-1">
-      <div className="modal-dialog">
+      <div className="modal-dialog modal-dialog-centered">
         <div className="modal-content">
           <div className="modal-header">
             <h5 className="modal-title">Move {target.type}</h5>
