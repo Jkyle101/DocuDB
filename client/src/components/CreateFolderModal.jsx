@@ -1,7 +1,6 @@
 import React, { useState } from "react";
 import axios from "axios";
-
-const API = "http://localhost:3001";
+import { BACKEND_URL } from "../config";
 
 export default function CreateFolderModal({ onClose, onCreated, parentFolder }) {
   const [name, setName] = useState("");
@@ -11,7 +10,7 @@ export default function CreateFolderModal({ onClose, onCreated, parentFolder }) 
     try {
       const owner = localStorage.getItem("userId"); // match backend naming
 
-      const { data } = await axios.post(`${API}/folders`, {
+      const { data } = await axios.post(`${BACKEND_URL}/folders`, {
         name,
         owner,
         parentFolder: parentFolder || null,

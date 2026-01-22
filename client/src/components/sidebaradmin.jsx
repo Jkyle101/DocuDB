@@ -1,6 +1,6 @@
 // src/components/SidebarSuperAdmin.jsx
 import React, { useState, useEffect } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import {
   FaUsers,
   FaCog,
@@ -11,6 +11,7 @@ import {
   FaTimes,
   FaTrash,
   FaUserFriends,
+  FaSignOutAlt,
 } from "react-icons/fa";
 import Upload from "../pages/upload";
 import "bootstrap/dist/css/bootstrap.min.css";
@@ -20,6 +21,7 @@ function SidebarSuperAdmin({ onClose }) {
   const [userEmail, setUserEmail] = useState("");
   const [userRole, setUserRole] = useState("");
   const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
+  const navigate = useNavigate();
 
   useEffect(() => {
     const email = localStorage.getItem("email") || "admin@example.com";
@@ -40,6 +42,14 @@ function SidebarSuperAdmin({ onClose }) {
     if (isMobile && onClose) {
       onClose();
     }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("isLoggedIn");
+    localStorage.removeItem("email");
+    localStorage.removeItem("userId");
+    localStorage.removeItem("role");
+    navigate("/login");
   };
 
   return (
@@ -67,13 +77,13 @@ function SidebarSuperAdmin({ onClose }) {
         )}
 
         {/* Header */}
-        <div className="p-3 border-bottom bg-white">
+        <div className="p-3 border-bottom bg-white flex-shrink-0">
           <h5 className="mb-1 text-primary">Admin Panel</h5>
           <small className="text-muted">Management Console</small>
         </div>
 
         {/* User Info */}
-        <div className="p-3 border-bottom">
+        <div className="p-3 border-bottom flex-shrink-0">
           <div className="d-flex align-items-center">
             <div className="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center me-3"
                  style={{width: '40px', height: '40px'}}>
@@ -88,8 +98,8 @@ function SidebarSuperAdmin({ onClose }) {
           </div>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-grow-1 p-2">
+        {/* Navigation - Scrollable */}
+        <nav className="flex-grow-1 p-2 overflow-auto">
           <div className="mb-3">
             <ul className="nav nav-pills flex-column gap-1">
               <li className="nav-item">
@@ -177,13 +187,6 @@ function SidebarSuperAdmin({ onClose }) {
             </ul>
           </div>
         </nav>
-
-        {/* Footer */}
-        <div className="p-3 border-top bg-light">
-          <small className="text-muted d-block text-center">
-            © 2024 DocuDB Admin
-          </small>
-        </div>
       </div>
 
       {/* Upload Modal */}

@@ -198,88 +198,89 @@ export default function Home() {
 
   return (
     <>
-      <div className="container-fluid py-3 file-manager-container">
-        {/* Header */}
-        <div className="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-          {/* Breadcrumbs */}
-          <div className="d-flex align-items-center gap-2 flex-wrap">
-            {currentFolder && (
-              <button className="btn btn-outline-secondary" onClick={goUp}>
-                <FaArrowLeft className="me-1" /> Back
-              </button>
-            )}
-            <div className="d-flex align-items-center flex-wrap overflow-auto">
-              <span className="fw-bold me-2 text-primary">My Drive</span>
-              {breadcrumbs.length > 0 &&
-                breadcrumbs.map((b) => (
-                  <span
-                    key={b._id || "root"}
-                    className="d-flex align-items-center"
-                  >
-                    <FaChevronRight className="mx-2 text-muted" size={12} />
-                    <button
-                      className="btn btn-link p-0 text-dark text-decoration-none"
-                      onClick={() => setCurrentFolder(b._id || null)}
-                    >
-                      {b.name || "Root"}
-                    </button>
-                  </span>
-                ))}
+      <div className="page-container">
+        {/* Page Header */}
+        <div className="page-header">
+          <div className="d-flex justify-content-between align-items-start flex-wrap gap-3">
+            <div className="flex-grow-1">
+              <h4 className="mb-1">My Drive</h4>
+              <div className="d-flex align-items-center gap-2 flex-wrap">
+                {currentFolder && (
+                  <button className="btn btn-sm btn-outline-secondary" onClick={goUp}>
+                    <FaArrowLeft className="me-1" /> Back
+                  </button>
+                )}
+                <div className="d-flex align-items-center flex-wrap overflow-auto">
+                  <span className="fw-semibold text-primary me-2">Home</span>
+                  {breadcrumbs.length > 0 &&
+                    breadcrumbs.map((b) => (
+                      <span
+                        key={b._id || "root"}
+                        className="d-flex align-items-center"
+                      >
+                        <FaChevronRight className="mx-2 text-muted" size={12} />
+                        <button
+                          className="btn btn-link p-0 text-dark text-decoration-none fw-semibold"
+                          onClick={() => setCurrentFolder(b._id || null)}
+                        >
+                          {b.name || "Root"}
+                        </button>
+                      </span>
+                    ))}
+                </div>
+              </div>
             </div>
-          </div>
 
-          {/* View Toggles + Actions */}
-          <div className="d-flex align-items-center gap-2 flex-wrap">
-            <div className="btn-group" role="group">
+            {/* View Toggles + Actions */}
+            <div className="action-buttons">
+              <div className="view-toggles me-3">
+                <button
+                  className={`btn ${view === "grid" ? "btn-primary" : "btn-outline-primary"}`}
+                  onClick={() => setView("grid")}
+                  title="Grid View"
+                >
+                  <FaTh />
+                </button>
+                <button
+                  className={`btn ${view === "list" ? "btn-primary" : "btn-outline-primary"}`}
+                  onClick={() => setView("list")}
+                  title="List View"
+                >
+                  <FaList />
+                </button>
+              </div>
               <button
-                className={`btn ${
-                  view === "grid" ? "btn-primary" : "btn-outline-primary"
-                }`}
-                onClick={() => setView("grid")}
-                title="Grid View"
+                className="btn btn-primary"
+                onClick={() => setShowCreate(true)}
               >
-                <FaTh />
+                <FaPlus className="me-1" /> New Folder
               </button>
               <button
-                className={`btn ${
-                  view === "list" ? "btn-primary" : "btn-outline-primary"
-                }`}
-                onClick={() => setView("list")}
-                title="List View"
+                className="btn btn-success"
+                onClick={() => setShowUpload(true)}
               >
-                <FaList />
+                <FaUpload className="me-1" /> Upload
               </button>
             </div>
-            <button
-              className="btn btn-primary d-flex align-items-center"
-              onClick={() => setShowCreate(true)}
-            >
-              <FaPlus className="me-1" /> New Folder
-            </button>
-            <button
-              className="btn btn-success d-flex align-items-center"
-              onClick={() => setShowUpload(true)}
-            >
-              <FaUpload className="me-1" /> Upload
-            </button>
           </div>
         </div>
 
-        {/* Stats */}
-        <div className="row mb-4">
-          <div className="col-12">
-            <div className="card stats-card">
-              <div className="card-body py-2">
-                <div className="d-flex justify-content-between">
-                  <span className="text-muted">
-                    {folders.length} folder{folders.length !== 1 ? "s" : ""},{" "}
-                    {files.length} file{files.length !== 1 ? "s" : ""}
-                  </span>
-                  <span className="text-muted">
-                    Last updated: {new Date().toLocaleTimeString()}
-                  </span>
-                </div>
+        {/* Stats Section */}
+        <div className="stats-section">
+          <div className="stats-row">
+            <div className="stat-card">
+              <div className="icon primary">
+                <FaFolder />
               </div>
+              <h4>{folders.length}</h4>
+              <p>Folders</p>
+            </div>
+            <div className="stat-card">
+              <div className="icon success">
+                <FaFileAlt />
+              </div>
+              <h4>{files.length}</h4>
+              <p>Files</p>
             </div>
           </div>
         </div>
@@ -330,7 +331,13 @@ export default function Home() {
                       className="text-warning mb-3 folder-icon"
                     />
                     <h6 className="card-title text-truncate">{folder.name}</h6>
-                    <p className="text-muted small mb-0">Folder</p>
+                    <p className="text-muted small mb-1">Folder</p>
+                    {folder.isShared && folder.ownerEmail && (
+                      <p className="text-info small mb-0">
+                        <FaUsers className="me-1" />
+                        Shared by {folder.ownerEmail}
+                      </p>
+                    )}
                     <div className="btn-group btn-group-sm mt-2">
                       <button
                         className="btn btn-outline-secondary"
@@ -404,9 +411,15 @@ export default function Home() {
                     <h6 className="card-title text-truncate">
                       {file.originalName}
                     </h6>
-                    <p className="text-muted small">
+                    <p className="text-muted small mb-1">
                       {formatFileSize(file.size)}
                     </p>
+                    {file.isShared && file.ownerEmail && (
+                      <p className="text-info small mb-0">
+                        <FaUsers className="me-1" />
+                        Shared by {file.ownerEmail}
+                      </p>
+                    )}
                     <div className="btn-group w-100" role="group">
                       <a
                         className="btn btn-sm btn-outline-primary"
@@ -461,6 +474,7 @@ export default function Home() {
                   <tr>
                     <th>Name</th>
                     <th>Type</th>
+                    <th>Owner</th>
                     <th>Size</th>
                     <th>Modified</th>
                     <th className="text-center">Actions</th>
@@ -491,6 +505,16 @@ export default function Home() {
                         <span className="text-truncate">{folder.name}</span>
                       </td>
                       <td>Folder</td>
+                      <td>
+                        {folder.isShared && folder.ownerEmail ? (
+                          <span className="text-info">
+                            <FaUsers className="me-1" />
+                            {folder.ownerEmail}
+                          </span>
+                        ) : (
+                          <span className="text-muted">You</span>
+                        )}
+                      </td>
                       <td>—</td>
                       <td>{new Date(folder.createdAt).toLocaleDateString()}</td>
                       <td className="text-center">
@@ -582,6 +606,16 @@ export default function Home() {
                         </span>
                       </td>
                       <td>{file.mimetype.split("/")[1] || file.mimetype}</td>
+                      <td>
+                        {file.isShared && file.ownerEmail ? (
+                          <span className="text-info">
+                            <FaUsers className="me-1" />
+                            {file.ownerEmail}
+                          </span>
+                        ) : (
+                          <span className="text-muted">You</span>
+                        )}
+                      </td>
                       <td>{formatFileSize(file.size)}</td>
                       <td>{new Date(file.uploadDate).toLocaleDateString()}</td>
                       <td className="text-center">

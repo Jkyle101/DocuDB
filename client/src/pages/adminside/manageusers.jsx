@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
+import { useOutletContext } from "react-router-dom";
 import {
   FaEnvelope, FaSync, FaUsers, FaUserCheck, FaUserTimes, FaUserCog,
   FaSearch, FaFilter, FaUserPlus,
-  FaCalendarAlt, FaShieldAlt, FaUser, FaChartBar
+  FaCalendarAlt, FaShieldAlt, FaUser, FaChartBar, FaCrown, FaKey, FaCheck, FaTimes
 } from "react-icons/fa";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip
@@ -14,11 +15,17 @@ import { BACKEND_URL } from "../../config";
 export default function ManageUsers() {
   const [users, setUsers] = useState([]);
   const [userStats, setUserStats] = useState({});
+  const [passwordRequests, setPasswordRequests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
+
+  // Get user role and search results
+  const role = localStorage.getItem("role") || "user";
+  const userId = localStorage.getItem("userId");
+  const { searchResults } = useOutletContext();
 
   // Fetch users from backend
   const fetchUsers = async () => {
@@ -37,14 +44,35 @@ export default function ManageUsers() {
     }
   };
 
+  // Fetch password requests from backend
+  const fetchPasswordRequests = async () => {
+    try {
+      const response = await axios.get(`${BACKEND_URL}/admin/password-requests?role=${encodeURIComponent(role)}`);
+      setPasswordRequests(response.data || []);
+    } catch (err) {
+      console.error("Failed to fetch password requests:", err);
+    }
+  };
+
   useEffect(() => {
     fetchUsers();
+    fetchPasswordRequests();
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "password-requests") {
+      fetchPasswordRequests();
+    }
+  }, [activeTab]);
 
   // Get user initials for avatar
   const getUserInitials = (name, email) => {
-    const displayName = name || email.split('@')[0];
-    return displayName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+    try {
+      const displayName = name || (email && email.split('@')[0]) || "";
+      return displayName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+    } catch (error) {
+      return "U"; // Default to "U" for User if anything fails
+    }
   };
 
   // Get role icon
@@ -140,6 +168,38 @@ export default function ManageUsers() {
     }
   };
 
+  // Approve password change request
+  const approvePasswordRequest = async (requestId) => {
+    if (!window.confirm("Approve this password change request?")) return;
+
+    try {
+      await axios.patch(`${BACKEND_URL}/admin/password-requests/${requestId}/approve`, {
+        adminId: userId
+      });
+      alert("Password change request approved successfully.");
+      fetchPasswordRequests();
+    } catch (err) {
+      console.error("Failed to approve password request:", err);
+      alert("Failed to approve password change request.");
+    }
+  };
+
+  // Reject password change request
+  const rejectPasswordRequest = async (requestId) => {
+    if (!window.confirm("Reject this password change request?")) return;
+
+    try {
+      await axios.patch(`${BACKEND_URL}/admin/password-requests/${requestId}/reject`, {
+        adminId: userId
+      });
+      alert("Password change request rejected.");
+      fetchPasswordRequests();
+    } catch (err) {
+      console.error("Failed to reject password request:", err);
+      alert("Failed to reject password change request.");
+    }
+  };
+
   return (
     <div className="container-fluid py-3">
       {/* Header */}
@@ -177,6 +237,14 @@ export default function ManageUsers() {
             onClick={() => setActiveTab("users")}
           >
             <FaUserCog className="me-1" /> Manage Users
+          </button>
+        </li>
+        <li className="nav-item">
+          <button
+            className={`nav-link ${activeTab === "password-requests" ? "active" : ""}`}
+            onClick={() => setActiveTab("password-requests")}
+          >
+            <FaKey className="me-1" /> Password Requests
           </button>
         </li>
       </ul>
@@ -455,6 +523,120 @@ export default function ManageUsers() {
         </>
       )}
 
+      {/* Password Requests Tab */}
+      {activeTab === "password-requests" && (
+        <div className="card shadow-sm">
+          <div className="card-header d-flex justify-content-between align-items-center">
+            <h6 className="mb-0">
+              <FaKey className="me-2" />
+              Password Change Requests
+            </h6>
+            <button
+              className="btn btn-sm btn-outline-primary"
+              onClick={fetchPasswordRequests}
+            >
+              <FaSync className="me-1" />
+              Refresh
+            </button>
+          </div>
+          <div className="card-body p-0">
+            <div className="table-responsive">
+              <table className="table table-hover align-middle mb-0">
+                <thead className="table-light">
+                  <tr>
+                    <th>User</th>
+                    <th>Email</th>
+                    <th>Request Date</th>
+                    <th>Status</th>
+                    <th className="text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {passwordRequests.length === 0 ? (
+                    <tr>
+                      <td colSpan="5" className="text-center text-muted py-4">
+                        <FaKey className="me-2" size={24} />
+                        No password change requests
+                      </td>
+                    </tr>
+                  ) : (
+                    passwordRequests.map((request) => (
+                      <tr key={request._id}>
+                        <td>
+                          <div className="d-flex align-items-center">
+                            <div className="avatar-circle bg-primary text-white me-3 d-flex align-items-center justify-content-center" style={{width: '40px', height: '40px', borderRadius: '50%', fontSize: '14px', fontWeight: 'bold'}}>
+                              {getUserInitials(request.userId?.name, request.userId?.email)}
+                            </div>
+                            <div>
+                              <strong className="text-primary">{request.userId?.name || "N/A"}</strong>
+                            </div>
+                          </div>
+                        </td>
+                        <td>
+                          <a href={`mailto:${request.userId?.email}`} className="text-decoration-none">
+                            <FaEnvelope className="me-1 text-muted" />
+                            {request.userId?.email}
+                          </a>
+                        </td>
+                        <td>
+                          <small className="text-muted">
+                            {new Date(request.createdAt).toLocaleDateString()}
+                            <br />
+                            {new Date(request.createdAt).toLocaleTimeString()}
+                          </small>
+                        </td>
+                        <td>
+                          <span className={`badge ${
+                            request.status === 'pending' ? 'bg-warning' :
+                            request.status === 'approved' ? 'bg-success' :
+                            'bg-danger'
+                          }`}>
+                            {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
+                          </span>
+                        </td>
+                        <td className="text-center">
+                          {request.status === 'pending' && (
+                            <div className="btn-group">
+                              <button
+                                className="btn btn-sm btn-outline-success"
+                                onClick={() => approvePasswordRequest(request._id)}
+                                title="Approve Password Change"
+                              >
+                                <FaCheck className="me-1" />
+                                Approve
+                              </button>
+                              <button
+                                className="btn btn-sm btn-outline-danger"
+                                onClick={() => rejectPasswordRequest(request._id)}
+                                title="Reject Password Change"
+                              >
+                                <FaTimes className="me-1" />
+                                Reject
+                              </button>
+                            </div>
+                          )}
+                          {request.status === 'approved' && (
+                            <span className="text-success">
+                              <FaCheck className="me-1" />
+                              Approved
+                            </span>
+                          )}
+                          {request.status === 'rejected' && (
+                            <span className="text-danger">
+                              <FaTimes className="me-1" />
+                              Rejected
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import axios from "axios";
+import { BACKEND_URL } from "../config";
 
 function Upload({ onClose, currentFolderId }) {
   const [file, setFile] = useState(null);
@@ -20,7 +21,7 @@ function Upload({ onClose, currentFolderId }) {
     }
 
     try {
-      await axios.post("http://localhost:3001/upload", formData, {
+      await axios.post(`${BACKEND_URL}/upload`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
       });
       alert("File uploaded successfully!");

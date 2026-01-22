@@ -183,58 +183,76 @@ export default function Trash() {
   }, [selectedItems, folders, files]);
 
   return (
-    <div className="container-fluid py-3 file-manager-container">
-      {/* Header */}
-      <div className="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-        <h4 className="fw-bold text-danger mb-0">Trash</h4>
-        <div className="btn-group">
-          <button
-            className={`btn ${
-              view === "grid" ? "btn-primary" : "btn-outline-primary"
-            }`}
-            onClick={() => setView("grid")}
-            title="Grid View"
-          >
-            <FaTh />
-          </button>
-          <button
-            className={`btn ${
-              view === "list" ? "btn-primary" : "btn-outline-primary"
-            }`}
-            onClick={() => setView("list")}
-            title="List View"
-          >
-            <FaList />
-          </button>
+    <div className="page-container">
+      {/* Page Header */}
+      <div className="page-header">
+        <div className="d-flex justify-content-between align-items-center flex-wrap gap-3">
+          <div>
+            <h4 className="mb-1">
+              <FaTrash className="me-2" />
+              Trash
+            </h4>
+            <p className="subtitle mb-0">Deleted files and folders (30-day retention)</p>
+          </div>
+
+          {/* View Toggles */}
+          <div className="view-toggles">
+            <button
+              className={`btn ${view === "grid" ? "btn-primary" : "btn-outline-primary"}`}
+              onClick={() => setView("grid")}
+              title="Grid View"
+            >
+              <FaTh />
+            </button>
+            <button
+              className={`btn ${view === "list" ? "btn-primary" : "btn-outline-primary"}`}
+              onClick={() => setView("list")}
+              title="List View"
+            >
+              <FaList />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats Section */}
+      <div className="stats-section">
+        <div className="stats-row">
+          <div className="stat-card">
+            <div className="icon danger">
+              <FaTrash />
+            </div>
+            <h4>{folders.length + files.length}</h4>
+            <p>Items in Trash</p>
+          </div>
         </div>
       </div>
 
       {/* Bulk Actions Toolbar */}
       {(folders.length > 0 || files.length > 0) && (
-        <div className="card mb-4">
-          <div className="card-body py-3">
-            <div className="row align-items-center">
-              <div className="col-md-6">
-                <div className="d-flex align-items-center gap-3">
-                  <button
-                    className="btn btn-sm btn-outline-secondary"
-                    onClick={allItemsSelected ? selectNoneItems : selectAllItems}
-                    title={allItemsSelected ? "Select None" : "Select All"}
-                  >
-                    {allItemsSelected ? <FaCheckSquare /> : <FaSquare />} {allItemsSelected ? "Select None" : "Select All"}
-                  </button>
-                  {selectedItems.size > 0 && (
-                    <span className="text-muted small">
-                      {selectedItems.size} item(s) selected
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="col-md-6 text-md-end mt-3 mt-md-0">
+        <div className="unified-tabs">
+          <div className="tab-content">
+            <div className="d-flex justify-content-between align-items-center py-3">
+              <div className="d-flex align-items-center gap-3">
+                <button
+                  className="btn btn-sm btn-outline-secondary"
+                  onClick={allItemsSelected ? selectNoneItems : selectAllItems}
+                  title={allItemsSelected ? "Select None" : "Select All"}
+                >
+                  {allItemsSelected ? <FaCheckSquare className="me-1" /> : <FaSquare className="me-1" />}
+                  {allItemsSelected ? "Select None" : "Select All"}
+                </button>
                 {selectedItems.size > 0 && (
-                  <div className="btn-group">
+                  <span className="text-muted small">
+                    {selectedItems.size} item(s) selected
+                  </span>
+                )}
+              </div>
+              <div className="action-buttons">
+                {selectedItems.size > 0 && (
+                  <>
                     <button
-                      className="btn btn-sm btn-success"
+                      className="btn btn-success"
                       onClick={bulkRestore}
                       title="Restore Selected Items"
                     >
@@ -242,14 +260,14 @@ export default function Trash() {
                       Restore ({selectedItems.size})
                     </button>
                     <button
-                      className="btn btn-sm btn-danger"
+                      className="btn btn-danger"
                       onClick={bulkDelete}
                       title="Permanently Delete Selected Items"
                     >
                       <FaTrash className="me-1" />
                       Delete All ({selectedItems.size})
                     </button>
-                  </div>
+                  </>
                 )}
               </div>
             </div>

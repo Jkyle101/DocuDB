@@ -3,19 +3,20 @@ import {
   FaFolder, FaUser, FaTimes, FaShareAlt, FaClock,
   FaUsers, FaTrash, FaHome
 } from "react-icons/fa";
-import { NavLink } from "react-router-dom";
+import { NavLink, useNavigate } from "react-router-dom";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "./sidebar.css";
 
 function Sidebar({ onClose }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
   const email = localStorage.getItem("email");
+  const navigate = useNavigate();
 
   useEffect(() => {
     const handleResize = () => {
       setIsMobile(window.innerWidth < 992);
     };
-    
+
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
@@ -25,6 +26,14 @@ function Sidebar({ onClose }) {
     if (isMobile && onClose) {
       onClose();
     }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("isLoggedIn");
+    localStorage.removeItem("email");
+    localStorage.removeItem("userId");
+    localStorage.removeItem("role");
+    navigate("/login");
   };
 
   return (
@@ -52,17 +61,26 @@ function Sidebar({ onClose }) {
         )}
 
         {/* Header */}
-        <div className="p-3 border-bottom bg-white">
+        <div className="p-3 border-bottom bg-white flex-shrink-0">
           <h5 className="mb-1 text-primary">DocuDB</h5>
           <small className="text-muted">Document Management</small>
         </div>
 
         {/* User Info */}
-        <div className="p-3 border-bottom">
+        <div className="p-3 border-bottom flex-shrink-0">
           <div className="d-flex align-items-center">
-            <div className="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center me-3"
-                 style={{width: '40px', height: '40px'}}>
-              <FaUser size={16} />
+            <div className="profile-picture-sidebar me-3">
+              {localStorage.getItem('profilePicture') ? (
+                <img
+                  src={`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/uploads/${localStorage.getItem('profilePicture')}`}
+                  alt="Profile"
+                  className="profile-picture-img"
+                />
+              ) : (
+                <div className="profile-picture-placeholder-sidebar">
+                  <FaUser size={16} />
+                </div>
+              )}
             </div>
             <div className="flex-grow-1">
               <div className="fw-medium small text-truncate" style={{maxWidth: '160px'}}>
@@ -73,8 +91,8 @@ function Sidebar({ onClose }) {
           </div>
         </div>
 
-        {/* Navigation */}
-        <nav className="flex-grow-1 p-2">
+        {/* Navigation - Scrollable */}
+        <nav className="flex-grow-1 p-2 overflow-auto">
           <div className="mb-3">
             <h6 className="px-3 py-2 mb-2 text-muted small fw-bold text-uppercase"
                 style={{letterSpacing: '0.5px'}}>
@@ -161,13 +179,6 @@ function Sidebar({ onClose }) {
             </ul>
           </div>
         </nav>
-
-        {/* Footer */}
-        <div className="p-3 border-top bg-light">
-          <small className="text-muted d-block text-center">
-            © 2024 DocuDB
-          </small>
-        </div>
       </div>
     </>
   );

@@ -118,41 +118,47 @@ export default function Recent() {
   }, [handleClick]);
 
   return (
-    
-    <div className="container-fluid py-3 file-manager-container">
-      {/* Header */}
-      <div className="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-        <h4 className="fw-bold text-primary mb-0">Recent Files</h4>
+    <div className="page-container">
+      {/* Page Header */}
+      <div className="page-header">
+        <div className="d-flex justify-content-between align-items-center flex-wrap gap-3">
+          <div>
+            <h4 className="mb-1">Recent Files</h4>
+            <p className="subtitle mb-0">Your most recently uploaded files</p>
+          </div>
 
-        {/* View */}
-        <div className="d-flex align-items-center gap-2 flex-wrap">
-          <div className="btn-group" role="group">
-            <button className={`btn ${view === "grid" ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setView("grid")}>
+          {/* View Toggles */}
+          <div className="view-toggles">
+            <button
+              className={`btn ${view === "grid" ? "btn-primary" : "btn-outline-primary"}`}
+              onClick={() => setView("grid")}
+              title="Grid View"
+            >
               <FaTh />
             </button>
-            <button className={`btn ${view === "list" ? "btn-primary" : "btn-outline-primary"}`} onClick={() => setView("list")}>
+            <button
+              className={`btn ${view === "list" ? "btn-primary" : "btn-outline-primary"}`}
+              onClick={() => setView("list")}
+              title="List View"
+            >
               <FaList />
             </button>
           </div>
         </div>
       </div>
-    {/* Stats Bar */}
-    <div className="row mb-4">
-          <div className="col-12">
-            <div className="card stats-card">
-              <div className="card-body py-2">
-                <div className="d-flex justify-content-between">
-                  <span className="text-muted">
-                    {files.length} file{files.length !== 1 ? 's' : ''}
-                  </span>
-                  <span className="text-muted">
-                    Last updated: {new Date().toLocaleTimeString()}
-                  </span>
-                </div>
-              </div>
+
+      {/* Stats Section */}
+      <div className="stats-section">
+        <div className="stats-row">
+          <div className="stat-card">
+            <div className="icon info">
+              <FaFileAlt />
             </div>
+            <h4>{files.length}</h4>
+            <p>Recent Files</p>
           </div>
         </div>
+      </div>
 
       {/* GRID VIEW */}
       {view === "grid" ? (

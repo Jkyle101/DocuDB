@@ -679,7 +679,7 @@ export default function ManageGroups() {
                                     </div>
                                     <button
                                       className="btn btn-sm btn-outline-danger ms-2"
-                                      onClick={() => handleUnshareFromGroup(group._id, 'file', sharedFile.fileId?._id)}
+                                      onClick={() => handleUnshareFromGroup(group._id, 'file', sharedFile._id)}
                                       title="Remove from group"
                                     >
                                       <FaTimes />
@@ -722,7 +722,7 @@ export default function ManageGroups() {
                                     </div>
                                     <button
                                       className="btn btn-sm btn-outline-danger ms-2"
-                                      onClick={() => handleUnshareFromGroup(group._id, 'folder', sharedFolder.folderId?._id)}
+                                      onClick={() => handleUnshareFromGroup(group._id, 'folder', sharedFolder._id)}
                                       title="Remove from group"
                                     >
                                       <FaTimes />

@@ -16,6 +16,8 @@ const Comment = require("./models/comment");
 
 // NEW: logs model
 const Log = require("./models/logs");
+const PasswordRequest = require("./models/passwordrequest");
+const Notification = require("./models/notification");
 const { timeStamp } = require("console");
 
 const app = express();
@@ -101,6 +103,18 @@ app.post("/login", async (req, res) => {
       console.error("Login log failed:", e);
     }
 
+    // Create a welcome notification for new users (first login)
+    const existingNotifications = await Notification.countDocuments({ userId: user._id });
+    if (existingNotifications === 0) {
+      await createNotification(
+        user._id,
+        "UPLOAD",
+        "Welcome to DocuDB!",
+        "Welcome to DocuDB! Start by uploading your first file or creating a folder.",
+        "Getting started guide"
+      );
+    }
+
     res.json({
       status: "success",
       role: user.role,
@@ -108,6 +122,50 @@ app.post("/login", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: "Server error" });
+  }
+});
+
+/* ========================
+   FILES
+======================== */
+/* ========================
+   PROFILE PICTURE UPLOAD
+======================== */
+// Upload profile picture
+app.post("/upload-profile-picture", upload.single("profilePicture"), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+
+    const { userId } = req.body;
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    // Validate file type (only images)
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
+    if (!allowedTypes.includes(req.file.mimetype)) {
+      return res.status(400).json({ error: "Only image files are allowed" });
+    }
+
+    // Validate file size (max 5MB)
+    if (req.file.size > 5 * 1024 * 1024) {
+      return res.status(400).json({ error: "File size must be less than 5MB" });
+    }
+
+    // Update user profile picture
+    const user = await UserModel.findByIdAndUpdate(
+      userId,
+      { profilePicture: req.file.filename },
+      { new: true }
+    );
+
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Log the action
+    createLog("PROFILE_PICTURE_UPDATE", userId, `Updated profile picture`);
+
+    res.json({ success: true, profilePicture: req.file.filename });
+  } catch (err) {
+    console.error("Profile picture upload error:", err);
+    res.status(500).json({ error: "Profile picture upload failed" });
   }
 });
 
@@ -206,16 +264,6 @@ app.get("/files", async (req, res) => {
     let query = { deletedAt: null }; // exclude trashed files
     const isAdmin = role === "admin" || role === "superadmin";
 
-    if (!isAdmin) {
-      if (!userId) return res.status(400).json({ error: "Missing userId" });
-      query.userId = userId;
-    }
-    // Only filter by parentFolder if it's explicitly provided
-    // If not provided (undefined), show all files regardless of folder (for recent view)
-    if (parentFolder !== undefined) {
-      query.parentFolder = parentFolder === "" ? null : parentFolder;
-    }
-
     // Sorting
     let sortOptions = {};
     if (sortBy === "name") {
@@ -228,10 +276,60 @@ app.get("/files", async (req, res) => {
       sortOptions.uploadDate = -1; // default: newest first
     }
 
-    // First get files matching the query
-    let files = await File.find(query)
-      .populate("owner", "email")
-      .sort(sortOptions);
+    let files = [];
+
+    if (isAdmin) {
+      // Admins see all files
+      query = { deletedAt: null };
+      if (parentFolder !== undefined) {
+        query.parentFolder = parentFolder === "" ? null : parentFolder;
+      }
+
+      files = await File.find(query)
+        .populate("owner", "email")
+        .sort(sortOptions);
+    } else {
+      if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+      // Get files owned by user
+      let ownedFiles = await File.find({
+        userId,
+        deletedAt: null,
+        ...(parentFolder !== undefined && { parentFolder: parentFolder === "" ? null : parentFolder })
+      })
+        .populate("owner", "email")
+        .sort(sortOptions);
+
+      // If we have a parentFolder, check if user has access to it (for navigation within shared folders)
+      if (parentFolder) {
+        const parent = await Folder.findById(parentFolder);
+        if (parent && (parent.owner.toString() === userId || parent.sharedWith.includes(userId))) {
+          // User has access to parent folder, include ALL files from that folder
+          // This allows users to see files uploaded by different users within shared folders
+          const subFiles = await File.find({
+            parentFolder,
+            deletedAt: null
+          })
+            .populate("owner", "email")
+            .sort(sortOptions);
+
+          ownedFiles = [...ownedFiles, ...subFiles];
+        }
+      } else {
+        // Root level - include files shared with user
+        const sharedFiles = await File.find({
+          sharedWith: userId,
+          deletedAt: null,
+          parentFolder: null
+        })
+          .populate("owner", "email")
+          .sort(sortOptions);
+
+        ownedFiles = [...ownedFiles, ...sharedFiles];
+      }
+
+      files = ownedFiles;
+    }
 
     // Filter out files whose parent folders are deleted
     if (files.length > 0) {
@@ -256,7 +354,26 @@ app.get("/files", async (req, res) => {
       }
     }
 
-    res.json(files);
+    // Remove duplicates
+    const seenIds = new Set();
+    const uniqueFiles = files.filter(file => {
+      if (seenIds.has(file._id.toString())) return false;
+      seenIds.add(file._id.toString());
+      return true;
+    });
+
+    // Add permission info for shared files
+    const filesWithPermissions = uniqueFiles.map(file => {
+      const isOwner = file.owner._id.toString() === userId;
+      return {
+        ...file.toObject(),
+        isShared: !isOwner,
+        permission: isOwner ? "owner" : (file.permissions || "read"),
+        ownerEmail: file.owner?.email || null
+      };
+    });
+
+    res.json(filesWithPermissions);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch files" });
   }
@@ -425,6 +542,19 @@ app.patch("/files/:id/share", async (req, res) => {
     // NEW: log share
     createLog("SHARE_FILE", file.owner, `Shared ${file.originalName} with ${emails.join(", ")}`);
 
+    // Create notifications for shared users
+    for (const userId of userIds) {
+      await createNotification(
+        userId,
+        "SHARE_FILE",
+        "File Shared",
+        `A file has been shared with you`,
+        file.originalName,
+        file._id,
+        "File"
+      );
+    }
+
     res.json({ status: "success", file });
   } catch (err) {
     res.status(500).json({ status: "error", error: err.message });
@@ -522,12 +652,57 @@ app.get("/folders", async (req, res) => {
     }
 
     if (!userId) return res.status(400).json({ error: "Missing userId" });
-    query.owner = userId;
 
-    const folders = await Folder.find(query)
+    // Get folders owned by user
+    let ownedFolders = await Folder.find({ ...query, owner: userId })
       .populate("owner", "email")
       .sort(sortOptions);
-    res.json(folders);
+
+    // If we have a parentFolder, check if user has access to it (for navigation within shared folders)
+    if (parentFolder) {
+      const parent = await Folder.findById(parentFolder);
+      if (parent && (parent.owner.toString() === userId || parent.sharedWith.includes(userId))) {
+        // User has access to parent folder, return ALL subfolders (not just owned by parent owner)
+        // This allows users to see subfolders created by different users within shared folders
+        const subFolders = await Folder.find(query) // Remove owner filter to get all subfolders
+          .populate("owner", "email")
+          .sort(sortOptions);
+
+        ownedFolders = [...ownedFolders, ...subFolders];
+      }
+    } else {
+      // Root level - include folders shared with user
+      const sharedFolders = await Folder.find({
+        ...query,
+        owner: { $ne: userId },
+        sharedWith: userId
+      })
+        .populate("owner", "email")
+        .sort(sortOptions);
+
+      ownedFolders = [...ownedFolders, ...sharedFolders];
+    }
+
+    // Remove duplicates
+    const seenIds = new Set();
+    const uniqueFolders = ownedFolders.filter(folder => {
+      if (seenIds.has(folder._id.toString())) return false;
+      seenIds.add(folder._id.toString());
+      return true;
+    });
+
+    // Add owner and permission info for all folders
+    const foldersWithPermissions = uniqueFolders.map(folder => {
+      const isOwner = folder.owner._id.toString() === userId;
+      return {
+        ...folder.toObject(),
+        isShared: !isOwner,
+        permission: isOwner ? "owner" : (folder.permissions || "read"),
+        ownerEmail: folder.owner?.email || null
+      };
+    });
+
+    res.json(foldersWithPermissions);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -537,9 +712,33 @@ app.get("/folders", async (req, res) => {
 app.get("/folders/all", async (req, res) => {
   try {
     const { userId, role } = req.query;
-    let query = { deletedAt: null };
-    if (role !== "admin" && role !== "superadmin") query.owner = userId;
-    const folders = await Folder.find(query).sort({ createdAt: -1 });
+    let folders = [];
+
+    if (role === "admin" || role === "superadmin") {
+      folders = await Folder.find({ deletedAt: null }).sort({ createdAt: -1 });
+    } else {
+      if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+      // Get owned folders
+      const ownedFolders = await Folder.find({ owner: userId, deletedAt: null }).sort({ createdAt: -1 });
+
+      // Get shared folders
+      const sharedFolders = await Folder.find({
+        sharedWith: userId,
+        deletedAt: null
+      }).sort({ createdAt: -1 });
+
+      folders = [...ownedFolders, ...sharedFolders];
+
+      // Remove duplicates
+      const seenIds = new Set();
+      folders = folders.filter(folder => {
+        if (seenIds.has(folder._id.toString())) return false;
+        seenIds.add(folder._id.toString());
+        return true;
+      });
+    }
+
     res.json(folders);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -708,10 +907,11 @@ app.get("/shared", async (req, res) => {
       const currentFolder = await Folder.findOne({ _id: folderId }).populate("owner", "email");
       if (!currentFolder) return res.status(404).json({ error: "Folder not found" });
 
-      if (
-        !currentFolder.sharedWith.includes(userId) &&
-        currentFolder.owner._id.toString() !== userId
-      ) {
+      // Check if user has access to this folder (owner or in sharedWith)
+      const hasAccess = currentFolder.owner._id.toString() === userId ||
+                       currentFolder.sharedWith.some(sharedId => sharedId.toString() === userId);
+
+      if (!hasAccess) {
         return res.status(403).json({ error: "No access to this folder" });
       }
 
@@ -749,6 +949,168 @@ app.get("/shared", async (req, res) => {
   }
 });
 
+app.get("/shared/groups", async (req, res) => {
+  try {
+    const { userId, sortBy, sortOrder } = req.query;
+
+    // Validate input
+    if (!userId) {
+      console.error("Missing userId in /shared/groups request");
+      return res.status(400).json({ error: "Missing userId" });
+    }
+
+    console.log(`Fetching group shares for user: ${userId}`);
+
+    // Sorting options
+    let fileSortOptions = {};
+    let folderSortOptions = {};
+    if (sortBy === "name") {
+      fileSortOptions.originalName = sortOrder === "desc" ? -1 : 1;
+      folderSortOptions.name = sortOrder === "desc" ? -1 : 1;
+    } else if (sortBy === "date") {
+      fileSortOptions.uploadDate = sortOrder === "desc" ? -1 : 1;
+      folderSortOptions.createdAt = sortOrder === "desc" ? -1 : 1;
+    } else {
+      fileSortOptions.uploadDate = -1;
+      folderSortOptions.createdAt = -1;
+    }
+
+    // Get groups where user is a member
+    let userGroups;
+    try {
+      userGroups = await Group.find({ members: userId }).select('_id name sharedFiles sharedFolders');
+      console.log(`Found ${userGroups.length} groups for user`);
+    } catch (groupErr) {
+      console.error("Error fetching user groups:", groupErr);
+      return res.status(500).json({ error: "Failed to fetch user groups" });
+    }
+
+    if (!userGroups.length) {
+      console.log("No groups found for user");
+      return res.json({ folders: [], files: [] });
+    }
+
+    // Get all shared files from these groups
+    let sharedFiles = [];
+    let sharedFolders = [];
+
+    for (const group of userGroups) {
+      console.log(`Processing group: ${group.name} (${group._id})`);
+
+      try {
+        // Safely access sharedFiles array
+        const sharedFilesArray = Array.isArray(group.sharedFiles) ? group.sharedFiles : [];
+        console.log(`Group has ${sharedFilesArray.length} shared files`);
+
+        if (sharedFilesArray.length > 0) {
+          for (const sharedFile of sharedFilesArray) {
+            try {
+              console.log(`Fetching shared file: ${sharedFile.fileId}`);
+              const file = await File.findById(sharedFile.fileId)
+                .populate("owner", "email")
+                .lean();
+
+              if (file && !file.deletedAt) {
+                sharedFiles.push({
+                  ...file,
+                  groupId: group._id,
+                  groupName: group.name,
+                  permission: sharedFile.permission || "read",
+                  sharedBy: sharedFile.sharedBy,
+                  sharedAt: sharedFile.sharedAt
+                });
+              } else {
+                console.log(`File ${sharedFile.fileId} not found or deleted`);
+              }
+            } catch (fileErr) {
+              console.error(`Error fetching shared file ${sharedFile.fileId}:`, fileErr.message);
+              continue; // Skip this file but continue processing others
+            }
+          }
+        }
+
+        // Safely access sharedFolders array
+        const sharedFoldersArray = Array.isArray(group.sharedFolders) ? group.sharedFolders : [];
+        console.log(`Group has ${sharedFoldersArray.length} shared folders`);
+
+        if (sharedFoldersArray.length > 0) {
+          for (const sharedFolder of sharedFoldersArray) {
+            try {
+              console.log(`Fetching shared folder: ${sharedFolder.folderId}`);
+              const folder = await Folder.findById(sharedFolder.folderId)
+                .populate("owner", "email")
+                .lean();
+
+              if (folder && !folder.deletedAt) {
+                sharedFolders.push({
+                  ...folder,
+                  groupId: group._id,
+                  groupName: group.name,
+                  permission: sharedFolder.permission || "read",
+                  sharedBy: sharedFolder.sharedBy,
+                  sharedAt: sharedFolder.sharedAt
+                });
+              } else {
+                console.log(`Folder ${sharedFolder.folderId} not found or deleted`);
+              }
+            } catch (folderErr) {
+              console.error(`Error fetching shared folder ${sharedFolder.folderId}:`, folderErr.message);
+              continue; // Skip this folder but continue processing others
+            }
+          }
+        }
+      } catch (groupErr) {
+        console.error(`Error processing group ${group._id}:`, groupErr.message);
+        continue;
+      }
+    }
+
+    console.log(`Total shared files: ${sharedFiles.length}, shared folders: ${sharedFolders.length}`);
+
+    // Sort the results
+    try {
+      sharedFiles.sort((a, b) => {
+        if (sortBy === "name") {
+          return sortOrder === "desc"
+            ? (b.originalName || "").localeCompare(a.originalName || "")
+            : (a.originalName || "").localeCompare(b.originalName || "");
+        }
+        return sortOrder === "desc"
+          ? new Date(b.uploadDate) - new Date(a.uploadDate)
+          : new Date(a.uploadDate) - new Date(b.uploadDate);
+      });
+
+      sharedFolders.sort((a, b) => {
+        if (sortBy === "name") {
+          return sortOrder === "desc"
+            ? (b.name || "").localeCompare(a.name || "")
+            : (a.name || "").localeCompare(b.name || "");
+        }
+        return sortOrder === "desc"
+          ? new Date(b.createdAt) - new Date(a.createdAt)
+          : new Date(a.createdAt) - new Date(b.createdAt);
+      });
+    } catch (sortErr) {
+      console.error("Error sorting results:", sortErr.message);
+      // Continue without sorting if there's an error
+    }
+
+    // Add ownerEmail for convenience
+    sharedFolders = sharedFolders.map(f => ({ ...f, ownerEmail: f.owner?.email || null }));
+    sharedFiles = sharedFiles.map(f => ({
+      ...f,
+      ownerEmail: f.owner?.email || null,
+      permissions: f.permission || "read"
+    }));
+
+    console.log("Successfully returning group shared content");
+    res.json({ folders: sharedFolders, files: sharedFiles });
+  } catch (err) {
+    console.error("Group shared fetch error:", err);
+    res.status(500).json({ error: `Failed to fetch group shares: ${err.message}` });
+  }
+});
+
 /* ========================
    SEARCH
 ======================== */
@@ -761,24 +1123,25 @@ app.get("/search", async (req, res) => {
     if (!userId) return res.status(400).json({ error: "Missing userId" });
     if (!searchTerm) return res.json([]);
 
-    let searchQuery = { userId, deletedAt: null };
+    // Search files
+    let fileSearchQuery = { userId, deletedAt: null };
 
     // Search files by name
     const filesByName = await File.find({
-      ...searchQuery,
+      ...fileSearchQuery,
       originalName: { $regex: searchTerm, $options: "i" },
     }).populate("owner", "email");
 
-    if (type) searchQuery.mimetype = { $regex: type, $options: "i" };
+    if (type) fileSearchQuery.mimetype = { $regex: type, $options: "i" };
     if (date) {
       const start = new Date(date);
       const end = new Date(date);
       end.setHours(23, 59, 59, 999);
-      searchQuery.uploadDate = { $gte: start, $lte: end };
+      fileSearchQuery.uploadDate = { $gte: start, $lte: end };
     }
 
     // Search inside file contents for text-based files
-    const allFiles = await File.find(searchQuery).populate("owner", "email");
+    const allFiles = await File.find(fileSearchQuery).populate("owner", "email");
     const filesWithContent = [];
     const searchLower = searchTerm.toLowerCase();
 
@@ -823,24 +1186,57 @@ app.get("/search", async (req, res) => {
       }
     }
 
-    // Combine files found by name and content
+    // Search folders by name
+    const foldersByName = await Folder.find({
+      owner: userId,
+      deletedAt: null,
+      name: { $regex: searchTerm, $options: "i" },
+    }).populate("owner", "email");
+
+    // Combine files and folders
     const allFilesResult = [...filesByName, ...filesWithContent];
+    const allFoldersResult = [...foldersByName];
 
     // Remove duplicates
     const uniqueFiles = [];
-    const seenIds = new Set();
+    const seenFileIds = new Set();
     for (const file of allFilesResult) {
-      if (!seenIds.has(file._id.toString())) {
-        seenIds.add(file._id.toString());
+      if (!seenFileIds.has(file._id.toString())) {
+        seenFileIds.add(file._id.toString());
         uniqueFiles.push(file);
       }
     }
 
-    const results = uniqueFiles.sort((a, b) => new Date(b.uploadDate) - new Date(a.uploadDate));
+    const uniqueFolders = [];
+    const seenFolderIds = new Set();
+    for (const folder of allFoldersResult) {
+      if (!seenFolderIds.has(folder._id.toString())) {
+        seenFolderIds.add(folder._id.toString());
+        uniqueFolders.push(folder);
+      }
+    }
+
+    // Combine and sort all results (folders first, then files by date)
+    const results = [
+      ...uniqueFolders.map(folder => ({ ...folder.toObject(), isFolder: true })),
+      ...uniqueFiles.map(file => ({ ...file.toObject(), isFile: true }))
+    ].sort((a, b) => {
+      // Folders come first
+      if (a.isFolder && !b.isFolder) return -1;
+      if (!a.isFolder && b.isFolder) return 1;
+
+      // Within same type, sort by date
+      if (a.isFolder) {
+        return new Date(b.createdAt) - new Date(a.createdAt);
+      } else {
+        return new Date(b.uploadDate) - new Date(a.uploadDate);
+      }
+    });
+
     res.json(results);
   } catch (err) {
     console.error("Search error:", err);
-    res.status(500).json({ error: "Failed to search files" });
+    res.status(500).json({ error: "Failed to search files and folders" });
   }
 });
 
@@ -1705,12 +2101,15 @@ app.patch("/groups/:groupId/share", async (req, res) => {
       return res.status(400).json({ error: `${type} is already shared with this group` });
     }
 
-    const userId = req.body.userId || "admin"; // Get from request or default to admin
+    const sharedBy = req.body.sharedBy; // Get the user who is sharing
+    if (!sharedBy) {
+      return res.status(400).json({ error: "sharedBy is required" });
+    }
 
     const sharedItem = {
       [type === "file" ? "fileId" : "folderId"]: itemId,
       permission: permission || "read",
-      sharedBy: userId,
+      sharedBy: sharedBy,
       sharedAt: new Date()
     };
 
@@ -1723,7 +2122,7 @@ app.patch("/groups/:groupId/share", async (req, res) => {
     await group.save();
 
     // Log the action
-    createLog("GROUP_SHARE", userId, `Shared ${type} ${itemId} with group "${group.name}"`);
+    createLog("GROUP_SHARE", sharedBy, `Shared ${type} ${itemId} with group "${group.name}"`);
 
     res.json({ success: true, group });
   } catch (err) {
@@ -1760,6 +2159,345 @@ app.patch("/groups/:groupId/unshare", async (req, res) => {
     res.status(500).json({ error: "Failed to remove item from group" });
   }
 });
+
+/* ========================
+   PASSWORD REQUEST MANAGEMENT
+======================== */
+
+// Submit password change request (User)
+app.post("/user/password-request", async (req, res) => {
+  try {
+    const { userId, currentPassword, newPassword } = req.body;
+
+    if (!userId || !currentPassword || !newPassword) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+
+    // Verify user exists
+    const user = await UserModel.findById(userId);
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    // Verify current password
+    if (user.password !== currentPassword) {
+      return res.status(401).json({ error: "Current password is incorrect" });
+    }
+
+    // Check if user already has a pending request
+    const existingRequest = await PasswordRequest.findOne({
+      userId,
+      status: "pending"
+    });
+
+    if (existingRequest) {
+      return res.status(400).json({ error: "You already have a pending password change request" });
+    }
+
+    // Create password change request
+    const passwordRequest = new PasswordRequest({
+      userId,
+      currentPassword, // Store for verification during approval
+      newPassword,
+      status: "pending"
+    });
+
+    await passwordRequest.save();
+
+    // Log the request
+    createLog("PASSWORD_CHANGE_REQUEST", userId, `Submitted password change request`);
+
+    res.json({ success: true, message: "Password change request submitted successfully" });
+  } catch (err) {
+    console.error("Password request error:", err);
+    res.status(500).json({ error: "Failed to submit password change request" });
+  }
+});
+
+// Get all password requests (Admin only)
+app.get("/admin/password-requests", async (req, res) => {
+  try {
+    const { role } = req.query;
+
+    if (role !== "admin" && role !== "superadmin") {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+
+    // First get the requests without populate to avoid issues with null values
+    const requests = await PasswordRequest.find().sort({ createdAt: -1 });
+
+    // Then populate each request individually, handling null values
+    const populatedRequests = await Promise.all(
+      requests.map(async (request) => {
+        const populatedRequest = request.toObject();
+
+        // Populate userId (should always exist)
+        try {
+          const user = await UserModel.findById(request.userId).select("email name");
+          populatedRequest.userId = user;
+        } catch (err) {
+          console.error(`Error populating userId ${request.userId}:`, err);
+          populatedRequest.userId = null;
+        }
+
+        // Populate reviewedBy (might be null for pending requests)
+        if (request.reviewedBy) {
+          try {
+            const reviewer = await UserModel.findById(request.reviewedBy).select("email name");
+            populatedRequest.reviewedBy = reviewer;
+          } catch (err) {
+            console.error(`Error populating reviewedBy ${request.reviewedBy}:`, err);
+            populatedRequest.reviewedBy = null;
+          }
+        } else {
+          populatedRequest.reviewedBy = null;
+        }
+
+        return populatedRequest;
+      })
+    );
+
+    res.json(populatedRequests);
+  } catch (err) {
+    console.error("Fetch password requests error:", err);
+    res.status(500).json({ error: "Failed to fetch password requests" });
+  }
+});
+
+// Approve password change request (Admin only)
+app.patch("/admin/password-requests/:id/approve", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { adminId } = req.body;
+
+    if (!adminId) {
+      return res.status(400).json({ error: "Admin ID required" });
+    }
+
+    // Verify admin role
+    const admin = await UserModel.findById(adminId);
+    if (!admin || (admin.role !== "admin" && admin.role !== "superadmin")) {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+
+    const request = await PasswordRequest.findById(id);
+    if (!request) return res.status(404).json({ error: "Password request not found" });
+
+    if (request.status !== "pending") {
+      return res.status(400).json({ error: "Request is not pending" });
+    }
+
+    // Update user password
+    await UserModel.findByIdAndUpdate(request.userId, {
+      password: request.newPassword
+    });
+
+    // Update request status
+    request.status = "approved";
+    request.reviewedAt = new Date();
+    request.reviewedBy = adminId;
+    request.reviewNotes = "Approved by admin";
+    await request.save();
+
+    // Log the approval
+    createLog("PASSWORD_CHANGE_APPROVED", adminId, `Approved password change for user ${request.userId}`);
+
+    // Create notification for user
+    await createNotification(
+      request.userId,
+      "PASSWORD_CHANGE_APPROVED",
+      "Password Change Approved",
+      "Your password change request has been approved",
+      "You can now log in with your new password"
+    );
+
+    res.json({ success: true, message: "Password change request approved" });
+  } catch (err) {
+    console.error("Approve password request error:", err);
+    res.status(500).json({ error: "Failed to approve password change request" });
+  }
+});
+
+// Reject password change request (Admin only)
+app.patch("/admin/password-requests/:id/reject", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { adminId } = req.body;
+
+    if (!adminId) {
+      return res.status(400).json({ error: "Admin ID required" });
+    }
+
+    // Verify admin role
+    const admin = await UserModel.findById(adminId);
+    if (!admin || (admin.role !== "admin" && admin.role !== "superadmin")) {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+
+    const request = await PasswordRequest.findById(id);
+    if (!request) return res.status(404).json({ error: "Password request not found" });
+
+    if (request.status !== "pending") {
+      return res.status(400).json({ error: "Request is not pending" });
+    }
+
+    // Update request status
+    request.status = "rejected";
+    request.reviewedAt = new Date();
+    request.reviewedBy = adminId;
+    request.reviewNotes = "Rejected by admin";
+    await request.save();
+
+    // Log the rejection
+    createLog("PASSWORD_CHANGE_REJECTED", adminId, `Rejected password change for user ${request.userId}`);
+
+    // Create notification for user
+    await createNotification(
+      request.userId,
+      "PASSWORD_CHANGE_REJECTED",
+      "Password Change Rejected",
+      "Your password change request has been rejected",
+      "Please contact your administrator for more information"
+    );
+
+    res.json({ success: true, message: "Password change request rejected" });
+  } catch (err) {
+    console.error("Reject password request error:", err);
+    res.status(500).json({ error: "Failed to reject password change request" });
+  }
+});
+
+/* ========================
+   NOTIFICATIONS MANAGEMENT
+======================== */
+
+// Get notifications for a user
+app.get("/notifications/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    if (!userId) {
+      return res.status(400).json({ error: "User ID required" });
+    }
+
+    const notifications = await Notification.find({ userId })
+      .populate("userId", "email name")
+      .sort({ createdAt: -1 })
+      .limit(100); // Limit to prevent too many results
+
+    res.json(notifications);
+  } catch (err) {
+    console.error("Get notifications error:", err);
+    res.status(500).json({ error: "Failed to fetch notifications" });
+  }
+});
+
+// Mark notification as read
+app.patch("/notifications/:notificationId/read", async (req, res) => {
+  try {
+    const { notificationId } = req.params;
+
+    const notification = await Notification.findByIdAndUpdate(
+      notificationId,
+      { isRead: true },
+      { new: true }
+    );
+
+    if (!notification) {
+      return res.status(404).json({ error: "Notification not found" });
+    }
+
+    res.json({ success: true, notification });
+  } catch (err) {
+    console.error("Mark notification read error:", err);
+    res.status(500).json({ error: "Failed to mark notification as read" });
+  }
+});
+
+// Mark all notifications as read for a user
+app.patch("/notifications/:userId/read-all", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    await Notification.updateMany(
+      { userId, isRead: false },
+      { isRead: true }
+    );
+
+    res.json({ success: true, message: "All notifications marked as read" });
+  } catch (err) {
+    console.error("Mark all notifications read error:", err);
+    res.status(500).json({ error: "Failed to mark notifications as read" });
+  }
+});
+
+// Test endpoint to create sample notifications (for testing)
+app.post("/notifications/test/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const testNotifications = [
+      {
+        userId,
+        type: "SHARE_FILE",
+        title: "File Shared",
+        message: "A file has been shared with you",
+        details: "sample-document.pdf"
+      },
+      {
+        userId,
+        type: "PASSWORD_CHANGE_REQUEST",
+        title: "Password Change Request",
+        message: "Your password change request has been submitted",
+        details: "Pending admin approval"
+      },
+      {
+        userId,
+        type: "COMMENT",
+        title: "New Comment",
+        message: "Someone commented on your file",
+        details: "This looks great!"
+      },
+      {
+        userId,
+        type: "UPLOAD",
+        title: "New Upload",
+        message: "A new file has been uploaded",
+        details: "presentation.pptx"
+      }
+    ];
+
+    const createdNotifications = await Notification.insertMany(testNotifications);
+
+    res.json({
+      success: true,
+      message: `Created ${createdNotifications.length} test notifications`,
+      notifications: createdNotifications
+    });
+  } catch (err) {
+    console.error("Create test notifications error:", err);
+    res.status(500).json({ error: "Failed to create test notifications" });
+  }
+});
+
+// Helper function to create notifications
+async function createNotification(userId, type, title, message, details = "", relatedId = null, relatedModel = null) {
+  try {
+    const notification = new Notification({
+      userId,
+      type,
+      title,
+      message,
+      details,
+      relatedId,
+      relatedModel
+    });
+
+    await notification.save();
+    return notification;
+  } catch (err) {
+    console.error("Create notification error:", err);
+    // Don't throw - notifications are not critical
+  }
+}
 
 /* ========================
    START SERVER

@@ -14,6 +14,9 @@ import ManageUsers from "./pages/adminside/manageusers"; // manage users page
 import SystemLogs from "./pages/adminside/systemlogs.jsx"; //system logs
 import ManageGroups from "./pages/adminside/managegroups"; // manage groups page
 import AdminTrash from "./pages/adminside/trash"; // admin trash page
+import Settings from "./pages/settings"; // user settings page
+import Notifications from "./pages/notifications"; // user notifications page
+import Help from "./pages/help"; // help & feedback page
 
 function App() {
   return (
@@ -69,6 +72,39 @@ function App() {
           }
         >
           <Route index element={<MyGroups />} />
+        </Route>
+
+        <Route
+          path="/settings"
+          element={
+            <ProtectedRoute allowedRole="user">
+              <Layout role="user" />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<Settings />} />
+        </Route>
+
+        <Route
+          path="/notifications"
+          element={
+            <ProtectedRoute allowedRole="user">
+              <Layout role="user" />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<Notifications />} />
+        </Route>
+
+        <Route
+          path="/help"
+          element={
+            <ProtectedRoute allowedRole="user">
+              <Layout role="user" />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<Help />} />
         </Route>
 
         {/* Admin Protected Routes */}

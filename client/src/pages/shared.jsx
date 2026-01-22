@@ -18,23 +18,41 @@ import {
   FaCloudDownloadAlt,
   FaHistory,
   FaComment,
+  FaUsers,
+  FaTrash,
+  FaEdit,
+  FaDownload,
 } from "react-icons/fa";
 
 import ShareModal from "../components/ShareModal";
 import VersionModal from "../components/VersionModal";
 import CommentsModal from "../components/CommentsModal";
+import RenameModal from "../components/RenameModal";
 import "../pages/home.css";
 import { BACKEND_URL } from "../config";
 
 export default function Shared() {
   const userId = localStorage.getItem("userId");
 
-  const [folders, setFolders] = useState([]);
-  const [files, setFiles] = useState([]);
+  // Active tab state
+  const [activeTab, setActiveTab] = useState("personal");
+
+  // Personal shares state
+  const [personalFolders, setPersonalFolders] = useState([]);
+  const [personalFiles, setPersonalFiles] = useState([]);
+  const [currentFolderId, setCurrentFolderId] = useState(null);
+  const [personalLoading, setPersonalLoading] = useState(false);
+
+  // Group shares state
+  const [groupFolders, setGroupFolders] = useState([]);
+  const [groupFiles, setGroupFiles] = useState([]);
+  const [groupLoading, setGroupLoading] = useState(false);
+
+  // Modals
   const [shareTarget, setShareTarget] = useState(null);
   const [versionTarget, setVersionTarget] = useState(null);
   const [commentsTarget, setCommentsTarget] = useState(null);
-  const [currentFolderId, setCurrentFolderId] = useState(null);
+  const [renameTarget, setRenameTarget] = useState(null);
   const [view, setView] = useState("grid");
 
   // Breadcrumbs
@@ -42,22 +60,46 @@ export default function Shared() {
     { id: null, name: "Shared with Me" },
   ]);
 
-  // Fetch shared items
-  const fetchShared = useCallback(async (folderId = null) => {
+  // Fetch personal shared items
+  const fetchPersonalShared = useCallback(async (folderId = null) => {
     try {
+      setPersonalLoading(true);
       const res = await axios.get(`${BACKEND_URL}/shared`, {
         params: { userId, folderId },
       });
-      setFolders(res.data.folders || []);
-      setFiles(res.data.files || []);
+      setPersonalFolders(res.data.folders || []);
+      setPersonalFiles(res.data.files || []);
     } catch (err) {
-      console.error(err);
+      console.error("Failed to fetch personal shared items:", err);
+    } finally {
+      setPersonalLoading(false);
     }
   }, [userId]);
 
+  // Fetch group shared items
+  const fetchGroupShared = useCallback(async () => {
+    try {
+      setGroupLoading(true);
+      const res = await axios.get(`${BACKEND_URL}/shared/groups`, {
+        params: { userId },
+      });
+      setGroupFolders(res.data.folders || []);
+      setGroupFiles(res.data.files || []);
+    } catch (err) {
+      console.error("Failed to fetch group shared items:", err);
+    } finally {
+      setGroupLoading(false);
+    }
+  }, [userId]);
+
+  // Load data based on active tab
   useEffect(() => {
-    fetchShared(currentFolderId).catch(console.error);
-  }, [fetchShared, currentFolderId]);
+    if (activeTab === "personal") {
+      fetchPersonalShared(currentFolderId).catch(console.error);
+    } else if (activeTab === "groups") {
+      fetchGroupShared();
+    }
+  }, [activeTab, fetchPersonalShared, fetchGroupShared, currentFolderId]);
 
   // Open a folder (navigate deeper)
   const openFolder = (folder) => {
@@ -93,33 +135,57 @@ export default function Shared() {
     []
   );
 
+  // Current data based on active tab
+  const currentFolders = activeTab === "personal" ? personalFolders : groupFolders;
+  const currentFiles = activeTab === "personal" ? personalFiles : groupFiles;
+  const isLoading = activeTab === "personal" ? personalLoading : groupLoading;
+
+  // Check if user owns an item (for group shares)
+  const isOwner = (item) => {
+    return item.owner && item.owner.toString() === userId;
+  };
+
+  // Check if user has write permission
+  const hasWritePermission = (item) => {
+    if (activeTab === "personal") {
+      return item.permissions === "write";
+    } else {
+      // For group shares, owners always have write permission
+      return isOwner(item) || item.permission === "write";
+    }
+  };
+
+  // Handle file deletion (for owners in group shares)
+  const handleDeleteFile = async (file) => {
+    if (!window.confirm(`Delete "${file.originalName}"?`)) return;
+
+    try {
+      await axios.delete(`${BACKEND_URL}/files/${file._id}`);
+      fetchGroupShared(); // Refresh group shares
+    } catch (err) {
+      console.error("Failed to delete file:", err);
+      alert("Failed to delete file");
+    }
+  };
+
+  // Handle folder deletion (for owners in group shares)
+  const handleDeleteFolder = async (folder) => {
+    if (!window.confirm(`Delete "${folder.name}"?`)) return;
+
+    try {
+      await axios.delete(`${BACKEND_URL}/folders/${folder._id}`);
+      fetchGroupShared(); // Refresh group shares
+    } catch (err) {
+      console.error("Failed to delete folder:", err);
+      alert("Failed to delete folder");
+    }
+  };
+
   return (
     <div className="container-fluid py-3">
       {/* Header */}
       <div className="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-        {/* Breadcrumbs */}
-        <div className="d-flex align-items-center gap-2 flex-wrap">
-          {breadcrumbs.map((crumb, idx) => (
-            <span
-              key={idx}
-              className={`fw-semibold ${
-                idx === breadcrumbs.length - 1 ? "text-dark" : "text-primary"
-              }`}
-              style={{
-                cursor:
-                  idx === breadcrumbs.length - 1 ? "default" : "pointer",
-              }}
-              onClick={() =>
-                idx !== breadcrumbs.length - 1 && goToBreadcrumb(idx)
-              }
-            >
-              {crumb.name}
-              {idx < breadcrumbs.length - 1 && (
-                <FaChevronRight className="mx-2 text-muted" />
-              )}
-            </span>
-          ))}
-        </div>
+        <h4 className="mb-0">Shared with Me</h4>
 
         {/* View Toggles */}
         <div className="d-flex align-items-center gap-2">
@@ -142,125 +208,217 @@ export default function Shared() {
         </div>
       </div>
 
+      {/* Tabs */}
+      <ul className="nav nav-tabs mb-4">
+        <li className="nav-item">
+          <button
+            className={`nav-link ${activeTab === "personal" ? "active" : ""}`}
+            onClick={() => setActiveTab("personal")}
+          >
+            <FaShareAlt className="me-2" />
+            Personal Shares
+          </button>
+        </li>
+        <li className="nav-item">
+          <button
+            className={`nav-link ${activeTab === "groups" ? "active" : ""}`}
+            onClick={() => setActiveTab("groups")}
+          >
+            <FaUsers className="me-2" />
+            Group Shares
+          </button>
+        </li>
+      </ul>
+
       {/* Stats */}
       <div className="row mb-4">
-        <div className="col-12">
-          <div className="card stats-card">
-            <div className="card-body py-2">
-              <div className="d-flex justify-content-between">
-                <span className="text-muted">
-                  {folders.length} folder{folders.length !== 1 ? "s" : ""},{" "}
-                  {files.length} file{files.length !== 1 ? "s" : ""}
-                </span>
-                <span className="text-muted">
-                  Last updated: {new Date().toLocaleTimeString()}
-                </span>
+        <div className="col-md-6 mb-3">
+          <div className="card stats-card h-100">
+            <div className="card-body text-center">
+              <div className="d-flex align-items-center justify-content-center mb-2">
+                <FaFolder className="text-warning me-2" size={24} />
+                <h4 className="mb-0">{currentFolders.length}</h4>
               </div>
+              <p className="text-muted mb-0">Folders</p>
+            </div>
+          </div>
+        </div>
+        <div className="col-md-6 mb-3">
+          <div className="card stats-card h-100">
+            <div className="card-body text-center">
+              <div className="d-flex align-items-center justify-content-center mb-2">
+                <FaFileAlt className="text-primary me-2" size={24} />
+                <h4 className="mb-0">{currentFiles.length}</h4>
+              </div>
+              <p className="text-muted mb-0">Files</p>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Empty state */}
-      {folders.length === 0 && files.length === 0 ? (
+      {/* Loading state */}
+      {isLoading ? (
+        <div className="text-center py-5">
+          <div className="spinner-border text-primary" role="status">
+            <span className="visually-hidden">Loading...</span>
+          </div>
+          <p className="mt-2 text-muted">Loading shared items...</p>
+        </div>
+      ) : currentFolders.length === 0 && currentFiles.length === 0 ? (
         <div className="text-center py-5 empty-state">
           <FaFolder className="text-muted mb-3" size={48} />
-          <h5 className="text-muted">No shared files yet</h5>
+          <h5 className="text-muted">
+            {activeTab === "personal" ? "No personal shares yet" : "No group shares yet"}
+          </h5>
           <p className="text-muted">
-            Files and folders shared with you will appear here.
+            {activeTab === "personal"
+              ? "Files and folders shared with you will appear here."
+              : "Files and folders shared with your groups will appear here."
+            }
           </p>
         </div>
       ) : view === "grid" ? (
         <>
-          {/* Grid View */}
-          <div className="row g-3 mb-3">
-            {folders.map((folder) => (
+          {/* Grid View - Folders */}
+          <div className="row g-3 mb-4">
+            {currentFolders.map((folder) => (
               <div
                 key={folder._id}
                 className="col-6 col-sm-4 col-md-3 col-lg-2"
               >
-                <div
-                  className="card p-3 h-100 shadow-sm folder-card"
-                  style={{ cursor: "pointer" }}
-                  onClick={() => openFolder(folder)}
-                >
-                  <div className="text-center">
-                    <FaFolder size={40} className="text-warning mb-2" />
-                    <div className="text-truncate fw-semibold">
+                <div className="card h-100 shadow-sm hover-card">
+                  <div className="card-body text-center p-3">
+                    <FaFolder size={48} className="text-warning mb-3" />
+                    <h6 className="card-title text-truncate mb-2" title={folder.name}>
                       {folder.name}
-                    </div>
-                    <div className="btn-group btn-group-sm mt-2">
+                    </h6>
+                    {activeTab === "groups" && (
+                      <div className="small text-muted mb-3">
+                        <FaUsers className="me-1" />
+                        {folder.groupName}
+                      </div>
+                    )}
+
+                    {/* Action Buttons - Primary Actions */}
+                    <div className="d-flex justify-content-center gap-1 mb-2">
                       <button
-                        className="btn btn-outline-secondary"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setVersionTarget({ type: "folder", item: folder });
-                        }}
-                        title="Version History"
-                      >
-                        <FaHistory />
-                      </button>
-                      <button
-                        className="btn btn-outline-secondary"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setCommentsTarget({ type: "folder", item: folder });
-                        }}
+                        className="btn btn-sm btn-outline-primary"
+                        onClick={() => setCommentsTarget({ type: "folder", item: folder })}
                         title="Comments"
                       >
                         <FaComment />
                       </button>
+                      <button
+                        className="btn btn-sm btn-outline-info"
+                        onClick={() => setVersionTarget({ type: "folder", item: folder })}
+                        title="Version History"
+                      >
+                        <FaHistory />
+                      </button>
                     </div>
+
+                    {/* Owner Actions - Secondary Row */}
+                    {hasWritePermission(folder) && activeTab === "groups" && isOwner(folder) && (
+                      <div className="d-flex justify-content-center gap-1">
+                        <button
+                          className="btn btn-sm btn-outline-secondary"
+                          onClick={() => setRenameTarget({ type: "folder", item: folder })}
+                          title="Rename"
+                        >
+                          <FaEdit />
+                        </button>
+                        <button
+                          className="btn btn-sm btn-outline-danger"
+                          onClick={() => handleDeleteFolder(folder)}
+                          title="Delete"
+                        >
+                          <FaTrash />
+                        </button>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
             ))}
           </div>
 
+          {/* Grid View - Files */}
           <div className="row g-3">
-            {files.map((file) => (
+            {currentFiles.map((file) => (
               <div
                 key={file._id}
                 className="col-6 col-sm-4 col-md-3 col-lg-2"
               >
-                <div className="card p-3 h-100 text-center shadow-sm">
-                  <div className="mb-2">{iconByMime(file.mimetype)}</div>
-                  <div className="text-truncate fw-semibold">
-                    {file.originalName}
-                  </div>
-                  <div className="d-flex justify-content-center gap-1 mt-2 flex-nowrap">
-                    <a
-                      className="btn btn-sm btn-outline-primary"
-                      href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      title="View"
-                    >
-                      <FaEye />
-                    </a>
-                    {file.permissions === "write" && (
-                      <a
-                        className="btn btn-sm btn-outline-success"
-                        href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
-                        title="Download"
-                      >
-                        <FaCloudDownloadAlt />
-                      </a>
+                <div className="card h-100 shadow-sm hover-card">
+                  <div className="card-body text-center p-3">
+                    <div className="mb-3">{iconByMime(file.mimetype)}</div>
+                    <h6 className="card-title text-truncate mb-2" title={file.originalName}>
+                      {file.originalName}
+                    </h6>
+                    {activeTab === "groups" && (
+                      <div className="small text-muted mb-3">
+                        <FaUsers className="me-1" />
+                        {file.groupName}
+                      </div>
                     )}
-                    <button
-                      className="btn btn-sm btn-outline-secondary"
-                      onClick={() => setVersionTarget({ type: "file", item: file })}
-                      title="Version History"
-                    >
-                      <FaHistory />
-                    </button>
-                    <button
-                      className="btn btn-sm btn-outline-secondary"
-                      onClick={() => setCommentsTarget({ type: "file", item: file })}
-                      title="Comments"
-                    >
-                      <FaComment />
-                    </button>
+
+                    {/* Primary Actions */}
+                    <div className="d-flex justify-content-center gap-1 mb-2">
+                      <a
+                        className="btn btn-sm btn-outline-primary"
+                        href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="View"
+                      >
+                        <FaEye />
+                      </a>
+                      {hasWritePermission(file) && (
+                        <a
+                          className="btn btn-sm btn-outline-success"
+                          href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
+                          title="Download"
+                        >
+                          <FaDownload />
+                        </a>
+                      )}
+                      <button
+                        className="btn btn-sm btn-outline-info"
+                        onClick={() => setCommentsTarget({ type: "file", item: file })}
+                        title="Comments"
+                      >
+                        <FaComment />
+                      </button>
+                    </div>
+
+                    {/* Secondary Actions Row */}
+                    <div className="d-flex justify-content-center gap-1">
+                      {activeTab === "groups" && isOwner(file) && (
+                        <>
+                          <button
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() => setRenameTarget({ type: "file", item: file })}
+                            title="Rename"
+                          >
+                            <FaEdit />
+                          </button>
+                          <button
+                            className="btn btn-sm btn-outline-danger"
+                            onClick={() => handleDeleteFile(file)}
+                            title="Delete"
+                          >
+                            <FaTrash />
+                          </button>
+                        </>
+                      )}
+                      <button
+                        className="btn btn-sm btn-outline-secondary"
+                        onClick={() => setVersionTarget({ type: "file", item: file })}
+                        title="Version History"
+                      >
+                        <FaHistory />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -269,101 +427,184 @@ export default function Shared() {
         </>
       ) : (
         /* List View */
-        <div className="table-container">
-          <table className="table table-hover align-middle">
-            <thead className="table-light">
-              <tr>
-                <th width="40%">Name</th>
-                <th width="20%">Type</th>
-                <th width="20%">Owner</th>
-                <th width="20%" className="text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {folders.map((folder) => (
-                <tr key={folder._id}>
-                  <td
-                    role="button"
-                    onClick={() => openFolder(folder)}
-                    className="d-flex align-items-center"
-                  >
-                    <FaFolder className="text-warning me-2" />
-                    <span className="text-truncate">{folder.name}</span>
-                  </td>
-                  <td>Folder</td>
-                  <td>{folder.ownerEmail || "—"}</td>
-                  <td className="text-center">
-                    <div className="btn-group btn-group-sm">
-                      <button
-                        className="btn btn-outline-secondary"
-                        onClick={() => setVersionTarget({ type: "folder", item: folder })}
-                        title="Version History"
-                      >
-                        <FaHistory />
-                      </button>
-                      <button
-                        className="btn btn-outline-secondary"
-                        onClick={() => setCommentsTarget({ type: "folder", item: folder })}
-                        title="Comments"
-                      >
-                        <FaComment />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-              {files.map((file) => (
-                <tr key={file._id}>
-                  <td className="d-flex align-items-center">
-                    <span className="me-2">{iconByMime(file.mimetype)}</span>
-                    <span className="text-truncate">
-                      {file.originalName}
-                    </span>
-                  </td>
-                  <td>{file.mimetype.split("/")[1]}</td>
-                  <td>{file.ownerEmail || "—"}</td>
-                  <td className="text-center">
-                    <a
-                      className="btn btn-sm btn-outline-primary me-2"
-                      href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
-                      target="_blank"
-                      rel="noreferrer"
-                      title="View"
-                    >
-                      <FaEye />
-                    </a>
-                    {file.permissions === "write" && (
-                      <a
-                        className="btn btn-sm btn-outline-success me-2"
-                        href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
-                        title="Download"
-                      >
-                        <FaCloudDownloadAlt />
-                      </a>
-                    )}
-                    <button
-                      className="btn btn-sm btn-outline-secondary me-2"
-                      onClick={() => setVersionTarget({ type: "file", item: file })}
-                      title="Version History"
-                    >
-                      <FaHistory />
-                    </button>
-                    <button
-                      className="btn btn-sm btn-outline-secondary"
-                      onClick={() => setCommentsTarget({ type: "file", item: file })}
-                      title="Comments"
-                    >
-                      <FaComment />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="card">
+          <div className="card-body p-0">
+            <div className="table-responsive">
+              <table className="table table-hover mb-0">
+                <thead className="table-light">
+                  <tr>
+                    <th className="border-0 fw-semibold ps-4 py-3">Name</th>
+                    <th className="border-0 fw-semibold py-3">Type</th>
+                    <th className="border-0 fw-semibold py-3">Owner</th>
+                    {activeTab === "groups" && <th className="border-0 fw-semibold py-3">Group</th>}
+                    <th className="border-0 fw-semibold py-3 text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {currentFolders.map((folder) => (
+                    <tr key={folder._id} className="border-bottom border-light">
+                      <td className="ps-4 py-3">
+                        <div className="d-flex align-items-center">
+                          <FaFolder className="text-warning me-3 fs-5" />
+                          <div>
+                            <div className="fw-semibold text-truncate" style={{maxWidth: "200px"}} title={folder.name}>
+                              {folder.name}
+                            </div>
+                            {activeTab === "groups" && (
+                              <small className="text-muted">
+                                <FaUsers className="me-1" />
+                                {folder.groupName}
+                              </small>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3">
+                        <span className="badge bg-light text-dark">Folder</span>
+                      </td>
+                      <td className="py-3 text-muted">{folder.ownerEmail || "—"}</td>
+                      {activeTab === "groups" && (
+                        <td className="py-3">
+                          <span className="badge bg-info">
+                            <FaUsers className="me-1" />
+                            {folder.groupName}
+                          </span>
+                        </td>
+                      )}
+                      <td className="py-3 text-center">
+                        <div className="d-flex justify-content-center gap-1 flex-wrap">
+                          <button
+                            className="btn btn-sm btn-outline-primary"
+                            onClick={() => setCommentsTarget({ type: "folder", item: folder })}
+                            title="Comments"
+                          >
+                            <FaComment />
+                          </button>
+                          <button
+                            className="btn btn-sm btn-outline-info"
+                            onClick={() => setVersionTarget({ type: "folder", item: folder })}
+                            title="Version History"
+                          >
+                            <FaHistory />
+                          </button>
+                          {hasWritePermission(folder) && activeTab === "groups" && isOwner(folder) && (
+                            <>
+                              <button
+                                className="btn btn-sm btn-outline-secondary"
+                                onClick={() => setRenameTarget({ type: "folder", item: folder })}
+                                title="Rename"
+                              >
+                                <FaEdit />
+                              </button>
+                              <button
+                                className="btn btn-sm btn-outline-danger"
+                                onClick={() => handleDeleteFolder(folder)}
+                                title="Delete"
+                              >
+                                <FaTrash />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                  {currentFiles.map((file) => (
+                    <tr key={file._id} className="border-bottom border-light">
+                      <td className="ps-4 py-3">
+                        <div className="d-flex align-items-center">
+                          <span className="me-3 fs-5">{iconByMime(file.mimetype)}</span>
+                          <div>
+                            <div className="fw-semibold text-truncate" style={{maxWidth: "200px"}} title={file.originalName}>
+                              {file.originalName}
+                            </div>
+                            {activeTab === "groups" && (
+                              <small className="text-muted">
+                                <FaUsers className="me-1" />
+                                {file.groupName}
+                              </small>
+                            )}
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-3">
+                        <span className="badge bg-light text-dark">
+                          {file.mimetype?.split("/")[1]?.toUpperCase() || "FILE"}
+                        </span>
+                      </td>
+                      <td className="py-3 text-muted">{file.ownerEmail || "—"}</td>
+                      {activeTab === "groups" && (
+                        <td className="py-3">
+                          <span className="badge bg-info">
+                            <FaUsers className="me-1" />
+                            {file.groupName}
+                          </span>
+                        </td>
+                      )}
+                      <td className="py-3 text-center">
+                        <div className="d-flex justify-content-center gap-1 flex-wrap">
+                          <a
+                            className="btn btn-sm btn-outline-primary"
+                            href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="View"
+                          >
+                            <FaEye />
+                          </a>
+                          {hasWritePermission(file) && (
+                            <a
+                              className="btn btn-sm btn-outline-success"
+                              href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
+                              title="Download"
+                            >
+                              <FaDownload />
+                            </a>
+                          )}
+                          <button
+                            className="btn btn-sm btn-outline-info"
+                            onClick={() => setCommentsTarget({ type: "file", item: file })}
+                            title="Comments"
+                          >
+                            <FaComment />
+                          </button>
+                          <button
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() => setVersionTarget({ type: "file", item: file })}
+                            title="Version History"
+                          >
+                            <FaHistory />
+                          </button>
+                          {activeTab === "groups" && isOwner(file) && (
+                            <>
+                              <button
+                                className="btn btn-sm btn-outline-secondary"
+                                onClick={() => setRenameTarget({ type: "file", item: file })}
+                                title="Rename"
+                              >
+                                <FaEdit />
+                              </button>
+                              <button
+                                className="btn btn-sm btn-outline-danger"
+                                onClick={() => handleDeleteFile(file)}
+                                title="Delete"
+                              >
+                                <FaTrash />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* Share Modal */}
+      {/* Modals */}
       {shareTarget && (
         <ShareModal
           onClose={() => setShareTarget(null)}
@@ -380,6 +621,20 @@ export default function Shared() {
         <>
           <div className="modal-backdrop fade show"></div>
           <CommentsModal onClose={() => setCommentsTarget(null)} target={commentsTarget} />
+        </>
+      )}
+      {renameTarget && (
+        <>
+          <div className="modal-backdrop fade show"></div>
+          <RenameModal
+            onClose={() => setRenameTarget(null)}
+            target={renameTarget}
+            onRenamed={() => {
+              if (activeTab === "groups") {
+                fetchGroupShared();
+              }
+            }}
+          />
         </>
       )}
     </div>

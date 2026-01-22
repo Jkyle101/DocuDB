@@ -69,50 +69,69 @@ export default function MyGroups() {
   }, [fetchGroups]);
 
   return (
-    <div className="container-fluid py-3">
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <h4 className="fw-bold text-primary mb-0">
-          <FaUserFriends className="me-2" /> My Groups
-        </h4>
+    <div className="page-container">
+      {/* Page Header */}
+      <div className="page-header">
+        <div className="d-flex justify-content-between align-items-center flex-wrap gap-3">
+          <div>
+            <h4 className="mb-1">
+              <FaUserFriends className="me-2" />
+              My Groups
+            </h4>
+            <p className="subtitle mb-0">Groups you're a member of</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Stats Section */}
+      <div className="stats-section">
+        <div className="stats-row">
+          <div className="stat-card">
+            <div className="icon warning">
+              <FaUsers />
+            </div>
+            <h4>{groups.length}</h4>
+            <p>My Groups</p>
+          </div>
+        </div>
       </div>
 
       {loading ? (
-        <p>Loading groups...</p>
+        <div className="loading-state">
+          <div className="spinner spinner-border text-primary" role="status">
+            <span className="visually-hidden">Loading...</span>
+          </div>
+          <p>Loading your groups...</p>
+        </div>
       ) : groups.length === 0 ? (
-        <div className="alert alert-info">
-          <p className="mb-0">You are not a member of any groups yet.</p>
+        <div className="empty-state">
+          <div className="icon">
+            <FaUserFriends />
+          </div>
+          <h3>No Groups Yet</h3>
+          <p>You are not a member of any groups yet. Groups will appear here once you're added to them.</p>
         </div>
       ) : (
-        <div className="row g-4">
+        <div className="content-grid">
           {groups.map((group) => (
-            <div key={group._id} className="col-md-6 col-lg-4">
-              <div className="card h-100 shadow-sm">
-                <div className="card-body">
-                  <h5 className="card-title text-primary">{group.name}</h5>
-                  <p className="card-text text-muted">
-                    {group.description || "No description"}
-                  </p>
-                  <div className="mb-3">
-                    <small className="text-muted">
-                      <FaUsers className="me-1" /> {group.members?.length || 0} Members
-                    </small>
-                  </div>
+            <div key={group._id} className="content-card">
+              <div className="card-body">
+                <h5 className="card-title">{group.name}</h5>
+                <p className="card-text">
+                  {group.description || "No description"}
+                </p>
+                <div className="metadata">
+                  <span><FaUsers className="me-1" /> {group.members?.length || 0} Members</span>
                   {group.notifications && group.notifications.length > 0 && (
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <FaBell className="me-1" /> {group.notifications.length} Notification(s)
-                      </small>
-                    </div>
+                    <span><FaBell className="me-1" /> {group.notifications.length} Notifications</span>
                   )}
                   {group.announcements && group.announcements.length > 0 && (
-                    <div className="mb-2">
-                      <small className="text-muted">
-                        <FaBullhorn className="me-1" /> {group.announcements.length} Announcement(s)
-                      </small>
-                    </div>
+                    <span><FaBullhorn className="me-1" /> {group.announcements.length} Announcements</span>
                   )}
+                </div>
+                <div className="actions">
                   <button
-                    className="btn btn-sm btn-outline-primary w-100"
+                    className="btn btn-primary"
                     onClick={() => fetchGroupDetails(group._id)}
                   >
                     View Details
@@ -250,7 +269,7 @@ export default function MyGroups() {
                               {(selectedGroup.createdBy._id === userId || selectedGroup.leaders?.some(l => l?._id === userId) || sharedFile.fileId.owner === userId) && (
                               <button
                                 className="btn btn-sm btn-outline-danger"
-                                onClick={() => handleUnshareFromGroup("file", sharedFile.fileId._id)}
+                                onClick={() => handleUnshareFromGroup("file", sharedFile._id)}
                                 title="Remove from group"
                               >
                                 <FaTimes />
@@ -282,7 +301,7 @@ export default function MyGroups() {
                               {(selectedGroup.createdBy._id === userId || selectedGroup.leaders?.some(l => l?._id === userId) || sharedFolder.folderId.owner === userId) && (
                               <button
                                 className="btn btn-sm btn-outline-danger"
-                                onClick={() => handleUnshareFromGroup("folder", sharedFolder.folderId._id)}
+                                onClick={() => handleUnshareFromGroup("folder", sharedFolder._id)}
                                 title="Remove from group"
                               >
                                 <FaTimes />
