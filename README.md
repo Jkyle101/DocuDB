@@ -137,21 +137,7 @@ docker-compose logs -f
 docker-compose down
 ```
 
-## 📋 Configuration
 
-### Backend Environment Variables (.env)
-```env
-PORT=3001
-HOST=0.0.0.0
-MONGO_URI=mongodb://127.0.0.1:27017/docudb
-JWT_SECRET=your_secure_jwt_secret_here
-CORS_ORIGIN=http://localhost:5173
-```
-
-### Frontend Environment Variables (.env)
-```env
-VITE_BACKEND_URL=http://localhost:3001
-```
 
 ## 📖 Usage
 
