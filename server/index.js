@@ -20,6 +20,9 @@ const PasswordRequest = require("./models/passwordrequest");
 const Notification = require("./models/notification");
 const { timeStamp } = require("console");
 
+// Email service
+const { sendNotificationEmail } = require("./emailService");
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -2168,7 +2171,32 @@ app.get("/groups", async (req, res) => {
       .populate("members", "email")
       .populate("leaders", "email")
       .populate("createdBy", "email")
+      .populate({
+        path: "sharedFiles",
+        populate: [
+          { path: "fileId", select: "originalName filename mimetype size uploadDate" },
+          { path: "sharedBy", select: "email" }
+        ]
+      })
+      .populate({
+        path: "sharedFolders",
+        populate: [
+          { path: "folderId", select: "name createdAt" },
+          { path: "sharedBy", select: "email" }
+        ]
+      })
       .sort({ createdAt: -1 });
+
+    // Filter out shared files and folders that have been deleted
+    groups.forEach(group => {
+      if (group.sharedFiles) {
+        group.sharedFiles = group.sharedFiles.filter(sf => sf.fileId !== null);
+      }
+      if (group.sharedFolders) {
+        group.sharedFolders = group.sharedFolders.filter(sf => sf.folderId !== null);
+      }
+    });
+
     res.json(groups);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -2198,7 +2226,17 @@ app.get("/groups/:id", async (req, res) => {
           { path: "sharedBy", select: "email" }
         ]
       });
+
     if (!group) return res.status(404).json({ error: "Group not found" });
+
+    // Filter out shared files and folders that have been deleted
+    if (group.sharedFiles) {
+      group.sharedFiles = group.sharedFiles.filter(sf => sf.fileId !== null);
+    }
+    if (group.sharedFolders) {
+      group.sharedFolders = group.sharedFolders.filter(sf => sf.folderId !== null);
+    }
+
     res.json(group);
   } catch (err) {
     console.error("Group fetch error:", err);
@@ -2260,18 +2298,37 @@ app.patch("/groups/:groupId/unshare", async (req, res) => {
     const { groupId } = req.params;
     const { type, itemId } = req.body;
 
+    console.log("Unshare request:", { groupId, type, itemId });
+
     const group = await Group.findById(groupId);
     if (!group) return res.status(404).json({ error: "Group not found" });
 
     const userId = req.body.userId || "admin"; // Get from request or default to admin
 
+    console.log(`Group ${group.name} has ${group.sharedFiles.length} shared files, ${group.sharedFolders.length} shared folders`);
+
     if (type === "file") {
-      group.sharedFiles = group.sharedFiles.filter(sf => sf.fileId.toString() !== itemId);
+      const beforeCount = group.sharedFiles.length;
+      group.sharedFiles = group.sharedFiles.filter(sf => {
+        // Try multiple comparison methods to be robust
+        const idString = sf._id.toString();
+        const match = idString !== itemId && sf._id.toString() !== itemId;
+        return match;
+      });
+      console.log(`Filtered shared files: ${beforeCount} -> ${group.sharedFiles.length}`);
     } else {
-      group.sharedFolders = group.sharedFolders.filter(sf => sf.folderId.toString() !== itemId);
+      const beforeCount = group.sharedFolders.length;
+      group.sharedFolders = group.sharedFolders.filter(sf => {
+        // Try multiple comparison methods to be robust
+        const idString = sf._id.toString();
+        const match = idString !== itemId && sf._id.toString() !== itemId;
+        return match;
+      });
+      console.log(`Filtered shared folders: ${beforeCount} -> ${group.sharedFolders.length}`);
     }
 
     await group.save();
+    console.log("Group saved successfully");
 
     // Log the action
     createLog("GROUP_UNSHARE", userId, `Removed ${type} ${itemId} from group "${group.name}"`);
@@ -2600,9 +2657,10 @@ app.post("/notifications/test/:userId", async (req, res) => {
   }
 });
 
-// Helper function to create notifications
+// Helper function to create notifications and send emails
 async function createNotification(userId, type, title, message, details = "", relatedId = null, relatedModel = null) {
   try {
+    // Create the notification in database
     const notification = new Notification({
       userId,
       type,
@@ -2614,12 +2672,58 @@ async function createNotification(userId, type, title, message, details = "", re
     });
 
     await notification.save();
+
+    // Get user email for sending notification email
+    try {
+      const user = await UserModel.findById(userId).select('email');
+      if (user && user.email) {
+        // Send email notification asynchronously (don't block on email sending)
+        sendNotificationEmail(user.email, type, {
+          userId,
+          title,
+          message,
+          details,
+          fileName: details,
+          groupName: relatedModel === 'Group' ? 'Group' : null,
+          sharerName: relatedModel === 'User' ? 'Administrator' : null,
+          loginUrl: process.env.FRONTEND_URL || 'http://localhost:5173'
+        }).catch(emailErr => {
+          console.error('Failed to send notification email:', emailErr);
+          // Don't throw - email failure shouldn't break notification creation
+        });
+      }
+    } catch (userErr) {
+      console.error('Failed to get user email for notification:', userErr);
+    }
+
     return notification;
   } catch (err) {
     console.error("Create notification error:", err);
     // Don't throw - notifications are not critical
   }
 }
+
+// Test email endpoint
+app.post("/test-email", async (req, res) => {
+  try {
+    const { to, subject, message } = req.body;
+
+    if (!to || !subject || !message) {
+      return res.status(400).json({ error: "Missing required fields: to, subject, message" });
+    }
+
+    const result = await sendEmail(to, subject, `<p>${message}</p>`, message);
+
+    if (result.success) {
+      res.json({ success: true, messageId: result.messageId });
+    } else {
+      res.status(500).json({ error: result.error });
+    }
+  } catch (err) {
+    console.error("Test email error:", err);
+    res.status(500).json({ error: "Failed to send test email" });
+  }
+});
 
 /* ========================
    START SERVER

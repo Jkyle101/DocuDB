@@ -205,6 +205,7 @@ export default function ManageGroups() {
         type,
         itemId,
         permission,
+        sharedBy: userId,
       });
       alert(`Successfully shared ${type} to group`);
       setShowShareModal(false);
@@ -256,6 +257,7 @@ export default function ManageGroups() {
       await axios.patch(`${BACKEND_URL}/groups/${groupId}/unshare`, {
         type,
         itemId,
+        userId,
       });
       alert(`${type} removed from group successfully`);
       fetchGroups(); // Refresh to show updated shared items

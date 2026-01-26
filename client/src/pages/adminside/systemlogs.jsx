@@ -79,6 +79,15 @@ export default function SystemLogs() {
   useEffect(() => {
     fetchLogs();
     fetchStats();
+
+    // Set up realtime updates every 30 seconds
+    const interval = setInterval(() => {
+      fetchLogs();
+      fetchStats();
+    }, 30000); // 30 seconds
+
+    // Cleanup interval on component unmount
+    return () => clearInterval(interval);
   }, []);
 
   // Format file size

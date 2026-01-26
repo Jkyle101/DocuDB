@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { FaUser, FaEnvelope, FaSave, FaKey, FaBell, FaShieldAlt, FaPalette, FaCamera, FaTrash } from "react-icons/fa";
+import { FaUser, FaEnvelope, FaSave, FaKey, FaBell, FaShieldAlt, FaPalette, FaCamera, FaTrash, FaEye, FaEyeSlash } from "react-icons/fa";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
 
@@ -23,6 +23,11 @@ function Settings() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("");
+  const [showPasswords, setShowPasswords] = useState({
+    current: false,
+    new: false,
+    confirm: false
+  });
 
   const userId = localStorage.getItem("userId");
 
@@ -47,6 +52,13 @@ function Settings() {
     setMessage(msg);
     setMessageType(type);
     setTimeout(() => setMessage(""), 5000);
+  };
+
+  const togglePasswordVisibility = (field) => {
+    setShowPasswords(prev => ({
+      ...prev,
+      [field]: !prev[field]
+    }));
   };
 
   // Profile is now read-only - no update function needed
@@ -342,41 +354,71 @@ function Settings() {
                   <div className="row g-3">
                     <div className="col-md-12">
                       <label htmlFor="currentPassword" className="form-label">Current Password</label>
-                      <input
-                        type="password"
-                        className="form-control"
-                        id="currentPassword"
-                        value={userData.currentPassword}
-                        onChange={(e) => setUserData(prev => ({ ...prev, currentPassword: e.target.value }))}
-                        placeholder="Enter current password"
-                        required
-                      />
+                      <div className="position-relative">
+                        <input
+                          type={showPasswords.current ? "text" : "password"}
+                          className="form-control pe-5"
+                          id="currentPassword"
+                          value={userData.currentPassword}
+                          onChange={(e) => setUserData(prev => ({ ...prev, currentPassword: e.target.value }))}
+                          placeholder="Enter current password"
+                          required
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-link position-absolute end-0 top-50 translate-middle-y me-2 p-0 text-muted"
+                          onClick={() => togglePasswordVisibility('current')}
+                          style={{ zIndex: 5 }}
+                        >
+                          {showPasswords.current ? <FaEyeSlash /> : <FaEye />}
+                        </button>
+                      </div>
                     </div>
                     <div className="col-md-6">
                       <label htmlFor="newPassword" className="form-label">New Password</label>
-                      <input
-                        type="password"
-                        className="form-control"
-                        id="newPassword"
-                        value={userData.newPassword}
-                        onChange={(e) => setUserData(prev => ({ ...prev, newPassword: e.target.value }))}
-                        placeholder="Enter new password"
-                        minLength="6"
-                        required
-                      />
+                      <div className="position-relative">
+                        <input
+                          type={showPasswords.new ? "text" : "password"}
+                          className="form-control pe-5"
+                          id="newPassword"
+                          value={userData.newPassword}
+                          onChange={(e) => setUserData(prev => ({ ...prev, newPassword: e.target.value }))}
+                          placeholder="Enter new password"
+                          minLength="6"
+                          required
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-link position-absolute end-0 top-50 translate-middle-y me-2 p-0 text-muted"
+                          onClick={() => togglePasswordVisibility('new')}
+                          style={{ zIndex: 5 }}
+                        >
+                          {showPasswords.new ? <FaEyeSlash /> : <FaEye />}
+                        </button>
+                      </div>
                     </div>
                     <div className="col-md-6">
                       <label htmlFor="confirmPassword" className="form-label">Confirm New Password</label>
-                      <input
-                        type="password"
-                        className="form-control"
-                        id="confirmPassword"
-                        value={userData.confirmPassword}
-                        onChange={(e) => setUserData(prev => ({ ...prev, confirmPassword: e.target.value }))}
-                        placeholder="Confirm new password"
-                        minLength="6"
-                        required
-                      />
+                      <div className="position-relative">
+                        <input
+                          type={showPasswords.confirm ? "text" : "password"}
+                          className="form-control pe-5"
+                          id="confirmPassword"
+                          value={userData.confirmPassword}
+                          onChange={(e) => setUserData(prev => ({ ...prev, confirmPassword: e.target.value }))}
+                          placeholder="Confirm new password"
+                          minLength="6"
+                          required
+                        />
+                        <button
+                          type="button"
+                          className="btn btn-link position-absolute end-0 top-50 translate-middle-y me-2 p-0 text-muted"
+                          onClick={() => togglePasswordVisibility('confirm')}
+                          style={{ zIndex: 5 }}
+                        >
+                          {showPasswords.confirm ? <FaEyeSlash /> : <FaEye />}
+                        </button>
+                      </div>
                     </div>
                   </div>
                   <div className="mt-4">
