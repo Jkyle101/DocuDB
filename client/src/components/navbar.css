@@ -652,6 +652,22 @@
   justify-content: center;
 }
 
+/* ===========================================
+   Desktop Sidebar Offset
+   Ensure navbar (and search bar) does not overlap the sidebar
+   =========================================== */
+@media (min-width: 992px) and (max-width: 1199.98px) {
+  .navbar-google-drive {
+    left: 220px; /* match tablet sidebar width */
+  }
+}
+
+@media (min-width: 1200px) {
+  .navbar-google-drive {
+    left: 250px; /* match desktop sidebar width */
+  }
+}
+
 /* Settings Modal Styles */
 .user-avatar-modal {
   width: 80px;

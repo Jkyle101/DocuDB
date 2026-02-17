@@ -42,6 +42,16 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
   const suggestionsRef = useRef(null);
   const notificationAudioRef = useRef(null);
 
+  const uniqueByKey = (arr, keyFn) => {
+    const seen = new Set();
+    return arr.filter(item => {
+      const key = keyFn(item);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
   // Load recent searches from localStorage
   useEffect(() => {
     const saved = localStorage.getItem(`recentSearches_${userId}`);
@@ -204,13 +214,20 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
             path: item.parentFolder ? 'In folder' : 'Root',
             icon: item.originalName ? getFileIcon(item.mimetype) : <FaFolder className="text-warning" />
           }));
+          const deduped = uniqueByKey(formattedSuggestions, s => `${s.id}-${s.type}`);
 
-          setSuggestions(formattedSuggestions);
+          setSuggestions(deduped);
         }
 
         setShowSuggestions(true);
 
-        if (onSearch) onSearch(res.data);
+        if (onSearch) {
+          const dedupedResults = uniqueByKey(
+            Array.isArray(res.data) ? res.data : [],
+            item => `${item._id}-${item.originalName ? 'file' : 'folder'}`
+          );
+          onSearch(dedupedResults);
+        }
       } catch (err) {
         console.error("Search failed:", err);
         setSuggestions([]);
@@ -252,7 +269,13 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
           params: { query: searchTerm, userId, role },
         });
       }
-      if (onSearch) onSearch(res.data);
+      if (onSearch) {
+        const dedupedResults = uniqueByKey(
+          Array.isArray(res.data) ? res.data : [],
+          item => `${item._id}-${item.originalName ? 'file' : 'folder'}`
+        );
+        onSearch(dedupedResults);
+      }
       saveRecentSearch(searchTerm);
       setShowSuggestions(false);
       setSelectedIndex(-1);
