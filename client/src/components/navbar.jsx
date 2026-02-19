@@ -861,9 +861,6 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
           </div>
         </div>
       </nav>
-
-      {/* Add top padding to account for fixed navbar */}
-      <div className="navbar-spacer"></div>
     </>
   );
 }

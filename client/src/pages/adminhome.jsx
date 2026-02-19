@@ -23,7 +23,7 @@ import {
 import { BACKEND_URL } from "../config";
 
 export default function AdminHome() {
-  const role = "admin"; // always admin
+  const role = localStorage.getItem("role") || "admin"; // admin or superadmin
   const [currentFolderId, setCurrentFolderId] = useState(null);
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
@@ -186,7 +186,7 @@ export default function AdminHome() {
                 <div className="btn-group w-100">
                   <a
                     className="btn btn-sm btn-outline-primary"
-                    href={`${BACKEND_URL}/view/${file.filename}`}
+                    href={`${BACKEND_URL}/preview/${file.filename}?role=${role}`}
                     target="_blank"
                     rel="noreferrer"
                   >
@@ -194,7 +194,7 @@ export default function AdminHome() {
                   </a>
                   <a
                     className="btn btn-sm btn-outline-success"
-                    href={`${BACKEND_URL}/download/${file.filename}`}
+                    href={`${BACKEND_URL}/download/${file.filename}?role=${role}`}
                   >
                     <FaCloudDownloadAlt />
                   </a>
@@ -252,7 +252,7 @@ export default function AdminHome() {
                     <div className="btn-group">
                       <a
                         className="btn btn-sm btn-outline-primary"
-                        href={`${BACKEND_URL}/view/${file.filename}`}
+                        href={`${BACKEND_URL}/preview/${file.filename}?role=${role}`}
                         target="_blank"
                         rel="noreferrer"
                       >
@@ -260,7 +260,7 @@ export default function AdminHome() {
                       </a>
                       <a
                         className="btn btn-sm btn-outline-success"
-                        href={`${BACKEND_URL}/download/${file.filename}`}
+                        href={`${BACKEND_URL}/download/${file.filename}?role=${role}`}
                       >
                         <FaCloudDownloadAlt />
                       </a>

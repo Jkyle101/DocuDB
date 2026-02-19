@@ -1,4 +1,5 @@
 const path = require("path");
+const fs = require("fs");
 require("dotenv").config({ path: path.join(__dirname, '.env') });
 
 const express = require("express");
@@ -81,6 +82,51 @@ const storage = multer.diskStorage({
     cb(null, Date.now() + path.extname(file.originalname)),
 });
 const upload = multer({ storage });
+const mimeByExt = {
+  ".pdf": "application/pdf",
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".txt": "text/plain",
+  ".json": "application/json",
+  ".xml": "application/xml",
+  ".csv": "text/csv",
+  ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  ".doc": "application/msword",
+  ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  ".xls": "application/vnd.ms-excel",
+  ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+  ".ppt": "application/vnd.ms-powerpoint",
+};
+const extByMime = {
+  "application/pdf": ".pdf",
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/gif": ".gif",
+  "text/plain": ".txt",
+  "application/json": ".json",
+  "application/xml": ".xml",
+  "text/csv": ".csv",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+  "application/msword": ".doc",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+  "application/vnd.ms-excel": ".xls",
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation": ".pptx",
+  "application/vnd.ms-powerpoint": ".ppt",
+};
+const getExtension = (name) => path.extname((name || "").toLowerCase());
+const ensureExtension = (name, mime) => {
+  const trimmed = (name || "file").trim() || "file";
+  const ext = getExtension(trimmed);
+  if (ext) return trimmed;
+  const fallback = extByMime[mime];
+  return fallback ? `${trimmed}${fallback}` : trimmed;
+};
+const getContentType = (name, mime) => {
+  const ext = getExtension(name);
+  return mime || mimeByExt[ext] || "application/octet-stream";
+};
 
 /* ========================
    AUTH
@@ -260,6 +306,148 @@ app.post("/upload", upload.single("file"), async (req, res) => {
   }
 });
 
+app.post("/upload-camera", upload.array("images", 20), async (req, res) => {
+  try {
+    const hasMultiple = Array.isArray(req.files) && req.files.length > 0;
+    const single = req.file;
+    if (!hasMultiple && !single) return res.status(400).json({ error: "No image captured" });
+    const { userId, parentFolder, desiredType, originalName } = req.body;
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const type = (desiredType || "pdf").toLowerCase();
+    const imageFiles = hasMultiple ? req.files : [single];
+    const imageBuffers = imageFiles.map(f => fs.readFileSync(path.join(__dirname, "uploads", f.filename)));
+
+    let targetExt = ".pdf";
+    let targetMime = "application/pdf";
+    let outBuffer = null;
+
+    if (type === "pdf") {
+      const PDFDocument = require("pdfkit");
+      const doc = new PDFDocument({ autoFirstPage: false });
+      const chunks = [];
+      doc.on("data", d => chunks.push(d));
+      doc.on("end", async () => {
+        outBuffer = Buffer.concat(chunks);
+        await finalize(outBuffer, ".pdf", "application/pdf");
+      });
+      for (const buf of imageBuffers) {
+        const img = doc.openImage(buf);
+        doc.addPage({ size: [img.width, img.height] });
+        doc.image(img, 0, 0);
+      }
+      doc.end();
+      return;
+    } else if (type === "docx" || type === "word") {
+      targetExt = ".docx";
+      targetMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+      const { Document: DocxDocument, Packer, Paragraph, Media } = require("docx");
+      const d = new DocxDocument();
+      const children = [];
+      for (const buf of imageBuffers) {
+        const image = Media.addImage(d, buf);
+        children.push(new Paragraph(image));
+      }
+      d.addSection({ children });
+      outBuffer = await Packer.toBuffer(d);
+      await finalize(outBuffer, targetExt, targetMime);
+      return;
+    } else if (type === "pptx" || type === "ppt") {
+      targetExt = ".pptx";
+      targetMime = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+      const PptxGenJS = require("pptxgenjs");
+      const pptx = new PptxGenJS();
+      for (const buf of imageBuffers) {
+        const slide = pptx.addSlide();
+        const base64 = `data:image/png;base64,${buf.toString("base64")}`;
+        slide.addImage({ data: base64, x: 0.5, y: 0.5, w: 9, h: 6.75 });
+      }
+      outBuffer = await pptx.write("nodebuffer");
+      await finalize(outBuffer, targetExt, targetMime);
+      return;
+    } else if (type === "xlsx" || type === "excel" || type === "xls") {
+      targetExt = ".xlsx";
+      targetMime = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+      const ExcelJS = require("exceljs");
+      const wb = new ExcelJS.Workbook();
+      let idx = 1;
+      for (const buf of imageBuffers) {
+        const ws = wb.addWorksheet(`Image ${idx++}`);
+        const imgId = wb.addImage({ buffer: buf, extension: "png" });
+        ws.addImage(imgId, { tl: { col: 0, row: 0 }, ext: { width: 800, height: 600 } });
+      }
+      outBuffer = await wb.xlsx.writeBuffer();
+      await finalize(outBuffer, targetExt, targetMime);
+      return;
+    } else {
+      if (imageBuffers.length === 1) {
+        const theFile = imageFiles[0];
+        const ext = path.extname(theFile.originalname || theFile.filename) || ".png";
+        const mime = theFile.mimetype || "image/png";
+        await finalize(imageBuffers[0], ext, mime);
+      } else {
+        const PDFDocument = require("pdfkit");
+        const doc = new PDFDocument({ autoFirstPage: false });
+        const chunks = [];
+        doc.on("data", d => chunks.push(d));
+        doc.on("end", async () => {
+          outBuffer = Buffer.concat(chunks);
+          await finalize(outBuffer, ".pdf", "application/pdf");
+        });
+        for (const buf of imageBuffers) {
+          const img = doc.openImage(buf);
+          doc.addPage({ size: [img.width, img.height] });
+          doc.image(img, 0, 0);
+        }
+        doc.end();
+      }
+      return;
+    }
+
+    async function finalize(buffer, ext, mime) {
+      let baseName = (originalName || `CameraCapture_${Date.now()}`).replace(/[^\w\-.]/g, "_");
+      const hasExt = baseName.toLowerCase().endsWith(ext.toLowerCase());
+      const safeName = hasExt ? baseName : `${baseName}${ext}`;
+      const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
+      const targetPath = path.join(__dirname, "uploads", filename);
+      fs.writeFileSync(targetPath, buffer);
+
+      const file = new File({
+        originalName: safeName,
+        filename,
+        mimetype: mime,
+        size: buffer.length,
+        userId,
+        owner: userId,
+        parentFolder: parentFolder || null,
+        uploadDate: new Date(),
+      });
+      await file.save();
+
+      const version = await FileVersion.create({
+        fileId: file._id,
+        versionNumber: 1,
+        originalName: file.originalName,
+        filename: file.filename,
+        mimetype: file.mimetype,
+        size: file.size,
+        createdBy: userId,
+        changeDescription: "Camera capture upload",
+        isCurrent: true,
+      });
+
+      createLog("UPLOAD", userId, `Camera upload ${file.originalName}`);
+      try {
+        for (const f of imageFiles) {
+          fs.unlinkSync(path.join(__dirname, "uploads", f.filename));
+        }
+      } catch {}
+      return res.json({ success: true, file, version });
+    }
+  } catch (err) {
+    console.error("Upload camera error:", err);
+    res.status(500).json({ error: "Upload failed" });
+  }
+});
 // List files
 app.get("/files", async (req, res) => {
   try {
@@ -385,26 +573,37 @@ app.get("/files", async (req, res) => {
 // View file inline
 app.get("/view/:filename", async (req, res) => {
   try {
-    const { userId } = req.query;
+    const { userId, role } = req.query;
     const doc = await File.findOne({ filename: req.params.filename }).populate("owner");
     if (!doc) return res.status(404).send("File not found");
 
-    // Check permissions: owner or shared with user (read or write)
-    const ownerId = doc.owner?._id?.toString() || doc.owner?.toString() || doc.userId;
-    const isOwner = ownerId === userId || doc.userId === userId;
-    const isShared = userId && doc.sharedWith && doc.sharedWith.some(id => {
-      const sharedId = id.toString ? id.toString() : (id._id ? id._id.toString() : id);
-      return sharedId === userId;
-    });
+    const isAdmin = role === "admin" || role === "superadmin";
+    if (!isAdmin) {
+      // Check permissions: owner or shared with user (read or write)
+      const ownerId = doc.owner?._id?.toString() || doc.owner?.toString() || doc.userId;
+      const isOwner = ownerId === userId || doc.userId === userId;
+      const isShared = userId && doc.sharedWith && doc.sharedWith.some(id => {
+        const sharedId = id.toString ? id.toString() : (id._id ? id._id.toString() : id);
+        return sharedId === userId;
+      });
 
-    if (!isOwner && !isShared) {
-      return res.status(403).send("You don't have permission to view this file");
+      if (!isOwner && !isShared) {
+        return res.status(403).send("You don't have permission to view this file");
+      }
     }
 
     const filePath = path.join(__dirname, "uploads", req.params.filename);
 
+    // Compute a reliable content type for inline preview
+    const ext = (doc.originalName || "").toLowerCase();
+    let contentType = doc.mimetype || "application/octet-stream";
+    if (ext.endsWith(".pdf")) contentType = "application/pdf";
+    if (ext.endsWith(".png")) contentType = "image/png";
+    if (ext.endsWith(".jpg") || ext.endsWith(".jpeg")) contentType = "image/jpeg";
+    if (ext.endsWith(".gif")) contentType = "image/gif";
+
     // Set appropriate headers for browser preview
-    res.setHeader("Content-Type", doc.mimetype);
+    res.setHeader("Content-Type", contentType);
     res.setHeader(
       "Content-Disposition",
       `inline; filename="${encodeURIComponent(doc.originalName)}"`
@@ -420,34 +619,135 @@ app.get("/view/:filename", async (req, res) => {
   }
 });
 
+app.get("/preview/:filename", async (req, res) => {
+  try {
+    const { userId, role } = req.query;
+    const doc = await File.findOne({ filename: req.params.filename }).populate("owner");
+    if (!doc) return res.status(404).send("File not found");
+
+    const isAdmin = role === "admin" || role === "superadmin";
+    if (!isAdmin) {
+      const ownerId = doc.owner?._id?.toString() || doc.owner?.toString() || doc.userId;
+      const isOwner = ownerId === userId || doc.userId === userId;
+      const isShared = userId && doc.sharedWith && doc.sharedWith.some(id => {
+        const sharedId = id.toString ? id.toString() : (id._id ? id._id.toString() : id);
+        return sharedId === userId;
+      });
+      if (!isOwner && !isShared) return res.status(403).send("Forbidden");
+    }
+
+    const ext = (doc.originalName || "").toLowerCase();
+    const filename = req.params.filename;
+    const filePath = path.join(__dirname, "uploads", filename);
+    const extOnly = path.extname(ext);
+    const isPdf = doc.mimetype?.includes("pdf") || extOnly === ".pdf";
+    const isImage = doc.mimetype?.startsWith("image/") || [".png", ".jpg", ".jpeg", ".gif"].includes(extOnly);
+    const isText = doc.mimetype?.startsWith("text/") || ["application/json", "application/xml"].includes(doc.mimetype) || [".txt", ".json", ".xml", ".csv"].includes(extOnly);
+    const isDocx = doc.mimetype?.includes("vnd.openxmlformats-officedocument.wordprocessingml.document") || extOnly === ".docx";
+    const isXlsx = doc.mimetype?.includes("spreadsheetml") || doc.mimetype?.includes("vnd.ms-excel") || [".xlsx", ".xls"].includes(extOnly);
+    const isPptx = doc.mimetype?.includes("presentationml") || [".pptx", ".ppt"].includes(extOnly);
+
+    if (isPdf) {
+      const url = `/view/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`;
+      const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>html,body{height:100%;margin:0}embed,iframe{width:100%;height:100%;border:0}</style></head><body><embed src="${url}" type="application/pdf"/></body></html>`;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(html);
+    }
+
+    if (isImage) {
+      const url = `/view/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`;
+      const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>html,body{height:100%;margin:0}img{max-width:100%;max-height:100%;display:block;margin:auto}</style></head><body><img src="${url}" alt="preview"/></body></html>`;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(html);
+    }
+
+    if (isText) {
+      if (!fs.existsSync(filePath)) return res.status(404).send("File not found");
+      const raw = fs.readFileSync(filePath, "utf8");
+      const escaped = raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>html,body{height:100%;margin:0}pre{white-space:pre-wrap;word-wrap:break-word;padding:16px;font-family:ui-monospace,monospace}</style></head><body><pre>${escaped}</pre></body></html>`;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(html);
+    }
+
+    if (isDocx) {
+      if (!fs.existsSync(filePath)) return res.status(404).send("File not found");
+      const mammoth = require("mammoth");
+      try {
+        const result = await mammoth.convertToHtml({ path: filePath });
+        const htmlBody = result.value || "";
+        const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>body{font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial;padding:20px;color:#1f2937} h1,h2,h3{margin:1em 0 .5em} p{margin:.5em 0}</style></head><body>${htmlBody}</body></html>`;
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        return res.send(html);
+      } catch (e) {
+        return res.status(500).send("Failed to preview DOCX");
+      }
+    }
+
+    if (isXlsx) {
+      if (!fs.existsSync(filePath)) return res.status(404).send("File not found");
+      try {
+        const XLSX = require("xlsx");
+        const workbook = XLSX.readFile(filePath, { cellHTML: false, cellText: true });
+        let sheetsHtml = "";
+        for (const sheetName of workbook.SheetNames) {
+          const sheet = workbook.Sheets[sheetName];
+          const table = XLSX.utils.sheet_to_html(sheet);
+          sheetsHtml += `<section><h3>${sheetName}</h3>${table}</section>`;
+        }
+        const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>body{font:14px/1.4 system-ui,Arial;padding:16px;color:#111} h3{margin:16px 0 8px} table{border-collapse:collapse;max-width:100%;overflow:auto;display:block} table,td,th{border:1px solid #ddd} td,th{padding:6px 8px;vertical-align:top;}</style></head><body>${sheetsHtml}</body></html>`;
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        return res.send(html);
+      } catch (e) {
+        return res.status(500).send("Failed to preview Excel");
+      }
+    }
+
+    if (isPptx) {
+      const dl = `/download/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`;
+      const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>body{font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial;padding:24px;color:#1f2937} .card{border:1px solid #e5e7eb;border-radius:8px;padding:16px;max-width:640px;margin:auto} a.btn{display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 14px;border-radius:6px} p{margin:.5em 0}</style></head><body><div class="card"><h2>PowerPoint Preview</h2><p>PPTX cannot be rendered inline. Please download to open locally.</p><a class="btn" href="${dl}">Download PPTX</a></div></body></html>`;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(html);
+    }
+
+    const url = `/view/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`;
+    const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>html,body{height:100%;margin:0}iframe{width:100%;height:100%;border:0}</style></head><body><iframe src="${url}"></iframe></body></html>`;
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.send(html);
+  } catch (err) {
+    console.error("Preview error:", err);
+    res.status(500).send("Server error");
+  }
+});
 // Download file
 app.get("/download/:filename", async (req, res) => {
   try {
-    const { userId } = req.query;
+    const { userId, role } = req.query;
     const doc = await File.findOne({ filename: req.params.filename });
     if (!doc) return res.status(404).send("File not found");
 
-    // Check if user owns the file
-    const isOwner = doc.owner.toString() === userId || doc.userId === userId;
-
-    // Check if file is shared with user and has write permission
-    const isSharedWithWrite = userId &&
-      doc.sharedWith.some(id => id.toString() === userId) &&
-      doc.permissions === "write";
-
-    // Allow download if user is owner OR has write permission
-    if (!isOwner && !isSharedWithWrite) {
-      return res.status(403).send("You don't have permission to download this file");
+    const isAdmin = role === "admin" || role === "superadmin";
+    if (!isAdmin) {
+      const isOwner = (doc.owner?.toString && doc.owner.toString() === userId) || doc.userId === userId;
+      const isSharedWithWrite = userId &&
+        doc.sharedWith.some(id => (id.toString ? id.toString() : id) === userId) &&
+        doc.permissions === "write";
+      if (!isOwner && !isSharedWithWrite) {
+        return res.status(403).send("You don't have permission to download this file");
+      }
     }
 
     const filePath = path.join(__dirname, "uploads", req.params.filename);
+    const finalName = ensureExtension(doc.originalName, doc.mimetype);
+    const safeName = finalName.replace(/[\\"]/g, "_").replace(/\r?\n/g, "");
+    const contentType = getContentType(finalName, doc.mimetype);
+    const encoded = encodeURIComponent(safeName);
+    res.setHeader("Content-Type", contentType);
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="${doc.originalName}"`
+      `attachment; filename="${safeName}"; filename*=UTF-8''${encoded}`
     );
-    res.setHeader("Content-Type", doc.mimetype);
-
-    res.download(filePath, doc.originalName);
+    res.sendFile(filePath);
   } catch (err) {
     res.status(500).send("Server error");
   }
@@ -1154,7 +1454,7 @@ app.get("/search", async (req, res) => {
         continue;
       }
 
-      // Only search inside text-based files
+      // Only search inside text-based files or supported document types
       const textMimeTypes = [
         "text/",
         "application/json",
@@ -1166,6 +1466,12 @@ app.get("/search", async (req, res) => {
       ];
 
       const isTextFile = textMimeTypes.some(mime => file.mimetype?.startsWith(mime));
+      const isPdf = file.mimetype?.includes("pdf");
+      const isDocx = file.mimetype?.includes("vnd.openxmlformats-officedocument.wordprocessingml.document") ||
+                     (file.originalName && file.originalName.toLowerCase().endsWith(".docx"));
+      const isXlsx = file.mimetype?.includes("spreadsheetml") ||
+                     file.mimetype?.includes("vnd.ms-excel") ||
+                     (file.originalName && (file.originalName.toLowerCase().endsWith(".xlsx") || file.originalName.toLowerCase().endsWith(".xls")));
 
       if (isTextFile) {
         try {
@@ -1184,6 +1490,59 @@ app.get("/search", async (req, res) => {
         } catch (readErr) {
           // If file read fails, skip it
           console.error(`Error reading file ${file.filename} for search:`, readErr.message);
+          continue;
+        }
+      } else if ((isPdf || isDocx || isXlsx) && file.size < 15 * 1024 * 1024) {
+        try {
+          const filePath = path.join(__dirname, "uploads", file.filename);
+          if (!fs.existsSync(filePath)) continue;
+
+          if (isPdf) {
+            try {
+              const pdfParse = require("pdf-parse");
+              const dataBuffer = fs.readFileSync(filePath);
+              const parsed = await pdfParse(dataBuffer);
+              const text = (parsed.text || "").toLowerCase();
+              if (text.includes(searchLower)) {
+                filesWithContent.push(file);
+              }
+            } catch (pdfErr) {
+              console.error(`PDF parse failed for ${file.filename}:`, pdfErr.message);
+            }
+          }
+
+          if (isDocx) {
+            try {
+              const mammoth = require("mammoth");
+              const result = await mammoth.extractRawText({ path: filePath });
+              const text = (result.value || "").toLowerCase();
+              if (text.includes(searchLower)) {
+                filesWithContent.push(file);
+              }
+            } catch (docxErr) {
+              console.error(`DOCX parse failed for ${file.filename}:`, docxErr.message);
+            }
+          }
+
+          if (isXlsx) {
+            try {
+              const XLSX = require("xlsx");
+              const workbook = XLSX.readFile(filePath, { cellHTML: false, cellText: true });
+              let combined = "";
+              for (const sheetName of workbook.SheetNames) {
+                const sheet = workbook.Sheets[sheetName];
+                const csv = XLSX.utils.sheet_to_csv(sheet);
+                if (csv) combined += " " + csv.toLowerCase();
+              }
+              if (combined.includes(searchLower)) {
+                filesWithContent.push(file);
+              }
+            } catch (xlsxErr) {
+              console.error(`XLSX parse failed for ${file.filename}:`, xlsxErr.message);
+            }
+          }
+        } catch (docErr) {
+          console.error(`Content extraction error for ${file.filename}:`, docErr.message);
           continue;
         }
       }

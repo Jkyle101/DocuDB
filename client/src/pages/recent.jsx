@@ -192,7 +192,7 @@ export default function Recent() {
                   <div className="btn-group btn-group-sm">
                     <a
                       className="btn btn-outline-secondary"
-                      href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
+                      href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${role}`}
                       target="_blank"
                       rel="noreferrer"
                       onClick={(e) => e.stopPropagation()}
@@ -262,7 +262,7 @@ export default function Recent() {
                     <div className="btn-group btn-group-sm">
                       <a
                         className="btn btn-outline-secondary"
-                        href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
+                        href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${role}`}
                         target="_blank"
                         rel="noreferrer"
                         onClick={(e) => e.stopPropagation()}

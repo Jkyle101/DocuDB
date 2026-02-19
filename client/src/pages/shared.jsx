@@ -366,7 +366,7 @@ export default function Shared() {
                     <div className="d-flex justify-content-center gap-1 mb-2">
                       <a
                         className="btn btn-sm btn-outline-primary"
-                        href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
+                        href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${localStorage.getItem("role") || "user"}`}
                         target="_blank"
                         rel="noreferrer"
                         title="View"
@@ -545,7 +545,7 @@ export default function Shared() {
                         <div className="d-flex justify-content-center gap-1 flex-wrap">
                           <a
                             className="btn btn-sm btn-outline-primary"
-                            href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
+                            href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${localStorage.getItem("role") || "user"}`}
                             target="_blank"
                             rel="noreferrer"
                             title="View"

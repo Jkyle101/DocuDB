@@ -6,29 +6,23 @@ export default function FilePreview({ file, onClose }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const userId = localStorage.getItem("userId");
+  const role = localStorage.getItem("role") || "user";
 
   const fileUrl = `${BACKEND_URL}/view/${file.filename}?userId=${userId}`;
+  const previewUrl = `${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${role}`;
   const downloadUrl = `${BACKEND_URL}/download/${file.filename}?userId=${userId}`;
+  const nameLower = (file.originalName || "").toLowerCase();
 
   // Determine if file can be previewed in browser
-  const canPreview = file.mimetype && (
-    file.mimetype.startsWith("image/") ||
-    file.mimetype.startsWith("video/") ||
-    file.mimetype.startsWith("audio/") ||
-    file.mimetype === "application/pdf" ||
-    file.mimetype === "text/plain" ||
-    file.mimetype.includes("text/") ||
-    file.mimetype === "application/json"
-  );
-
-  const isImage = file.mimetype && file.mimetype.startsWith("image/");
-  const isVideo = file.mimetype && file.mimetype.startsWith("video/");
-  const isAudio = file.mimetype && file.mimetype.startsWith("audio/");
-  const isPDF = file.mimetype === "application/pdf";
-  const isText = file.mimetype && (
-    file.mimetype.startsWith("text/") ||
-    file.mimetype === "application/json"
-  );
+  const isDocx = file.mimetype?.includes("wordprocessingml") || nameLower.endsWith(".docx");
+  const isXlsx = file.mimetype?.includes("spreadsheetml") || file.mimetype?.includes("vnd.ms-excel") || nameLower.endsWith(".xlsx") || nameLower.endsWith(".xls");
+  const isPptx = file.mimetype?.includes("presentationml") || nameLower.endsWith(".pptx") || nameLower.endsWith(".ppt");
+  const isImage = file.mimetype?.startsWith("image/") || [".png", ".jpg", ".jpeg", ".gif"].some((ext) => nameLower.endsWith(ext));
+  const isVideo = file.mimetype?.startsWith("video/");
+  const isAudio = file.mimetype?.startsWith("audio/");
+  const isPDF = file.mimetype === "application/pdf" || nameLower.endsWith(".pdf");
+  const isText = file.mimetype?.startsWith("text/") || file.mimetype === "application/json" || [".txt", ".json", ".xml", ".csv"].some((ext) => nameLower.endsWith(ext));
+  const canPreview = isImage || isVideo || isAudio || isPDF || isText || isDocx || isXlsx || isPptx;
 
   useEffect(() => {
     setLoading(true);
@@ -125,8 +119,18 @@ export default function FilePreview({ file, onClose }) {
                 )}
                 {isPDF && (
                   <iframe
-                    src={fileUrl}
+                    src={previewUrl}
                     className="w-100"
+                    style={{ height: "80vh", border: "none" }}
+                    onLoad={handleLoad}
+                    onError={handleError}
+                    title={file.originalName}
+                  ></iframe>
+                )}
+                {(isDocx || isXlsx || isPptx) && (
+                  <iframe
+                    src={previewUrl}
+                    className="w-100 bg-white"
                     style={{ height: "80vh", border: "none" }}
                     onLoad={handleLoad}
                     onError={handleError}
@@ -135,7 +139,7 @@ export default function FilePreview({ file, onClose }) {
                 )}
                 {isText && (
                   <iframe
-                    src={fileUrl}
+                    src={previewUrl}
                     className="w-100 bg-white"
                     style={{ height: "80vh", border: "none" }}
                     onLoad={handleLoad}

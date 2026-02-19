@@ -409,7 +409,7 @@ export default function Home() {
                     <div className="btn-group w-100" role="group">
                       <a
                         className="btn btn-sm btn-outline-primary"
-                        href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
+                        href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}`}
                         target="_blank"
                         rel="noreferrer"
                         title="Preview"
@@ -608,7 +608,7 @@ export default function Home() {
                         <div className="btn-group">
                           <a
                             className="btn btn-sm btn-outline-primary"
-                            href={`${BACKEND_URL}/view/${file.filename}?userId=${userId}`}
+                            href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}`}
                             target="_blank"
                             rel="noreferrer"
                             title="Preview"
@@ -850,7 +850,7 @@ export default function Home() {
                       <>
                         <a
                           className="btn btn-outline-primary d-flex align-items-center"
-                          href={`${BACKEND_URL}/view/${contextMenu.item.data.filename}?userId=${userId}`}
+                          href={`${BACKEND_URL}/preview/${contextMenu.item.data.filename}?userId=${userId}&role=${role}`}
                           target="_blank"
                           rel="noreferrer"
                           onClick={() => setContextMenu({ visible: false, item: null })}
