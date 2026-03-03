@@ -1,0 +1,136 @@
+erDiagram
+  USERS {
+    ObjectId _id
+    string email
+    string role
+    string profilePicture
+    date createdAt
+  }
+
+  FILES {
+    ObjectId _id
+    string filename
+    string originalName
+    string mimetype
+    number size
+    date uploadDate
+    ObjectId owner
+    ObjectId parentFolder
+    string permissions
+    date deletedAt
+  }
+
+  FOLDERS {
+    ObjectId _id
+    string name
+    ObjectId owner
+    ObjectId parentFolder
+    date createdAt
+    date deletedAt
+    string permissions
+  }
+
+  FILE_VERSIONS {
+    ObjectId _id
+    ObjectId fileId
+    number versionNumber
+    string originalName
+    string filename
+    string mimetype
+    number size
+    ObjectId createdBy
+    date createdAt
+    string changeDescription
+    boolean isCurrent
+  }
+
+  FOLDER_VERSIONS {
+    ObjectId _id
+    ObjectId folderId
+    number versionNumber
+    string name
+    ObjectId createdBy
+    date createdAt
+    string changeDescription
+    boolean isCurrent
+  }
+
+  COMMENTS {
+    ObjectId _id
+    ObjectId itemId
+    string   itemType
+    string   content
+    ObjectId createdBy
+    date     createdAt
+    ObjectId parentCommentId
+  }
+
+  LOGS {
+    ObjectId _id
+    ObjectId user
+    string action
+    string details
+    date date
+    date timeStamp
+  }
+
+  NOTIFICATIONS {
+    ObjectId _id
+    ObjectId user
+    string type
+    string title
+    string message
+    date createdAt
+    boolean read
+  }
+
+  PASSWORD_REQUESTS {
+    ObjectId _id
+    ObjectId user
+    string status
+    date createdAt
+  }
+
+  GROUPS {
+    ObjectId _id
+    string name
+    string description
+    ObjectId createdBy
+    date createdAt
+  }
+
+  GROUP_SHARED_FILES {
+    ObjectId _id
+    ObjectId groupId
+    ObjectId fileId
+    string permission
+    ObjectId sharedBy
+    date sharedAt
+  }
+
+  GROUP_SHARED_FOLDERS {
+    ObjectId _id
+    ObjectId groupId
+    ObjectId folderId
+    string permission
+    ObjectId sharedBy
+    date sharedAt
+  }
+
+  USERS ||--o{ FILES : owns
+  USERS ||--o{ FOLDERS : owns
+  FOLDERS ||--o{ FILES : contains
+  FOLDERS ||--o{ FOLDERS : parent_of
+  FILES ||--o{ FILE_VERSIONS : has
+  FOLDERS ||--o{ FOLDER_VERSIONS : has
+  USERS ||--o{ FILE_VERSIONS : authored
+  USERS ||--o{ FOLDER_VERSIONS : authored
+  USERS ||--o{ COMMENTS : writes
+  COMMENTS }o--o{ COMMENTS : replies
+  USERS ||--o{ LOGS : triggers
+  USERS ||--o{ NOTIFICATIONS : receives
+  USERS ||--o{ PASSWORD_REQUESTS : requests
+  GROUPS ||--o{ GROUP_SHARED_FILES : shares
+  GROUPS ||--o{ GROUP_SHARED_FOLDERS : shares
+  USERS ||--o{ GROUPS : members
+  USERS ||--|| GROUPS : leader

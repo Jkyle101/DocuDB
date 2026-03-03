@@ -50,6 +50,15 @@ async function createLog(action, userId = null, details = "") {
   }
 }
 
+async function isGroupLeaderForFile(userId, fileId) {
+  if (!userId || !fileId) return false;
+  const group = await Group.findOne({
+    leaders: userId,
+    "sharedFiles.fileId": fileId
+  }).select("_id");
+  return !!group;
+}
+
 /* ========================
    MONGODB
 ======================== */
@@ -178,6 +187,104 @@ app.post("/login", async (req, res) => {
    FILES
 ======================== */
 /* ========================
+/* ========================
+   COMMENTS
+======================== */
+// Fetch comments with replies for an item
+app.get("/comments", async (req, res) => {
+  try {
+    const { itemId, itemType } = req.query;
+    if (!itemId || !itemType) {
+      return res.status(400).json({ error: "Missing itemId or itemType" });
+    }
+    const roots = await Comment.find({
+      itemId,
+      itemType,
+      parentCommentId: null,
+    })
+      .sort({ createdAt: -1 })
+    .populate("createdBy", "email profilePicture")
+      .populate({
+        path: "replies",
+        options: { sort: { createdAt: 1 } },
+      populate: { path: "createdBy", select: "email profilePicture" },
+      });
+    res.json(roots);
+  } catch (err) {
+    console.error("Fetch comments error:", err);
+    res.status(500).json({ error: "Failed to fetch comments" });
+  }
+});
+
+// Create comment or reply
+app.post("/comments", async (req, res) => {
+  try {
+    const { itemId, itemType, content, createdBy, parentCommentId } = req.body;
+    if (!itemId || !itemType || !content || !createdBy) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+    const comment = await Comment.create({
+      itemId,
+      itemType,
+      content,
+      createdBy,
+      parentCommentId: parentCommentId || null,
+    });
+    if (parentCommentId) {
+      await Comment.findByIdAndUpdate(parentCommentId, {
+        $push: { replies: comment._id },
+      });
+    }
+    await comment.populate("createdBy", "email");
+    res.json(comment);
+  } catch (err) {
+    console.error("Create comment error:", err);
+    res.status(500).json({ error: "Failed to create comment" });
+  }
+});
+
+// Edit comment
+app.patch("/comments/:id", async (req, res) => {
+  try {
+    const { content } = req.body;
+    if (!content || !content.trim()) {
+      return res.status(400).json({ error: "Content required" });
+    }
+    const updated = await Comment.findByIdAndUpdate(
+      req.params.id,
+      { content: content.trim() },
+      { new: true }
+    ).populate("createdBy", "email");
+    if (!updated) return res.status(404).json({ error: "Comment not found" });
+    res.json(updated);
+  } catch (err) {
+    console.error("Edit comment error:", err);
+    res.status(500).json({ error: "Failed to edit comment" });
+  }
+});
+
+// Delete comment or reply
+app.delete("/comments/:id", async (req, res) => {
+  try {
+    const comment = await Comment.findById(req.params.id);
+    if (!comment) return res.status(404).json({ error: "Comment not found" });
+    if (comment.parentCommentId) {
+      // Remove reference from parent replies
+      await Comment.findByIdAndUpdate(comment.parentCommentId, {
+        $pull: { replies: comment._id },
+      });
+    } else {
+      // If deleting a root comment, also delete its replies
+      await Comment.deleteMany({ parentCommentId: comment._id });
+    }
+    await Comment.findByIdAndDelete(req.params.id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Delete comment error:", err);
+    res.status(500).json({ error: "Failed to delete comment" });
+  }
+});
+/* ========================
    PROFILE PICTURE UPLOAD
 ======================== */
 // Upload profile picture
@@ -218,6 +325,27 @@ app.post("/upload-profile-picture", upload.single("profilePicture"), async (req,
   }
 });
 
+// Update user profile fields (limited: profilePicture)
+app.patch("/users/:id", async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { profilePicture } = req.body;
+    const update = {};
+    if (typeof profilePicture !== "undefined") {
+      update.profilePicture = profilePicture;
+    }
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: "No updatable fields provided" });
+    }
+    const user = await UserModel.findByIdAndUpdate(id, update, { new: true });
+    if (!user) return res.status(404).json({ error: "User not found" });
+    createLog("UPDATE_USER_PROFILE", user._id, "Updated profile fields");
+    res.json(user);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update user profile" });
+  }
+});
+
 /* ========================
    FILES
 ======================== */
@@ -236,6 +364,17 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       // Update existing file - create new version
       file = await File.findById(fileId);
       if (!file) return res.status(404).json({ error: "File not found" });
+
+      const isOwner =
+        file.owner?.toString?.() === userId ||
+        file.userId?.toString?.() === userId;
+      const isSharedWithWrite =
+        file.sharedWith?.some(id => id.toString() === userId) &&
+        file.permissions === "write";
+      const isLeader = await isGroupLeaderForFile(userId, file._id);
+      if (!isOwner && !isSharedWithWrite && !isLeader) {
+        return res.status(403).json({ error: "Not authorized to update this file" });
+      }
 
       // Get latest version number
       const latestVersion = await FileVersion.findOne({ fileId: file._id })
@@ -303,6 +442,73 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     res.json({ success: true, file, version: fileVersion });
   } catch (err) {
     res.status(500).json({ error: "Upload failed" });
+  }
+});
+
+// Get file versions
+app.get("/files/:id/versions", async (req, res) => {
+  try {
+    const versions = await FileVersion.find({ fileId: req.params.id })
+      .populate("createdBy", "email")
+      .sort({ versionNumber: -1 });
+    res.json(versions);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch file versions" });
+  }
+});
+
+// Restore file to a specific version (creates a new version)
+app.post("/files/:id/versions/:versionId/restore", async (req, res) => {
+  try {
+    const { userId, role } = req.body || {};
+    const file = await File.findById(req.params.id);
+    if (!file) return res.status(404).json({ error: "File not found" });
+
+    const isAdmin = role === "admin" || role === "superadmin";
+    const ownerId = file.owner?.toString?.() || file.userId?.toString?.() || file.owner;
+    if (!isAdmin && (!userId || ownerId.toString() !== userId.toString())) {
+      return res.status(403).json({ error: "Not authorized to restore versions" });
+    }
+
+    const version = await FileVersion.findById(req.params.versionId);
+    if (!version || version.fileId.toString() !== file._id.toString()) {
+      return res.status(404).json({ error: "Version not found" });
+    }
+
+    const filePath = path.join(__dirname, "uploads", version.filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Version file missing on disk" });
+    }
+
+    const latestVersion = await FileVersion.findOne({ fileId: file._id })
+      .sort({ versionNumber: -1 });
+    const nextVersionNumber = latestVersion ? latestVersion.versionNumber + 1 : 1;
+
+    await FileVersion.updateMany({ fileId: file._id }, { isCurrent: false });
+
+    file.originalName = version.originalName;
+    file.filename = version.filename;
+    file.mimetype = version.mimetype;
+    file.size = version.size;
+    await file.save();
+
+    const restoredVersion = await FileVersion.create({
+      fileId: file._id,
+      versionNumber: nextVersionNumber,
+      originalName: version.originalName,
+      filename: version.filename,
+      mimetype: version.mimetype,
+      size: version.size,
+      createdBy: userId || file.owner,
+      changeDescription: `Restored to version ${version.versionNumber}`,
+      isCurrent: true
+    });
+
+    createLog("RESTORE_FILE_VERSION", userId || file.owner, `Restored ${file.originalName} to version ${version.versionNumber}`);
+
+    res.json({ success: true, file, version: restoredVersion });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to restore file version" });
   }
 });
 
@@ -756,12 +962,26 @@ app.get("/download/:filename", async (req, res) => {
 // Soft delete file → moves to Trash
 app.delete("/files/:id", async (req, res) => {
   try {
-    const file = await File.findByIdAndUpdate(
-      req.params.id,
-      { deletedAt: new Date() },
-      { new: true }
-    );
+    const { userId, role } = req.query;
+    const isAdmin = role === "admin" || role === "superadmin";
+    const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
+
+    if (!isAdmin) {
+      const isOwner =
+        file.owner?.toString?.() === userId ||
+        file.userId?.toString?.() === userId;
+      const isSharedWithWrite =
+        file.sharedWith?.some(id => id.toString() === userId) &&
+        file.permissions === "write";
+      const isLeader = await isGroupLeaderForFile(userId, file._id);
+      if (!isOwner && !isSharedWithWrite && !isLeader) {
+        return res.status(403).json({ error: "Not authorized to delete this file" });
+      }
+    }
+
+    file.deletedAt = new Date();
+    await file.save();
 
     // NEW: log soft delete
     createLog("DELETE_FILE", file.owner, `Moved to trash: ${file.originalName}`);
@@ -1117,6 +1337,64 @@ app.get("/folders/:id", async (req, res) => {
   }
 });
 
+// Get folder versions
+app.get("/folders/:id/versions", async (req, res) => {
+  try {
+    const versions = await FolderVersion.find({ folderId: req.params.id })
+      .populate("createdBy", "email")
+      .sort({ versionNumber: -1 });
+    res.json(versions);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch folder versions" });
+  }
+});
+
+// Restore folder to a specific version (creates a new version)
+app.post("/folders/:id/versions/:versionId/restore", async (req, res) => {
+  try {
+    const { userId, role } = req.body || {};
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    const isAdmin = role === "admin" || role === "superadmin";
+    const ownerId = folder.owner?.toString?.() || folder.owner;
+    if (!isAdmin && (!userId || ownerId.toString() !== userId.toString())) {
+      return res.status(403).json({ error: "Not authorized to restore versions" });
+    }
+
+    const version = await FolderVersion.findById(req.params.versionId);
+    if (!version || version.folderId.toString() !== folder._id.toString()) {
+      return res.status(404).json({ error: "Version not found" });
+    }
+
+    const latestVersion = await FolderVersion.findOne({ folderId: folder._id })
+      .sort({ versionNumber: -1 });
+    const nextVersionNumber = latestVersion ? latestVersion.versionNumber + 1 : 1;
+
+    await FolderVersion.updateMany({ folderId: folder._id }, { isCurrent: false });
+
+    const previousName = folder.name;
+    folder.name = version.name;
+    await folder.save();
+
+    const restoredVersion = await FolderVersion.create({
+      folderId: folder._id,
+      versionNumber: nextVersionNumber,
+      name: version.name,
+      createdBy: userId || folder.owner,
+      changeDescription: `Restored to version ${version.versionNumber}`,
+      changes: { type: "restore", from: previousName, to: version.name },
+      isCurrent: true
+    });
+
+    createLog("RESTORE_FOLDER_VERSION", userId || folder.owner, `Restored folder ${folder.name} to version ${version.versionNumber}`);
+
+    res.json({ success: true, folder, version: restoredVersion });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to restore folder version" });
+  }
+});
+
 // Share folder
 app.patch("/folders/:id/share", async (req, res) => {
   try {
@@ -1281,7 +1559,7 @@ app.get("/shared/groups", async (req, res) => {
     // Get groups where user is a member
     let userGroups;
     try {
-      userGroups = await Group.find({ members: userId }).select('_id name sharedFiles sharedFolders');
+      userGroups = await Group.find({ members: userId }).select('_id name sharedFiles sharedFolders leaders');
       console.log(`Found ${userGroups.length} groups for user`);
     } catch (groupErr) {
       console.error("Error fetching user groups:", groupErr);
@@ -1299,6 +1577,7 @@ app.get("/shared/groups", async (req, res) => {
 
     for (const group of userGroups) {
       console.log(`Processing group: ${group.name} (${group._id})`);
+      const isLeader = group.leaders?.some(id => id.toString() === userId);
 
       try {
         // Safely access sharedFiles array
@@ -1320,7 +1599,8 @@ app.get("/shared/groups", async (req, res) => {
                   groupName: group.name,
                   permission: sharedFile.permission || "read",
                   sharedBy: sharedFile.sharedBy,
-                  sharedAt: sharedFile.sharedAt
+                  sharedAt: sharedFile.sharedAt,
+                  isGroupLeader: isLeader
                 });
               } else {
                 console.log(`File ${sharedFile.fileId} not found or deleted`);
@@ -1351,7 +1631,8 @@ app.get("/shared/groups", async (req, res) => {
                   groupName: group.name,
                   permission: sharedFolder.permission || "read",
                   sharedBy: sharedFolder.sharedBy,
-                  sharedAt: sharedFolder.sharedAt
+                  sharedAt: sharedFolder.sharedAt,
+                  isGroupLeader: isLeader
                 });
               } else {
                 console.log(`Folder ${sharedFolder.folderId} not found or deleted`);
@@ -1625,20 +1906,28 @@ app.get("/trash", async (req, res) => {
   }
 });
 
-// Restore file (Admin only)
+// Restore file
 app.patch("/trash/files/:id/restore", async (req, res) => {
   try {
-    const { role } = req.query;
-    if (role !== "admin" && role !== "superadmin") {
-      return res.status(403).json({ error: "Only admins can restore files" });
+    const { role, userId } = req.query;
+    const file = await File.findById(req.params.id);
+    if (!file) return res.status(404).json({ error: "File not found" });
+
+    const isAdmin = role === "admin" || role === "superadmin";
+    const ownerId = file.owner?.toString?.() || file.userId?.toString?.() || file.owner;
+    if (!isAdmin && (!userId || ownerId.toString() !== userId.toString())) {
+      return res.status(403).json({ error: "Not authorized to restore file" });
     }
 
-    const file = await File.findByIdAndUpdate(
-      req.params.id,
-      { deletedAt: null },
-      { new: true }
-    );
-    if (!file) return res.status(404).json({ error: "File not found" });
+    let nextParent = file.parentFolder || null;
+    if (nextParent) {
+      const parent = await Folder.findById(nextParent);
+      if (!parent || parent.deletedAt) nextParent = null;
+    }
+
+    file.deletedAt = null;
+    file.parentFolder = nextParent;
+    await file.save();
 
     // NEW: log restore
     createLog("RESTORE_FILE", file.owner, `Restored ${file.originalName}`);
@@ -1649,20 +1938,28 @@ app.patch("/trash/files/:id/restore", async (req, res) => {
   }
 });
 
-// Restore folder (Admin only)
+// Restore folder
 app.patch("/trash/folders/:id/restore", async (req, res) => {
   try {
-    const { role } = req.query;
-    if (role !== "admin" && role !== "superadmin") {
-      return res.status(403).json({ error: "Only admins can restore folders" });
+    const { role, userId } = req.query;
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    const isAdmin = role === "admin" || role === "superadmin";
+    const ownerId = folder.owner?.toString?.() || folder.owner;
+    if (!isAdmin && (!userId || ownerId.toString() !== userId.toString())) {
+      return res.status(403).json({ error: "Not authorized to restore folder" });
     }
 
-    const folder = await Folder.findByIdAndUpdate(
-      req.params.id,
-      { deletedAt: null },
-      { new: true }
-    );
-    if (!folder) return res.status(404).json({ error: "Folder not found" });
+    let nextParent = folder.parentFolder || null;
+    if (nextParent) {
+      const parent = await Folder.findById(nextParent);
+      if (!parent || parent.deletedAt) nextParent = null;
+    }
+
+    folder.deletedAt = null;
+    folder.parentFolder = nextParent;
+    await folder.save();
 
     // NEW: log restore folder
     createLog("RESTORE_FOLDER", folder.owner, `Restored folder ${folder.name}`);
@@ -2229,6 +2526,17 @@ app.put("/files/:id/rename", async (req, res) => {
     const file = await File.findById(id);
     if (!file) return res.status(404).json({ error: "File not found" });
 
+    const isOwner =
+      file.owner?.toString?.() === userId ||
+      file.userId?.toString?.() === userId;
+    const isSharedWithWrite =
+      file.sharedWith?.some(id => id.toString() === userId) &&
+      file.permissions === "write";
+    const isLeader = await isGroupLeaderForFile(userId, file._id);
+    if (!isOwner && !isSharedWithWrite && !isLeader) {
+      return res.status(403).json({ error: "Not authorized to rename this file" });
+    }
+
     const oldName = file.originalName;
     file.originalName = newName.trim();
     await file.save();
@@ -2412,10 +2720,11 @@ app.patch("/groups/:groupId/leaders", async (req, res) => {
     if (!group) return res.status(404).json({ error: "Group not found" });
 
     if (action === "add") {
-      // Add to leaders if not already
-      if (!group.leaders.some(id => id.toString() === userId)) {
-        group.leaders.push(userId);
+      const isMember = group.members.some(id => id.toString() === userId);
+      if (!isMember) {
+        return res.status(400).json({ error: "User must be a member to be a leader" });
       }
+      group.leaders = [userId];
     } else if (action === "remove") {
       // Remove from leaders
       group.leaders = group.leaders.filter(id => id.toString() !== userId);

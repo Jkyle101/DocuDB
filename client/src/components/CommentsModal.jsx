@@ -146,7 +146,18 @@ export default function CommentsModal({ onClose, target }) {
                     {comments.map((comment) => (
                       <div key={comment._id} className="list-group-item">
                         <div className="d-flex justify-content-between align-items-start mb-2">
-                          <div className="flex-grow-1">
+                          <div className="flex-grow-1 d-flex align-items-center gap-2">
+                            <span className="rounded-circle overflow-hidden" style={{ width: 28, height: 28, display: "inline-block" }}>
+                              {comment.createdBy?.profilePicture ? (
+                                <img
+                                  src={`${BACKEND_URL}/uploads/${comment.createdBy.profilePicture}`}
+                                  alt=""
+                                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                />
+                              ) : (
+                                <span className="bg-secondary d-inline-block" style={{ width: "100%", height: "100%" }} />
+                              )}
+                            </span>
                             <strong>{comment.createdBy?.email || "Unknown"}</strong>
                             <span className="text-muted ms-2 small">
                               {new Date(comment.createdAt).toLocaleString()}
@@ -244,22 +255,35 @@ export default function CommentsModal({ onClose, target }) {
                             {comment.replies.map((reply) => (
                               <div key={reply._id} className="border-start ps-3 mb-2">
                                 <div className="d-flex justify-content-between align-items-start">
-                                  <div className="flex-grow-1">
+                                  <div className="flex-grow-1 d-flex align-items-center gap-2">
+                                    <span className="rounded-circle overflow-hidden" style={{ width: 22, height: 22, display: "inline-block" }}>
+                                      {reply.createdBy?.profilePicture ? (
+                                        <img
+                                          src={`${BACKEND_URL}/uploads/${reply.createdBy.profilePicture}`}
+                                          alt=""
+                                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                        />
+                                      ) : (
+                                        <span className="bg-secondary d-inline-block" style={{ width: "100%", height: "100%" }} />
+                                      )}
+                                    </span>
                                     <strong className="small">{reply.createdBy?.email || "Unknown"}</strong>
                                     <span className="text-muted ms-2 small">
                                       {new Date(reply.createdAt).toLocaleString()}
                                     </span>
-                                    <p className="mb-0 mt-1">{reply.content}</p>
                                   </div>
-                                  {reply.createdBy?._id === userId && (
-                                    <button
-                                      className="btn btn-sm btn-outline-danger"
-                                      onClick={() => handleDelete(reply._id)}
-                                    >
-                                      <FaTrash />
-                                    </button>
-                                  )}
+                                  <div>
+                                    {reply.createdBy?._id === userId && (
+                                      <button
+                                        className="btn btn-sm btn-outline-danger"
+                                        onClick={() => handleDelete(reply._id)}
+                                      >
+                                        <FaTrash />
+                                      </button>
+                                    )}
+                                  </div>
                                 </div>
+                                <p className="mb-0 mt-1 ps-4">{reply.content}</p>
                               </div>
                             ))}
                           </div>

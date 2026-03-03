@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
-import { FaUserFriends, FaUsers, FaBell, FaBullhorn, FaShare, FaTimes, FaEye, FaEyeSlash } from "react-icons/fa";
+import { FaUserFriends, FaUsers, FaBell, FaBullhorn, FaShare, FaTimes, FaEye, FaEyeSlash, FaCrown } from "react-icons/fa";
 import GroupShareModal from "../components/GroupShareModal";
 
 export default function MyGroups() {
@@ -116,7 +116,15 @@ export default function MyGroups() {
           {groups.map((group) => (
             <div key={group._id} className="content-card">
               <div className="card-body">
-                <h5 className="card-title">{group.name}</h5>
+                <div className="d-flex align-items-center gap-2 mb-1">
+                  <h5 className="card-title mb-0">{group.name}</h5>
+                  {group.leaders?.some(l => l?._id === userId) && (
+                    <span className="badge bg-warning text-dark">
+                      <FaCrown className="me-1" size={12} />
+                      Leader
+                    </span>
+                  )}
+                </div>
                 <p className="card-text">
                   {group.description || "No description"}
                 </p>
@@ -149,7 +157,15 @@ export default function MyGroups() {
           <div className="modal-dialog modal-dialog-centered modal-lg">
             <div className="modal-content">
               <div className="modal-header">
-                <h5 className="modal-title">{selectedGroup.name}</h5>
+                <h5 className="modal-title d-flex align-items-center gap-2">
+                  <span>{selectedGroup.name}</span>
+                  {selectedGroup.leaders?.some(l => l?._id === userId) && (
+                    <span className="badge bg-warning text-dark">
+                      <FaCrown className="me-1" size={12} />
+                      Leader
+                    </span>
+                  )}
+                </h5>
                 <button
                   type="button"
                   className="btn-close"

@@ -83,7 +83,9 @@ export default function Trash() {
   // Restore file/folder
   const restoreItem = async (type, id) => {
     try {
-      await axios.patch(`${BACKEND_URL}/trash/${type}/${id}/restore`);
+      await axios.patch(`${BACKEND_URL}/trash/${type}/${id}/restore`, null, {
+        params: { userId, role }
+      });
       fetchTrash();
     } catch (err) {
       console.error("Failed to restore:", err);
@@ -95,7 +97,9 @@ export default function Trash() {
     if (!window.confirm("This will permanently delete the item. Continue?"))
       return;
     try {
-      await axios.delete(`${BACKEND_URL}/trash/${type}/${id}`);
+      await axios.delete(`${BACKEND_URL}/trash/${type}/${id}`, {
+        params: { userId, role }
+      });
       fetchTrash();
     } catch (err) {
       console.error("Failed to permanently delete:", err);
@@ -138,7 +142,9 @@ export default function Trash() {
     selectedItems.forEach(itemKey => {
       const [type, id] = itemKey.split('-');
       const endpoint = type === 'folder' ? 'folders' : 'files';
-      promises.push(axios.patch(`${BACKEND_URL}/trash/${endpoint}/${id}/restore`));
+      promises.push(axios.patch(`${BACKEND_URL}/trash/${endpoint}/${id}/restore`, null, {
+        params: { userId, role }
+      }));
     });
 
     try {
@@ -162,7 +168,9 @@ export default function Trash() {
     selectedItems.forEach(itemKey => {
       const [type, id] = itemKey.split('-');
       const endpoint = type === 'folder' ? 'folders' : 'files';
-      promises.push(axios.delete(`${BACKEND_URL}/trash/${endpoint}/${id}`));
+      promises.push(axios.delete(`${BACKEND_URL}/trash/${endpoint}/${id}`, {
+        params: { userId, role }
+      }));
     });
 
     try {

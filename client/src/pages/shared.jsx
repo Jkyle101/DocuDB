@@ -151,7 +151,7 @@ export default function Shared() {
       return item.permissions === "write";
     } else {
       // For group shares, owners always have write permission
-      return isOwner(item) || item.permission === "write";
+      return isOwner(item) || item.permission === "write" || item.isGroupLeader;
     }
   };
 
@@ -160,7 +160,9 @@ export default function Shared() {
     if (!window.confirm(`Delete "${file.originalName}"?`)) return;
 
     try {
-      await axios.delete(`${BACKEND_URL}/files/${file._id}`);
+      await axios.delete(`${BACKEND_URL}/files/${file._id}`, {
+        params: { userId, role: localStorage.getItem("role") || "user" }
+      });
       fetchGroupShared(); // Refresh group shares
     } catch (err) {
       console.error("Failed to delete file:", err);

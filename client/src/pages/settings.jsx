@@ -140,8 +140,35 @@ function Settings() {
     setLoading(true);
 
     try {
+      // Optional: center-crop to square before upload for consistent avatars
+      let uploadBlob = profilePictureFile;
+      try {
+        const img = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const image = new Image();
+            image.onload = () => resolve(image);
+            image.onerror = reject;
+            image.src = e.target.result;
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(profilePictureFile);
+        });
+        const size = Math.min(img.naturalWidth, img.naturalHeight);
+        const sx = Math.floor((img.naturalWidth - size) / 2);
+        const sy = Math.floor((img.naturalHeight - size) / 2);
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, sx, sy, size, size, 0, 0, size, size);
+        uploadBlob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+      } catch (cropErr) {
+        console.warn("Crop failed, uploading original:", cropErr);
+      }
+
       const formData = new FormData();
-      formData.append('profilePicture', profilePictureFile);
+      formData.append('profilePicture', uploadBlob || profilePictureFile);
       formData.append('userId', userId);
 
       const response = await axios.post(`${BACKEND_URL}/upload-profile-picture`, formData, {

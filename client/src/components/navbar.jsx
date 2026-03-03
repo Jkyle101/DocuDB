@@ -368,7 +368,13 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
   }, []);
 
   const handleLogout = () => {
-    localStorage.removeItem("isLoggedIn");
+    const email = localStorage.getItem("email");
+    // Clear all persisted user data to avoid cross-user leakage (including profilePicture)
+    localStorage.clear();
+    // Preserve last email domain hint if needed
+    if (email) {
+      localStorage.setItem("lastEmail", email);
+    }
     navigate("/login");
   };
 

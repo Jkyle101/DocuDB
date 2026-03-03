@@ -1,0 +1,188 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DocuDB ER Diagram</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 16px; }
+    #controls { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; }
+    #diagram { border: 1px solid #ddd; border-radius: 6px; padding: 8px; overflow: auto; }
+    button { padding: 8px 12px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+</head>
+<body>
+  <div id="controls">
+    <button id="downloadPng">Download PNG</button>
+    <span id="status"></span>
+  </div>
+  <div id="diagram"></div>
+  <script>
+    const diagramText = `
+erDiagram
+  USERS {
+    ObjectId _id
+    string email
+    string role
+    string profilePicture
+    date createdAt
+  }
+  FILES {
+    ObjectId _id
+    string filename
+    string originalName
+    string mimetype
+    number size
+    date uploadDate
+    ObjectId owner
+    ObjectId parentFolder
+    string permissions
+    date deletedAt
+  }
+  FOLDERS {
+    ObjectId _id
+    string name
+    ObjectId owner
+    ObjectId parentFolder
+    date createdAt
+    date deletedAt
+    string permissions
+  }
+  FILE_VERSIONS {
+    ObjectId _id
+    ObjectId fileId
+    number versionNumber
+    string originalName
+    string filename
+    string mimetype
+    number size
+    ObjectId createdBy
+    date createdAt
+    string changeDescription
+    boolean isCurrent
+  }
+  FOLDER_VERSIONS {
+    ObjectId _id
+    ObjectId folderId
+    number versionNumber
+    string name
+    ObjectId createdBy
+    date createdAt
+    string changeDescription
+    boolean isCurrent
+  }
+  COMMENTS {
+    ObjectId _id
+    ObjectId itemId
+    string   itemType
+    string   content
+    ObjectId createdBy
+    date     createdAt
+    ObjectId parentCommentId
+  }
+  LOGS {
+    ObjectId _id
+    ObjectId user
+    string action
+    string details
+    date date
+    date timeStamp
+  }
+  NOTIFICATIONS {
+    ObjectId _id
+    ObjectId user
+    string type
+    string title
+    string message
+    date createdAt
+    boolean read
+  }
+  PASSWORD_REQUESTS {
+    ObjectId _id
+    ObjectId user
+    string status
+    date createdAt
+  }
+  GROUPS {
+    ObjectId _id
+    string name
+    string description
+    ObjectId createdBy
+    date createdAt
+  }
+  GROUP_SHARED_FILES {
+    ObjectId _id
+    ObjectId groupId
+    ObjectId fileId
+    string permission
+    ObjectId sharedBy
+    date sharedAt
+  }
+  GROUP_SHARED_FOLDERS {
+    ObjectId _id
+    ObjectId groupId
+    ObjectId folderId
+    string permission
+    ObjectId sharedBy
+    date sharedAt
+  }
+  USERS ||--o{ FILES : owns
+  USERS ||--o{ FOLDERS : owns
+  FOLDERS ||--o{ FILES : contains
+  FOLDERS ||--o{ FOLDERS : parent_of
+  FILES ||--o{ FILE_VERSIONS : has
+  FOLDERS ||--o{ FOLDER_VERSIONS : has
+  USERS ||--o{ FILE_VERSIONS : authored
+  USERS ||--o{ FOLDER_VERSIONS : authored
+  USERS ||--o{ COMMENTS : writes
+  COMMENTS }o--o{ COMMENTS : replies
+  USERS ||--o{ LOGS : triggers
+  USERS ||--o{ NOTIFICATIONS : receives
+  USERS ||--o{ PASSWORD_REQUESTS : requests
+  GROUPS ||--o{ GROUP_SHARED_FILES : shares
+  GROUPS ||--o{ GROUP_SHARED_FOLDERS : shares
+  USERS ||--o{ GROUPS : members
+  USERS ||--|| GROUPS : leader
+`;
+    mermaid.initialize({ startOnLoad: false, theme: 'forest' });
+    async function render() {
+      const { svg } = await mermaid.render('erdDiagram', diagramText);
+      document.getElementById('diagram').innerHTML = svg;
+    }
+    render();
+    document.getElementById('downloadPng').addEventListener('click', async () => {
+      const status = document.getElementById('status');
+      status.textContent = 'Rendering...';
+      const container = document.getElementById('diagram');
+      const svgEl = container.querySelector('svg');
+      if (!svgEl) { status.textContent = 'No diagram'; return; }
+      const serializer = new XMLSerializer();
+      const svgString = serializer.serializeToString(svgEl);
+      const svgBlob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(svgBlob);
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        URL.revokeObjectURL(url);
+        canvas.toBlob((blob) => {
+          if (!blob) { status.textContent = 'Failed'; return; }
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'ERD.png';
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          status.textContent = 'Downloaded ERD.png';
+        }, 'image/png');
+      };
+      img.onerror = () => { status.textContent = 'Render error'; };
+      img.src = url;
+    });
+  </script>
+</body>
+</html>

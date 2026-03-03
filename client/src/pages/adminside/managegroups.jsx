@@ -188,7 +188,7 @@ export default function ManageGroups() {
       setSelectedGroup(prev => {
         if (!prev) return null;
         const newLeaders = action === "add" 
-          ? [...(prev.leaders || []), { _id: userId }] // minimal update
+          ? [{ _id: userId }]
           : (prev.leaders || []).filter(l => l._id !== userId);
         return { ...prev, leaders: newLeaders };
       });
@@ -538,6 +538,14 @@ export default function ManageGroups() {
                   </div>
                   <div className="card-body">
                     <p className="text-muted small mb-3">{group.description || "No description provided"}</p>
+                {group.leaders?.length > 0 && (
+                  <div className="mb-3">
+                    <span className="badge bg-warning text-dark">
+                      <FaCrown className="me-1" size={12} />
+                      Leader: {group.leaders[0]?.email || "Assigned"}
+                    </span>
+                  </div>
+                )}
 
                     <div className="row text-center mb-3">
                       <div className="col-4">
