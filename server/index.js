@@ -1,5 +1,6 @@
 ﻿const path = require("path");
 const fs = require("fs");
+const crypto = require("crypto");
 require("dotenv").config({ path: path.join(__dirname, '.env') });
 
 const express = require("express");
@@ -14,6 +15,7 @@ const Group = require("./models/group");
 const FileVersion = require("./models/fileversion");
 const FolderVersion = require("./models/folderversion");
 const Comment = require("./models/comment");
+const FormTemplate = require("./models/formtemplate");
 
 // NEW: logs model
 const Log = require("./models/logs");
@@ -136,6 +138,465 @@ const getContentType = (name, mime) => {
   const ext = getExtension(name);
   return mime || mimeByExt[ext] || "application/octet-stream";
 };
+
+const CLASSIFICATION_VERSION = "v1";
+const MAX_CLASSIFICATION_TEXT = 15000;
+
+const normalizeText = (value) =>
+  (value || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+
+const keywordCategories = [
+  {
+    category: "Course Material",
+    keywords: ["syllabus", "assignment", "lecture", "exam", "quiz", "rubric", "curriculum", "course"],
+  },
+  {
+    category: "Research",
+    keywords: ["research", "methodology", "experiment", "journal", "thesis", "dissertation", "hypothesis"],
+  },
+  {
+    category: "Administrative Policy",
+    keywords: ["policy", "guideline", "procedure", "handbook", "memorandum", "memo", "directive"],
+  },
+  {
+    category: "Finance",
+    keywords: ["invoice", "receipt", "budget", "tuition", "payroll", "reimbursement", "finance"],
+  },
+  {
+    category: "Legal/Compliance",
+    keywords: ["agreement", "contract", "consent", "compliance", "privacy", "nda", "terms"],
+  },
+  {
+    category: "Student Record",
+    keywords: ["transcript", "attendance", "grades", "enrollment", "student record"],
+  },
+];
+
+async function extractTextForClassification(filePath, mimetype, originalName) {
+  const ext = getExtension(originalName);
+  try {
+    if (mimetype?.startsWith("text/") || ["application/json", "application/xml"].includes(mimetype) || [".txt", ".json", ".xml", ".csv"].includes(ext)) {
+      return fs.readFileSync(filePath, "utf8").slice(0, MAX_CLASSIFICATION_TEXT);
+    }
+
+    if (mimetype?.includes("pdf") || ext === ".pdf") {
+      const pdfParse = require("pdf-parse");
+      const data = await pdfParse(fs.readFileSync(filePath));
+      return (data?.text || "").slice(0, MAX_CLASSIFICATION_TEXT);
+    }
+
+    if (mimetype?.includes("wordprocessingml") || ext === ".docx") {
+      const mammoth = require("mammoth");
+      const result = await mammoth.extractRawText({ path: filePath });
+      return (result?.value || "").slice(0, MAX_CLASSIFICATION_TEXT);
+    }
+
+    if (mimetype?.includes("spreadsheetml") || mimetype?.includes("vnd.ms-excel") || [".xlsx", ".xls"].includes(ext)) {
+      const XLSX = require("xlsx");
+      const workbook = XLSX.readFile(filePath, { cellText: true });
+      let out = "";
+      for (const sheetName of workbook.SheetNames.slice(0, 3)) {
+        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, raw: false });
+        for (const row of rows.slice(0, 40)) {
+          out += `${row.join(" ")} `;
+          if (out.length >= MAX_CLASSIFICATION_TEXT) break;
+        }
+        if (out.length >= MAX_CLASSIFICATION_TEXT) break;
+      }
+      return out.slice(0, MAX_CLASSIFICATION_TEXT);
+    }
+  } catch (err) {
+    console.warn("classification text extraction failed:", err?.message || err);
+  }
+  return "";
+}
+
+function classifyDocument({ originalName, mimetype, text }) {
+  const ext = getExtension(originalName);
+  const normalizedName = normalizeText(originalName);
+  const normalizedText = normalizeText(text).slice(0, MAX_CLASSIFICATION_TEXT);
+  const haystack = `${normalizedName} ${normalizedText}`;
+
+  if (mimetype?.startsWith("image/")) {
+    return { category: "Image Media", confidence: 0.96, tags: ["image", ext.replace(".", "")].filter(Boolean) };
+  }
+  if (mimetype?.startsWith("video/")) {
+    return { category: "Video Media", confidence: 0.96, tags: ["video", ext.replace(".", "")].filter(Boolean) };
+  }
+  if (mimetype?.startsWith("audio/")) {
+    return { category: "Audio Media", confidence: 0.96, tags: ["audio", ext.replace(".", "")].filter(Boolean) };
+  }
+  if (mimetype?.includes("presentationml") || [".pptx", ".ppt"].includes(ext)) {
+    return { category: "Presentation", confidence: 0.9, tags: ["slides", ext.replace(".", "")].filter(Boolean) };
+  }
+
+  let best = { category: "General Document", score: 0 };
+  const tags = new Set();
+  for (const entry of keywordCategories) {
+    let score = 0;
+    for (const keyword of entry.keywords) {
+      if (haystack.includes(keyword)) {
+        score += 1;
+        tags.add(keyword);
+      }
+    }
+    if (score > best.score) {
+      best = { category: entry.category, score };
+    }
+  }
+
+  if (mimetype?.includes("spreadsheetml") || mimetype?.includes("vnd.ms-excel") || [".xlsx", ".xls", ".csv"].includes(ext)) {
+    tags.add("tabular");
+    if (best.score === 0) best = { category: "Data Sheet", score: 1 };
+  }
+  if (mimetype?.includes("pdf") || ext === ".pdf") tags.add("pdf");
+  if (mimetype?.includes("wordprocessingml") || ext === ".docx") tags.add("document");
+
+  const confidence = Math.min(0.98, 0.55 + best.score * 0.1);
+  return {
+    category: best.category,
+    confidence,
+    tags: Array.from(tags).slice(0, 12),
+  };
+}
+
+async function computeFileHash(filePath) {
+  const hash = crypto.createHash("sha256");
+  const buffer = fs.readFileSync(filePath);
+  hash.update(buffer);
+  return hash.digest("hex");
+}
+
+async function reconcileDuplicateGroup(contentHash) {
+  if (!contentHash) return;
+  const group = await File.find({ contentHash, deletedAt: null })
+    .sort({ uploadDate: 1, _id: 1 })
+    .select("_id");
+  if (!group.length) return;
+
+  const canonicalId = group[0]._id;
+  if (group.length === 1) {
+    await File.findByIdAndUpdate(canonicalId, { duplicateOf: null });
+    return;
+  }
+
+  await File.updateMany({ _id: { $in: group.map((f) => f._id) } }, { duplicateOf: canonicalId });
+  await File.findByIdAndUpdate(canonicalId, { duplicateOf: null });
+}
+
+function userHasFileAccess(file, userId, role) {
+  if (!file || !userId) return false;
+  const isAdmin = role === "admin" || role === "superadmin";
+  if (isAdmin) return true;
+  const ownerId = file.owner?._id?.toString?.() || file.owner?.toString?.() || file.userId?.toString?.() || file.userId;
+  if (ownerId?.toString() === userId.toString()) return true;
+  return !!file.sharedWith?.some((id) => {
+    const sharedId = id?.toString ? id.toString() : id;
+    return sharedId?.toString() === userId.toString();
+  });
+}
+
+function isFlaggedByUser(ids, userId) {
+  if (!userId) return false;
+  return !!ids?.some((id) => id?.toString?.() === userId.toString());
+}
+
+function isEditableDocument(file) {
+  if (!file) return false;
+  const name = (file.originalName || "").toLowerCase();
+  const editableExt = [".txt", ".md", ".json", ".xml", ".csv", ".docx", ".xlsx", ".xls", ".pdf", ".pptx", ".ppt"];
+  return (
+    file.mimetype?.startsWith("text/") ||
+    file.mimetype === "application/json" ||
+    file.mimetype === "application/xml" ||
+    editableExt.some((ext) => name.endsWith(ext))
+  );
+}
+
+function getEditableKind(file) {
+  const name = (file?.originalName || "").toLowerCase();
+  const ext = getExtension(name);
+  if (file?.mimetype?.includes("wordprocessingml") || ext === ".docx") return "docx";
+  if (file?.mimetype?.includes("spreadsheetml") || file?.mimetype?.includes("vnd.ms-excel") || ext === ".xlsx" || ext === ".xls") return "xlsx";
+  if (file?.mimetype?.includes("presentationml") || ext === ".pptx" || ext === ".ppt") return "pptx";
+  if (file?.mimetype?.includes("pdf") || ext === ".pdf") return "pdf";
+  return "text";
+}
+
+async function extractEditableContent(filePath, file) {
+  const kind = getEditableKind(file);
+  if (kind === "text") {
+    return { kind, content: fs.readFileSync(filePath, "utf8") };
+  }
+  if (kind === "docx") {
+    const mammoth = require("mammoth");
+    const result = await mammoth.extractRawText({ path: filePath });
+    return { kind, content: result?.value || "" };
+  }
+  if (kind === "xlsx") {
+    const XLSX = require("xlsx");
+    const workbook = XLSX.readFile(filePath, { cellText: true });
+    const firstSheet = workbook.SheetNames[0];
+    const csv = firstSheet ? XLSX.utils.sheet_to_csv(workbook.Sheets[firstSheet]) : "";
+    return { kind, content: csv };
+  }
+  if (kind === "pdf") {
+    const pdfParse = require("pdf-parse");
+    const data = await pdfParse(fs.readFileSync(filePath));
+    return { kind, content: data?.text || "" };
+  }
+  if (kind === "pptx") {
+    try {
+      const JSZip = require("jszip");
+      const zip = await JSZip.loadAsync(fs.readFileSync(filePath));
+      const slideFiles = Object.keys(zip.files)
+        .filter((p) => /^ppt\/slides\/slide\d+\.xml$/i.test(p))
+        .sort((a, b) => {
+          const ai = parseInt((a.match(/\d+/) || ["0"])[0], 10);
+          const bi = parseInt((b.match(/\d+/) || ["0"])[0], 10);
+          return ai - bi;
+        });
+      const slides = [];
+      for (const filePathInZip of slideFiles) {
+        const xml = await zip.file(filePathInZip).async("string");
+        const texts = [];
+        const regex = /<a:t>([\s\S]*?)<\/a:t>/g;
+        let match = regex.exec(xml);
+        while (match) {
+          const txt = (match[1] || "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+          if (txt.trim()) texts.push(txt.trim());
+          match = regex.exec(xml);
+        }
+        if (texts.length) slides.push(texts.join("\n"));
+      }
+      return {
+        kind,
+        content: slides.map((s, i) => `# Slide ${i + 1}\n${s}`).join("\n\n"),
+      };
+    } catch {
+      return {
+        kind,
+        content:
+          "# Slide 1\n\nEdit presentation text here.\n\n# Slide 2\n\nAdd more slides using this format.",
+      };
+    }
+  }
+  return { kind: "text", content: "" };
+}
+
+async function writeEditedContent(filePath, file, content) {
+  const kind = getEditableKind(file);
+  if (kind === "text") {
+    fs.writeFileSync(filePath, content, "utf8");
+    return;
+  }
+  if (kind === "docx") {
+    const { Document: DocxDocument, Packer, Paragraph } = require("docx");
+    const doc = new DocxDocument({
+      sections: [
+        {
+          children: (content || "").split(/\r?\n/).map((line) => new Paragraph(line || "")),
+        },
+      ],
+    });
+    const buffer = await Packer.toBuffer(doc);
+    fs.writeFileSync(filePath, buffer);
+    return;
+  }
+  if (kind === "xlsx") {
+    const XLSX = require("xlsx");
+    const rows = (content || "")
+      .split(/\r?\n/)
+      .map((line) => line.split(","));
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(wb, ws, "Sheet1");
+    XLSX.writeFile(wb, filePath);
+    return;
+  }
+  if (kind === "pdf") {
+    const PDFDocument = require("pdfkit");
+    const doc = new PDFDocument({ margin: 40 });
+    const chunks = [];
+    await new Promise((resolve) => {
+      doc.on("data", (d) => chunks.push(d));
+      doc.on("end", resolve);
+      doc.fontSize(11).text(content || "", { width: 520 });
+      doc.end();
+    });
+    fs.writeFileSync(filePath, Buffer.concat(chunks));
+    return;
+  }
+  if (kind === "pptx") {
+    const PptxGenJS = require("pptxgenjs");
+    const pptx = new PptxGenJS();
+    const blocks = (content || "")
+      .split(/\n\s*\n/)
+      .map((b) => b.trim())
+      .filter(Boolean);
+    const slides = blocks.length ? blocks : ["# Slide 1\nEditable presentation content"];
+    slides.forEach((block) => {
+      const lines = block.split(/\r?\n/);
+      const first = lines[0] || "";
+      const title = first.replace(/^#\s*/, "").trim() || "Slide";
+      const body = lines.slice(1).join("\n").trim();
+      const slide = pptx.addSlide();
+      slide.addText(title, { x: 0.5, y: 0.3, w: 12.3, h: 0.7, fontSize: 26, bold: true });
+      if (body) {
+        slide.addText(body, { x: 0.7, y: 1.3, w: 11.8, h: 5.4, fontSize: 16, valign: "top" });
+      }
+    });
+    await pptx.writeFile({ fileName: filePath });
+  }
+}
+
+function renderTemplateBody(templateBody, payload = {}) {
+  return (templateBody || "").replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => {
+    const value = payload[key];
+    return value === undefined || value === null ? "" : String(value);
+  });
+}
+
+function sanitizeName(name) {
+  return (name || "document").replace(/[^\w\- ]+/g, "").trim() || "document";
+}
+
+async function createGeneratedDocumentBuffer(outputType, content) {
+  if (outputType === "txt") {
+    return Buffer.from(content || "", "utf8");
+  }
+  if (outputType === "pdf") {
+    const PDFDocument = require("pdfkit");
+    const doc = new PDFDocument({ margin: 40 });
+    const chunks = [];
+    await new Promise((resolve) => {
+      doc.on("data", (d) => chunks.push(d));
+      doc.on("end", resolve);
+      doc.fontSize(11).text(content || "", { width: 520 });
+      doc.end();
+    });
+    return Buffer.concat(chunks);
+  }
+
+  // default DOCX
+  const { Document: DocxDocument, Packer, Paragraph } = require("docx");
+  const doc = new DocxDocument({
+    sections: [
+      {
+        children: (content || "").split(/\r?\n/).map((line) => new Paragraph(line || "")),
+      },
+    ],
+  });
+  return Packer.toBuffer(doc);
+}
+
+async function canUserEditFile(file, userId, role) {
+  if (!file || !userId) return false;
+  const isAdmin = role === "admin" || role === "superadmin";
+  if (isAdmin) return true;
+
+  const ownerId = file.owner?._id?.toString?.() || file.owner?.toString?.() || file.userId?.toString?.() || file.userId;
+  const isOwner = ownerId?.toString() === userId.toString();
+  const isSharedWithWrite =
+    !!file.sharedWith?.some((id) => (id?.toString ? id.toString() : id) === userId) &&
+    file.permissions === "write";
+  const isLeader = await isGroupLeaderForFile(userId, file._id);
+
+  return isOwner || isSharedWithWrite || isLeader;
+}
+
+function buildFolderPathMap(folders) {
+  const byId = new Map(folders.map((f) => [f._id.toString(), f]));
+  const pathCache = new Map();
+
+  const getPathParts = (folderId) => {
+    const key = folderId.toString();
+    if (pathCache.has(key)) return pathCache.get(key);
+
+    const parts = [];
+    let cursor = byId.get(key);
+    const guard = new Set();
+    while (cursor && !guard.has(cursor._id.toString())) {
+      guard.add(cursor._id.toString());
+      parts.unshift(cursor.name);
+      const parentId = cursor.parentFolder?.toString?.();
+      cursor = parentId ? byId.get(parentId) : null;
+    }
+    pathCache.set(key, parts);
+    return parts;
+  };
+
+  return { getPathParts };
+}
+
+function getDestinationIntent(filename, mimetype, classification) {
+  const name = normalizeText(filename);
+  const hints = new Set();
+  const reasons = [];
+  const currentYear = new Date().getFullYear().toString();
+
+  const addHint = (value, reason) => {
+    if (!value) return;
+    hints.add(value);
+    if (reason) reasons.push(reason);
+  };
+
+  const hasAny = (words) => words.some((w) => name.includes(w));
+
+  if (hasAny(["contract", "agreement", "nda", "terms"])) {
+    ["legal", "clients", currentYear, "contracts"].forEach((h) => addHint(h, "Detected legal contract terms"));
+  }
+  if (hasAny(["invoice", "budget", "receipt", "payroll", "finance"])) {
+    ["finance", currentYear, "invoices"].forEach((h) => addHint(h, "Detected finance terms"));
+  }
+  if (hasAny(["syllabus", "assignment", "lecture", "quiz", "exam"])) {
+    ["course", "materials", currentYear].forEach((h) => addHint(h, "Detected course material terms"));
+  }
+  if (hasAny(["transcript", "enrollment", "attendance", "grades"])) {
+    ["student", "records", currentYear].forEach((h) => addHint(h, "Detected student record terms"));
+  }
+  if (mimetype?.includes("pdf")) addHint("pdf");
+
+  if (classification?.category) {
+    addHint(normalizeText(classification.category), "Used document classification");
+    const mapped = {
+      "Administrative Policy": ["policy", "administrative"],
+      "Course Material": ["course", "materials"],
+      "Legal/Compliance": ["legal", "compliance"],
+      Finance: ["finance"],
+      Research: ["research"],
+      "Student Record": ["student", "records"],
+    };
+    (mapped[classification.category] || []).forEach((h) => addHint(h, "Mapped classification to folder intent"));
+  }
+
+  if (hints.size === 0) {
+    addHint(currentYear, "Fallback to current year");
+  }
+
+  return { hints: Array.from(hints), reasons };
+}
+
+function scoreFolderPath(pathParts, hints) {
+  if (!pathParts?.length) return 0;
+  const parts = pathParts.map((p) => normalizeText(p));
+  let score = 0;
+  for (const hintRaw of hints) {
+    const hint = normalizeText(hintRaw);
+    if (!hint) continue;
+    const exactHit = parts.some((p) => p === hint);
+    const partialHit = parts.some((p) => p.includes(hint) || hint.includes(p));
+    if (exactHit) score += 4;
+    else if (partialHit) score += 2;
+  }
+
+  // Prefer deeper, more specific paths when hints match.
+  if (score > 0) score += Math.min(3, parts.length * 0.25);
+  return score;
+}
 
 /* ========================
    AUTH
@@ -359,11 +820,21 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     let file;
     let versionNumber = 1;
+    let previousHash = null;
+    const uploadedFilePath = path.join(__dirname, "uploads", req.file.filename);
+    const contentHash = await computeFileHash(uploadedFilePath);
+    const extractedText = await extractTextForClassification(uploadedFilePath, req.file.mimetype, req.file.originalname);
+    const classificationResult = classifyDocument({
+      originalName: req.file.originalname,
+      mimetype: req.file.mimetype,
+      text: extractedText,
+    });
 
     if (isUpdate && fileId) {
       // Update existing file - create new version
       file = await File.findById(fileId);
       if (!file) return res.status(404).json({ error: "File not found" });
+      previousHash = file.contentHash || null;
 
       const isOwner =
         file.owner?.toString?.() === userId ||
@@ -406,6 +877,14 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       file.filename = req.file.filename;
       file.mimetype = req.file.mimetype;
       file.size = req.file.size;
+      file.contentHash = contentHash;
+      file.classification = {
+        category: classificationResult.category,
+        confidence: classificationResult.confidence,
+        tags: classificationResult.tags,
+        classifiedAt: new Date(),
+        classifierVersion: CLASSIFICATION_VERSION,
+      };
       await file.save();
     } else {
       // New file upload
@@ -418,9 +897,22 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       owner: userId,
       parentFolder: parentFolder || null,
       uploadDate: new Date(),
+      contentHash,
+      classification: {
+        category: classificationResult.category,
+        confidence: classificationResult.confidence,
+        tags: classificationResult.tags,
+        classifiedAt: new Date(),
+        classifierVersion: CLASSIFICATION_VERSION,
+      },
     });
     await file.save();
     }
+
+    if (previousHash && previousHash !== contentHash) {
+      await reconcileDuplicateGroup(previousHash);
+    }
+    await reconcileDuplicateGroup(contentHash);
 
     // Create version record for current file
     const fileVersion = new FileVersion({
@@ -439,9 +931,257 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     // NEW: log upload
     createLog("UPLOAD", userId, `Uploaded ${req.file.originalname}`);
 
-    res.json({ success: true, file, version: fileVersion });
+    const duplicateCount = await File.countDocuments({
+      contentHash,
+      deletedAt: null,
+    });
+    const duplicateStatus = duplicateCount > 1 ? "duplicate" : "unique";
+
+    res.json({
+      success: true,
+      file,
+      version: fileVersion,
+      classification: file.classification,
+      duplicate: {
+        status: duplicateStatus,
+        count: duplicateCount,
+        duplicateOf: file.duplicateOf || null,
+      },
+    });
   } catch (err) {
     res.status(500).json({ error: "Upload failed" });
+  }
+});
+
+// Predict destination folder for an incoming document
+app.post("/files/predict-destination", async (req, res) => {
+  try {
+    const { userId, role, filename, mimetype, classification } = req.body || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    let folders = [];
+    if (role === "admin" || role === "superadmin") {
+      folders = await Folder.find({ deletedAt: null }).select("_id name parentFolder createdAt");
+    } else {
+      const owned = await Folder.find({ owner: userId, deletedAt: null }).select("_id name parentFolder createdAt");
+      const shared = await Folder.find({ sharedWith: userId, deletedAt: null }).select("_id name parentFolder createdAt");
+      const seen = new Set();
+      folders = [...owned, ...shared].filter((f) => {
+        const key = f._id.toString();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    }
+
+    if (!folders.length) {
+      return res.json({
+        suggestedFolderId: null,
+        suggestedPath: "Root",
+        confidence: 0,
+        hints: [],
+        reasons: ["No folders available yet"],
+        alternatives: [],
+      });
+    }
+
+    const { hints, reasons } = getDestinationIntent(
+      filename || "Untitled",
+      mimetype || "",
+      classification || null
+    );
+
+    const { getPathParts } = buildFolderPathMap(folders);
+    const ranked = folders
+      .map((folder) => {
+        const pathParts = getPathParts(folder._id);
+        const score = scoreFolderPath(pathParts, hints);
+        return {
+          folderId: folder._id,
+          pathParts,
+          path: pathParts.join(" > "),
+          score,
+        };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    const top = ranked[0];
+    const topScore = top?.score || 0;
+    const confidence = Math.max(0, Math.min(0.99, topScore / 14));
+    const alternatives = ranked
+      .filter((r) => r.score > 0)
+      .slice(0, 3)
+      .map((r) => ({
+        folderId: r.folderId,
+        path: r.path,
+        score: Number(r.score.toFixed(2)),
+      }));
+
+    res.json({
+      suggestedFolderId: topScore > 0 ? top.folderId : null,
+      suggestedPath: topScore > 0 ? top.path : "Root",
+      confidence: Number(confidence.toFixed(2)),
+      hints,
+      reasons,
+      alternatives,
+    });
+  } catch (err) {
+    console.error("Predict destination error:", err);
+    res.status(500).json({ error: "Failed to predict destination" });
+  }
+});
+
+/* ========================
+   SMART FORM BUILDER
+======================== */
+app.get("/form-templates", async (req, res) => {
+  try {
+    const { userId, role } = req.query;
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const isAdmin = role === "admin" || role === "superadmin";
+    const query = isAdmin ? {} : { owner: userId };
+    const templates = await FormTemplate.find(query)
+      .populate("destinationFolder", "name parentFolder")
+      .sort({ updatedAt: -1 });
+    res.json(templates);
+  } catch (err) {
+    console.error("List templates error:", err);
+    res.status(500).json({ error: "Failed to fetch templates" });
+  }
+});
+
+app.post("/form-templates", async (req, res) => {
+  try {
+    const { userId, role, name, description, fields, templateBody, outputType, destinationFolder } = req.body || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    if (!name || !templateBody) return res.status(400).json({ error: "Missing required template fields" });
+
+    const ownerUser = await UserModel.findById(userId);
+    if (!ownerUser) return res.status(404).json({ error: "User not found" });
+
+    const template = await FormTemplate.create({
+      owner: userId,
+      name,
+      description: description || "",
+      fields: Array.isArray(fields) ? fields : [],
+      templateBody,
+      outputType: ["txt", "docx", "pdf"].includes(outputType) ? outputType : "docx",
+      destinationFolder: destinationFolder || null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    });
+
+    createLog("CREATE_FORM_TEMPLATE", userId, `Created template "${name}"`);
+    res.json({ success: true, template });
+  } catch (err) {
+    console.error("Create template error:", err);
+    res.status(500).json({ error: "Failed to create template" });
+  }
+});
+
+app.delete("/form-templates/:id", async (req, res) => {
+  try {
+    const { userId, role } = req.query;
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const template = await FormTemplate.findById(req.params.id);
+    if (!template) return res.status(404).json({ error: "Template not found" });
+
+    const isAdmin = role === "admin" || role === "superadmin";
+    if (!isAdmin && template.owner.toString() !== userId.toString()) {
+      return res.status(403).json({ error: "Not authorized to delete template" });
+    }
+
+    await FormTemplate.findByIdAndDelete(template._id);
+    createLog("DELETE_FORM_TEMPLATE", userId, `Deleted template "${template.name}"`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Delete template error:", err);
+    res.status(500).json({ error: "Failed to delete template" });
+  }
+});
+
+app.post("/form-templates/:id/generate", async (req, res) => {
+  try {
+    const { userId, role, values, destinationFolder } = req.body || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const template = await FormTemplate.findById(req.params.id);
+    if (!template) return res.status(404).json({ error: "Template not found" });
+
+    const isAdmin = role === "admin" || role === "superadmin";
+    if (!isAdmin && template.owner.toString() !== userId.toString()) {
+      return res.status(403).json({ error: "Not authorized to use this template" });
+    }
+
+    const payload = values && typeof values === "object" ? values : {};
+    for (const field of template.fields || []) {
+      if (field.required && !payload[field.key]) {
+        return res.status(400).json({ error: `Missing required field: ${field.label || field.key}` });
+      }
+    }
+
+    const rendered = renderTemplateBody(template.templateBody, payload);
+    const outputType = template.outputType || "docx";
+    const ext = outputType === "pdf" ? ".pdf" : outputType === "txt" ? ".txt" : ".docx";
+    const mime =
+      outputType === "pdf"
+        ? "application/pdf"
+        : outputType === "txt"
+          ? "text/plain"
+          : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+    const buffer = await createGeneratedDocumentBuffer(outputType, rendered);
+    const generatedName = `${sanitizeName(template.name)}_${Date.now()}${ext}`;
+    const storedFilename = `${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
+    const targetPath = path.join(__dirname, "uploads", storedFilename);
+    fs.writeFileSync(targetPath, buffer);
+
+    const targetFolder = destinationFolder || template.destinationFolder || null;
+    const contentHash = await computeFileHash(targetPath);
+    const extractedText = await extractTextForClassification(targetPath, mime, generatedName);
+    const classificationResult = classifyDocument({
+      originalName: generatedName,
+      mimetype: mime,
+      text: extractedText,
+    });
+
+    const file = await File.create({
+      originalName: generatedName,
+      filename: storedFilename,
+      mimetype: mime,
+      size: buffer.length,
+      userId,
+      owner: userId,
+      parentFolder: targetFolder,
+      uploadDate: new Date(),
+      contentHash,
+      classification: {
+        category: classificationResult.category,
+        confidence: classificationResult.confidence,
+        tags: classificationResult.tags,
+        classifiedAt: new Date(),
+        classifierVersion: CLASSIFICATION_VERSION,
+      },
+    });
+
+    await reconcileDuplicateGroup(contentHash);
+
+    const version = await FileVersion.create({
+      fileId: file._id,
+      versionNumber: 1,
+      originalName: file.originalName,
+      filename: file.filename,
+      mimetype: file.mimetype,
+      size: file.size,
+      createdBy: userId,
+      changeDescription: `Generated from template "${template.name}"`,
+      isCurrent: true,
+    });
+
+    createLog("GENERATE_TEMPLATE_DOCUMENT", userId, `Generated "${file.originalName}" from template "${template.name}"`);
+    res.json({ success: true, file, version });
+  } catch (err) {
+    console.error("Generate template document error:", err);
+    res.status(500).json({ error: "Failed to generate document from template" });
   }
 });
 
@@ -457,6 +1197,320 @@ app.get("/files/:id/versions", async (req, res) => {
   }
 });
 
+app.patch("/files/:id/favorite", async (req, res) => {
+  try {
+    const { userId, role, favorited } = req.body || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    const file = await File.findById(req.params.id).populate("owner");
+    if (!file) return res.status(404).json({ error: "File not found" });
+    if (!userHasFileAccess(file, userId, role)) {
+      return res.status(403).json({ error: "Not authorized to bookmark this file" });
+    }
+
+    const favorites = new Set((file.favoritedBy || []).map((id) => id.toString()));
+    const shouldFavorite = typeof favorited === "boolean" ? favorited : !favorites.has(userId);
+    if (shouldFavorite) favorites.add(userId);
+    else favorites.delete(userId);
+
+    file.favoritedBy = Array.from(favorites);
+    await file.save();
+    createLog("BOOKMARK_FAVORITE", userId, `${shouldFavorite ? "Favorited" : "Unfavorited"} ${file.originalName}`);
+
+    res.json({ success: true, isFavorite: shouldFavorite });
+  } catch (err) {
+    console.error("Favorite toggle error:", err);
+    res.status(500).json({ error: "Failed to update favorite status" });
+  }
+});
+
+app.patch("/files/:id/pin", async (req, res) => {
+  try {
+    const { userId, role, pinned } = req.body || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    const file = await File.findById(req.params.id).populate("owner");
+    if (!file) return res.status(404).json({ error: "File not found" });
+    if (!userHasFileAccess(file, userId, role)) {
+      return res.status(403).json({ error: "Not authorized to pin this file" });
+    }
+
+    const pinnedSet = new Set((file.pinnedBy || []).map((id) => id.toString()));
+    const shouldPin = typeof pinned === "boolean" ? pinned : !pinnedSet.has(userId);
+    if (shouldPin) pinnedSet.add(userId);
+    else pinnedSet.delete(userId);
+
+    file.pinnedBy = Array.from(pinnedSet);
+    await file.save();
+    createLog("BOOKMARK_PIN", userId, `${shouldPin ? "Pinned" : "Unpinned"} ${file.originalName}`);
+
+    res.json({ success: true, isPinned: shouldPin });
+  } catch (err) {
+    console.error("Pin toggle error:", err);
+    res.status(500).json({ error: "Failed to update pinned status" });
+  }
+});
+
+// Duplicate groups by content hash
+app.get("/files/duplicates", async (req, res) => {
+  try {
+    const { userId, role } = req.query;
+    const isAdmin = role === "admin" || role === "superadmin";
+
+    const match = { deletedAt: null, contentHash: { $ne: null } };
+    if (!isAdmin) {
+      if (!userId) return res.status(400).json({ error: "Missing userId" });
+      match.$or = [{ userId }, { sharedWith: userId }];
+    }
+
+    const groups = await File.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: "$contentHash",
+          count: { $sum: 1 },
+          fileIds: { $push: "$_id" },
+        },
+      },
+      { $match: { count: { $gt: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 100 },
+    ]);
+
+    const allIds = groups.flatMap((g) => g.fileIds);
+    const files = await File.find({ _id: { $in: allIds } })
+      .populate("owner", "email")
+      .select("originalName filename size uploadDate owner userId contentHash duplicateOf classification");
+    const fileMap = new Map(files.map((f) => [f._id.toString(), f]));
+
+    const formatted = groups.map((group) => ({
+      contentHash: group._id,
+      count: group.count,
+      files: group.fileIds
+        .map((id) => fileMap.get(id.toString()))
+        .filter(Boolean)
+        .map((f) => ({
+          _id: f._id,
+          originalName: f.originalName,
+          size: f.size,
+          uploadDate: f.uploadDate,
+          ownerEmail: f.owner?.email || null,
+          duplicateOf: f.duplicateOf || null,
+          classification: f.classification || null,
+        })),
+    }));
+
+    res.json(formatted);
+  } catch (err) {
+    console.error("Duplicate fetch error:", err);
+    res.status(500).json({ error: "Failed to fetch duplicate groups" });
+  }
+});
+
+// Reclassify a single file
+app.post("/files/:id/reclassify", async (req, res) => {
+  try {
+    const { userId, role } = req.body || {};
+    const isAdmin = role === "admin" || role === "superadmin";
+    const file = await File.findById(req.params.id);
+    if (!file) return res.status(404).json({ error: "File not found" });
+
+    if (!isAdmin && file.userId !== userId) {
+      return res.status(403).json({ error: "Not authorized to reclassify this file" });
+    }
+
+    const filePath = path.join(__dirname, "uploads", file.filename);
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: "File missing on disk" });
+
+    const contentHash = await computeFileHash(filePath);
+    const extractedText = await extractTextForClassification(filePath, file.mimetype, file.originalName);
+    const classificationResult = classifyDocument({
+      originalName: file.originalName,
+      mimetype: file.mimetype,
+      text: extractedText,
+    });
+
+    const previousHash = file.contentHash || null;
+    file.contentHash = contentHash;
+    file.classification = {
+      category: classificationResult.category,
+      confidence: classificationResult.confidence,
+      tags: classificationResult.tags,
+      classifiedAt: new Date(),
+      classifierVersion: CLASSIFICATION_VERSION,
+    };
+    await file.save();
+
+    if (previousHash && previousHash !== contentHash) {
+      await reconcileDuplicateGroup(previousHash);
+    }
+    await reconcileDuplicateGroup(contentHash);
+
+    createLog("RECLASSIFY_FILE", userId || file.owner, `Reclassified ${file.originalName}`);
+    res.json({ success: true, file });
+  } catch (err) {
+    console.error("Reclassify error:", err);
+    res.status(500).json({ error: "Failed to reclassify file" });
+  }
+});
+
+// Reclassify all files for a user (or whole system for admin)
+app.post("/files/reclassify-bulk", async (req, res) => {
+  try {
+    const { userId, role } = req.body || {};
+    const isAdmin = role === "admin" || role === "superadmin";
+    if (!isAdmin && !userId) return res.status(400).json({ error: "Missing userId" });
+
+    const query = isAdmin ? { deletedAt: null } : { userId, deletedAt: null };
+    const files = await File.find(query).select("_id filename mimetype originalName contentHash");
+
+    let processed = 0;
+    for (const file of files) {
+      const filePath = path.join(__dirname, "uploads", file.filename);
+      if (!fs.existsSync(filePath)) continue;
+      const contentHash = await computeFileHash(filePath);
+      const extractedText = await extractTextForClassification(filePath, file.mimetype, file.originalName);
+      const classificationResult = classifyDocument({
+        originalName: file.originalName,
+        mimetype: file.mimetype,
+        text: extractedText,
+      });
+
+      const previousHash = file.contentHash || null;
+      file.contentHash = contentHash;
+      file.classification = {
+        category: classificationResult.category,
+        confidence: classificationResult.confidence,
+        tags: classificationResult.tags,
+        classifiedAt: new Date(),
+        classifierVersion: CLASSIFICATION_VERSION,
+      };
+      await file.save();
+      if (previousHash && previousHash !== contentHash) {
+        await reconcileDuplicateGroup(previousHash);
+      }
+      await reconcileDuplicateGroup(contentHash);
+      processed += 1;
+    }
+
+    createLog("RECLASSIFY_BULK", userId || null, `Reclassified ${processed} file(s)`);
+    res.json({ success: true, processed });
+  } catch (err) {
+    console.error("Bulk reclassify error:", err);
+    res.status(500).json({ error: "Failed to reclassify files" });
+  }
+});
+
+// Preview metadata for richer in-app preview (PDF pages + annotation hints)
+app.get("/files/:id/preview-metadata", async (req, res) => {
+  try {
+    const { userId, role } = req.query;
+    const doc = await File.findById(req.params.id).populate("owner");
+    if (!doc) return res.status(404).json({ error: "File not found" });
+
+    const isAdmin = role === "admin" || role === "superadmin";
+    if (!isAdmin) {
+      const ownerId = doc.owner?._id?.toString() || doc.owner?.toString() || doc.userId;
+      const isOwner = ownerId === userId || doc.userId === userId;
+      const isShared = userId && doc.sharedWith && doc.sharedWith.some(id => {
+        const sharedId = id.toString ? id.toString() : (id._id ? id._id.toString() : id);
+        return sharedId === userId;
+      });
+      if (!isOwner && !isShared) {
+        return res.status(403).json({ error: "Forbidden" });
+      }
+    }
+
+    const ext = (doc.originalName || "").toLowerCase();
+    const isPdf = doc.mimetype?.includes("pdf") || ext.endsWith(".pdf");
+    let pageCount = 1;
+
+    if (isPdf) {
+      const filePath = path.join(__dirname, "uploads", doc.filename);
+      if (fs.existsSync(filePath)) {
+        try {
+          const pdfParse = require("pdf-parse");
+          const data = await pdfParse(fs.readFileSync(filePath));
+          pageCount = Number.isFinite(data?.numpages) ? data.numpages : 1;
+        } catch (e) {
+          pageCount = 1;
+        }
+      }
+    }
+
+    const rootComments = await Comment.find({
+      itemId: doc._id,
+      itemType: "file",
+      parentCommentId: null,
+    })
+      .populate("createdBy", "email")
+      .populate({
+        path: "replies",
+        options: { sort: { createdAt: 1 } },
+        populate: { path: "createdBy", select: "email" },
+      })
+      .sort({ createdAt: -1 });
+
+    const allComments = rootComments.flatMap((c) => [c, ...(c.replies || [])]);
+
+    const extractPage = (content) => {
+      if (!content) return null;
+      const patterns = [
+        /(?:\bpage\b|\bp\b)\s*[:#-]?\s*(\d{1,4})/i,
+        /\[(\d{1,4})\]/,
+      ];
+      for (const p of patterns) {
+        const m = content.match(p);
+        if (m && m[1]) {
+          const value = parseInt(m[1], 10);
+          if (Number.isFinite(value) && value > 0) return value;
+        }
+      }
+      return null;
+    };
+
+    const extractQuotedTerms = (content) => {
+      if (!content) return [];
+      const out = [];
+      const regex = /"([^"]{2,80})"/g;
+      let match = regex.exec(content);
+      while (match) {
+        const term = (match[1] || "").trim();
+        if (term) out.push(term);
+        match = regex.exec(content);
+      }
+      return out;
+    };
+
+    const annotations = allComments
+      .map((comment) => {
+        const pageNumber = extractPage(comment.content);
+        return {
+          id: comment._id,
+          author: comment.createdBy?.email || "Unknown",
+          createdAt: comment.createdAt,
+          content: comment.content || "",
+          pageNumber: pageNumber || null,
+        };
+      })
+      .filter((a) => !!a.content);
+
+    const annotationTerms = [...new Set(
+      allComments.flatMap((c) => extractQuotedTerms(c.content))
+    )].slice(0, 20);
+
+    res.json({
+      fileId: doc._id,
+      isPdf,
+      pageCount,
+      annotations,
+      annotationTerms,
+    });
+  } catch (err) {
+    console.error("preview-metadata error:", err);
+    res.status(500).json({ error: "Failed to fetch preview metadata" });
+  }
+});
 // Restore file to a specific version (creates a new version)
 app.post("/files/:id/versions/:versionId/restore", async (req, res) => {
   try {
@@ -627,7 +1681,23 @@ app.post("/upload-camera", upload.array("images", 20), async (req, res) => {
         parentFolder: parentFolder || null,
         uploadDate: new Date(),
       });
+      const contentHash = await computeFileHash(targetPath);
+      const extractedText = await extractTextForClassification(targetPath, mime, safeName);
+      const classificationResult = classifyDocument({
+        originalName: safeName,
+        mimetype: mime,
+        text: extractedText,
+      });
+      file.contentHash = contentHash;
+      file.classification = {
+        category: classificationResult.category,
+        confidence: classificationResult.confidence,
+        tags: classificationResult.tags,
+        classifiedAt: new Date(),
+        classifierVersion: CLASSIFICATION_VERSION,
+      };
       await file.save();
+      await reconcileDuplicateGroup(contentHash);
 
       const version = await FileVersion.create({
         fileId: file._id,
@@ -647,7 +1717,18 @@ app.post("/upload-camera", upload.array("images", 20), async (req, res) => {
           fs.unlinkSync(path.join(__dirname, "uploads", f.filename));
         }
       } catch {}
-      return res.json({ success: true, file, version });
+      const duplicateCount = await File.countDocuments({ contentHash, deletedAt: null });
+      return res.json({
+        success: true,
+        file,
+        version,
+        classification: file.classification,
+        duplicate: {
+          status: duplicateCount > 1 ? "duplicate" : "unique",
+          count: duplicateCount,
+          duplicateOf: file.duplicateOf || null,
+        },
+      });
     }
   } catch (err) {
     console.error("Upload camera error:", err);
@@ -762,11 +1843,17 @@ app.get("/files", async (req, res) => {
     // Add permission info for shared files
     const filesWithPermissions = uniqueFiles.map(file => {
       const isOwner = file.owner._id.toString() === userId;
+      const isFavorite = isFlaggedByUser(file.favoritedBy, userId);
+      const isPinned = isFlaggedByUser(file.pinnedBy, userId);
       return {
         ...file.toObject(),
         isShared: !isOwner,
         permission: isOwner ? "owner" : (file.permissions || "read"),
-        ownerEmail: file.owner?.email || null
+        ownerEmail: file.owner?.email || null,
+        isDuplicate: !!file.duplicateOf,
+        classification: file.classification || null,
+        isFavorite,
+        isPinned,
       };
     });
 
@@ -982,6 +2069,7 @@ app.delete("/files/:id", async (req, res) => {
 
     file.deletedAt = new Date();
     await file.save();
+    await reconcileDuplicateGroup(file.contentHash);
 
     // NEW: log soft delete
     createLog("DELETE_FILE", file.owner, `Moved to trash: ${file.originalName}`);
@@ -1041,6 +2129,112 @@ app.get("/files/:id", async (req, res) => {
     res.json(file);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Get editable document content
+app.get("/files/:id/content", async (req, res) => {
+  try {
+    const { userId, role } = req.query;
+    const file = await File.findById(req.params.id).populate("owner");
+    if (!file) return res.status(404).json({ error: "File not found" });
+    if (!userHasFileAccess(file, userId, role)) {
+      return res.status(403).json({ error: "Not authorized to view file content" });
+    }
+    if (!isEditableDocument(file)) {
+      return res.status(400).json({ error: "This file type is not editable in-app" });
+    }
+
+    const filePath = path.join(__dirname, "uploads", file.filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File missing on disk" });
+    }
+
+    const { kind, content } = await extractEditableContent(filePath, file);
+    res.json({
+      fileId: file._id,
+      originalName: file.originalName,
+      mimetype: file.mimetype,
+      kind,
+      content,
+    });
+  } catch (err) {
+    console.error("Get file content error:", err);
+    res.status(500).json({ error: "Failed to fetch file content" });
+  }
+});
+
+// Save editable document content
+app.patch("/files/:id/content", async (req, res) => {
+  try {
+    const { userId, role, content, changeDescription } = req.body || {};
+    if (typeof content !== "string") {
+      return res.status(400).json({ error: "Content must be a string" });
+    }
+
+    const file = await File.findById(req.params.id);
+    if (!file) return res.status(404).json({ error: "File not found" });
+    if (!isEditableDocument(file)) {
+      return res.status(400).json({ error: "This file type is not editable in-app" });
+    }
+
+    const canEdit = await canUserEditFile(file, userId, role);
+    if (!canEdit) {
+      return res.status(403).json({ error: "Not authorized to edit this file" });
+    }
+
+    const filePath = path.join(__dirname, "uploads", file.filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "File missing on disk" });
+    }
+
+    await writeEditedContent(filePath, file, content);
+    const previousHash = file.contentHash || null;
+    const sizeBytes = fs.existsSync(filePath) ? fs.statSync(filePath).size : Buffer.byteLength(content, "utf8");
+
+    file.size = sizeBytes;
+    const newHash = await computeFileHash(filePath);
+    file.contentHash = newHash;
+    const extractedText = await extractTextForClassification(filePath, file.mimetype, file.originalName);
+    const classificationResult = classifyDocument({
+      originalName: file.originalName,
+      mimetype: file.mimetype,
+      text: extractedText,
+    });
+    file.classification = {
+      category: classificationResult.category,
+      confidence: classificationResult.confidence,
+      tags: classificationResult.tags,
+      classifiedAt: new Date(),
+      classifierVersion: CLASSIFICATION_VERSION,
+    };
+    await file.save();
+
+    const latestVersion = await FileVersion.findOne({ fileId: file._id }).sort({ versionNumber: -1 });
+    const nextVersion = latestVersion ? latestVersion.versionNumber + 1 : 1;
+    await FileVersion.updateMany({ fileId: file._id }, { isCurrent: false });
+    const version = await FileVersion.create({
+      fileId: file._id,
+      versionNumber: nextVersion,
+      originalName: file.originalName,
+      filename: file.filename,
+      mimetype: file.mimetype,
+      size: file.size,
+      createdBy: userId || file.owner,
+      changeDescription: changeDescription || "Edited in built-in document editor",
+      isCurrent: true,
+    });
+
+    if (previousHash && previousHash !== newHash) {
+      await reconcileDuplicateGroup(previousHash);
+    }
+    await reconcileDuplicateGroup(newHash);
+
+    createLog("EDIT_FILE_CONTENT", userId || file.owner, `Edited ${file.originalName} in built-in editor`);
+    res.json({ success: true, file, version });
+  } catch (err) {
+    console.error("Save file content error:", err);
+    res.status(500).json({ error: "Failed to save file content" });
   }
 });
 
@@ -1520,7 +2714,11 @@ app.get("/shared", async (req, res) => {
     files = files.map(f => ({
       ...f,
       ownerEmail: f.owner?.email || null,
-      permissions: f.permissions || "owner"
+      permissions: f.permissions || "owner",
+      isDuplicate: !!f.duplicateOf,
+      classification: f.classification || null,
+      isFavorite: isFlaggedByUser(f.favoritedBy, userId),
+      isPinned: isFlaggedByUser(f.pinnedBy, userId),
     }));
 
     res.json({ folders, files });
@@ -1684,7 +2882,11 @@ app.get("/shared/groups", async (req, res) => {
     sharedFiles = sharedFiles.map(f => ({
       ...f,
       ownerEmail: f.owner?.email || null,
-      permissions: f.permission || "read"
+      permissions: f.permission || "read",
+      isDuplicate: !!f.duplicateOf,
+      classification: f.classification || null,
+      isFavorite: isFlaggedByUser(f.favoritedBy, userId),
+      isPinned: isFlaggedByUser(f.pinnedBy, userId),
     }));
 
     console.log("Successfully returning group shared content");
@@ -1928,6 +3130,7 @@ app.patch("/trash/files/:id/restore", async (req, res) => {
     file.deletedAt = null;
     file.parentFolder = nextParent;
     await file.save();
+    await reconcileDuplicateGroup(file.contentHash);
 
     // NEW: log restore
     createLog("RESTORE_FILE", file.owner, `Restored ${file.originalName}`);

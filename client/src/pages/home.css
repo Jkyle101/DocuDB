@@ -318,6 +318,33 @@
   margin-bottom: 0.75rem;
 }
 
+/* Keep file actions from overlapping in narrow grid cards */
+.file-card .card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.file-card-actions {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: center;
+}
+
+.file-card-action-btn {
+  flex: 0 0 calc(33.333% - 0.35rem);
+  min-width: 40px;
+  padding: 0.25rem 0.2rem;
+}
+
+@media (max-width: 575.98px) {
+  .file-card-action-btn {
+    flex-basis: calc(50% - 0.35rem);
+  }
+}
+
 .content-card .metadata {
   display: flex;
   align-items: center;

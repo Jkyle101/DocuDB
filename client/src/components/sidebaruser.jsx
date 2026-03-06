@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import {
   FaFolder, FaUser, FaTimes, FaShareAlt, FaClock,
-  FaUsers, FaTrash, FaHome
+  FaUsers, FaTrash, FaHome, FaFileSignature
 } from "react-icons/fa";
 import { NavLink, useNavigate } from "react-router-dom";
 import "bootstrap/dist/css/bootstrap.min.css";
@@ -164,6 +164,20 @@ function Sidebar({ onClose }) {
                 >
                   <FaUsers className="me-2" size={16} />
                   Groups
+                </NavLink>
+              </li>
+              <li className="nav-item">
+                <NavLink
+                  to="/forms"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${
+                      isActive ? "active bg-primary text-white" : "text-dark"
+                    }`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaFileSignature className="me-2" size={16} />
+                  Smart Forms
                 </NavLink>
               </li>
             </ul>

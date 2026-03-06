@@ -17,6 +17,8 @@ import AdminTrash from "./pages/adminside/trash"; // admin trash page
 import Settings from "./pages/settings"; // user settings page
 import Notifications from "./pages/notifications"; // user notifications page
 import Help from "./pages/help"; // help & feedback page
+import FormsPage from "./pages/forms.jsx"; // smart form builder
+import EditorPage from "./pages/editor.jsx"; // full-page document editor
 
 function App() {
   return (
@@ -105,6 +107,28 @@ function App() {
           }
         >
           <Route index element={<Help />} />
+        </Route>
+
+        <Route
+          path="/forms"
+          element={
+            <ProtectedRoute allowedRole="user">
+              <Layout role="user" />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<FormsPage />} />
+        </Route>
+
+        <Route
+          path="/editor/:id"
+          element={
+            <ProtectedRoute allowedRole="user">
+              <Layout role="user" />
+            </ProtectedRoute>
+          }
+        >
+          <Route index element={<EditorPage />} />
         </Route>
 
         {/* Admin Protected Routes */}

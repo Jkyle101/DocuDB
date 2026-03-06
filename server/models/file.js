@@ -16,6 +16,17 @@ const FileSchema = new mongoose.Schema({
   sharedWith: [{ type: mongoose.Schema.Types.ObjectId, ref: "users" }],
   permissions: { type: String, enum: ["read", "write", "owner"], default: "owner" },
   deletedAt: { type: Date, default: null },
+  favoritedBy: [{ type: String }],
+  pinnedBy: [{ type: String }],
+  contentHash: { type: String, index: true, default: null },
+  duplicateOf: { type: mongoose.Schema.Types.ObjectId, ref: "File", default: null },
+  classification: {
+    category: { type: String, default: "General Document" },
+    confidence: { type: Number, default: 0.5 },
+    tags: [{ type: String }],
+    classifiedAt: { type: Date, default: Date.now },
+    classifierVersion: { type: String, default: "v1" },
+  },
 
 });
 

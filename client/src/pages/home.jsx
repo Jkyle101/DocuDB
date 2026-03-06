@@ -25,6 +25,10 @@ import {
   FaHistory,
   FaComment,
   FaUsers,
+  FaStar,
+  FaRegStar,
+  FaThumbtack,
+  FaEdit,
 } from "react-icons/fa";
 
 import { FaFileSignature } from "react-icons/fa"; // ✅ new icon for Rename
@@ -37,7 +41,7 @@ import ManageSharesModal from "../components/ManageSharesModal";
 import UploadModal from "../components/UploadModal";
 import VersionModal from "../components/VersionModal.jsx";
 import CommentsModal from "../components/CommentsModal.jsx";
-import { useOutletContext } from "react-router-dom";
+import { useOutletContext, useNavigate } from "react-router-dom";
 import { BACKEND_URL } from "../config.js";
 
 export default function Home() {
@@ -64,8 +68,11 @@ export default function Home() {
     visible: false,
     item: null,
   });
+  const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
+  const [showPinnedOnly, setShowPinnedOnly] = useState(false);
 
   const { searchResults } = useOutletContext();
+  const navigate = useNavigate();
 
   // ✅ Pagination state
   const [itemsToShow, setItemsToShow] = useState(12);
@@ -151,6 +158,59 @@ export default function Home() {
     setFiles((s) => s.filter((f) => f._id !== file._id));
   };
 
+  const patchFileFlags = useCallback((fileId, changes) => {
+    setFiles((prev) =>
+      prev.map((f) => (f._id === fileId ? { ...f, ...changes } : f))
+    );
+    setSelectedItem((prev) => {
+      if (prev?.type === "file" && prev?.data?._id === fileId) {
+        return { ...prev, data: { ...prev.data, ...changes } };
+      }
+      return prev;
+    });
+    setContextMenu((prev) => {
+      if (prev?.item?.type === "file" && prev?.item?.data?._id === fileId) {
+        return {
+          ...prev,
+          item: { ...prev.item, data: { ...prev.item.data, ...changes } },
+        };
+      }
+      return prev;
+    });
+  }, []);
+
+  const toggleFavorite = async (file) => {
+    const next = !file.isFavorite;
+    patchFileFlags(file._id, { isFavorite: next });
+    try {
+      await axios.patch(`${BACKEND_URL}/files/${file._id}/favorite`, {
+        userId,
+        role,
+        favorited: next,
+      });
+    } catch (err) {
+      patchFileFlags(file._id, { isFavorite: !next });
+      console.error("Failed to update favorite:", err);
+      alert("Failed to update favorite");
+    }
+  };
+
+  const togglePinned = async (file) => {
+    const next = !file.isPinned;
+    patchFileFlags(file._id, { isPinned: next });
+    try {
+      await axios.patch(`${BACKEND_URL}/files/${file._id}/pin`, {
+        userId,
+        role,
+        pinned: next,
+      });
+    } catch (err) {
+      patchFileFlags(file._id, { isPinned: !next });
+      console.error("Failed to update pin:", err);
+      alert("Failed to update pin");
+    }
+  };
+
   const handleContextMenu = (e, item) => {
     e.preventDefault();
     setSelectedItem(item);
@@ -180,8 +240,29 @@ export default function Home() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
+  const isEditableFile = (file) => {
+    const name = (file?.originalName || "").toLowerCase();
+    const editableExt = [".txt", ".md", ".json", ".xml", ".csv", ".docx", ".xlsx", ".xls", ".pdf", ".pptx", ".ppt"];
+    return (
+      file?.mimetype?.startsWith("text/") ||
+      file?.mimetype === "application/json" ||
+      file?.mimetype === "application/xml" ||
+      editableExt.some((ext) => name.endsWith(ext))
+    );
+  };
+
   // ✅ Use search results if available, otherwise normal data
-  const visibleFiles = searchResults || files;
+  const visibleFiles = useMemo(() => {
+    const base = searchResults || files;
+    let filtered = base;
+    if (showPinnedOnly) filtered = filtered.filter((f) => !!f.isPinned);
+    if (showFavoritesOnly) filtered = filtered.filter((f) => !!f.isFavorite);
+    return [...filtered].sort((a, b) => {
+      const pinnedDelta = Number(!!b.isPinned) - Number(!!a.isPinned);
+      if (pinnedDelta !== 0) return pinnedDelta;
+      return new Date(b.uploadDate || 0) - new Date(a.uploadDate || 0);
+    });
+  }, [searchResults, files, showFavoritesOnly, showPinnedOnly]);
   const visibleFolders = searchResults ? [] : folders;
 
   // ✅ Paginated arrays
@@ -245,6 +326,22 @@ export default function Home() {
                   <FaList />
                 </button>
               </div>
+              <button
+                className={`btn me-2 ${showFavoritesOnly ? "btn-warning" : "btn-outline-warning"}`}
+                onClick={() => setShowFavoritesOnly((v) => !v)}
+                title="Favorites"
+              >
+                <FaStar className="me-1" />
+                Favorites
+              </button>
+              <button
+                className={`btn me-2 ${showPinnedOnly ? "btn-dark" : "btn-outline-dark"}`}
+                onClick={() => setShowPinnedOnly((v) => !v)}
+                title="Pinned Documents"
+              >
+                <FaThumbtack className="me-1" />
+                Pinned
+              </button>
               <button
                 className="btn btn-primary"
                 onClick={() => setShowCreate(true)}
@@ -400,15 +497,59 @@ export default function Home() {
                     <p className="text-muted small mb-1">
                       {formatFileSize(file.size)}
                     </p>
+                    <div className="d-flex gap-1 justify-content-center flex-wrap mb-1">
+                      {file.classification?.category && (
+                        <span className="badge bg-info text-dark">
+                          {file.classification.category}
+                        </span>
+                      )}
+                      {file.isDuplicate && (
+                        <span className="badge bg-warning text-dark">
+                          Duplicate
+                        </span>
+                      )}
+                      {file.isFavorite && (
+                        <span className="badge bg-warning text-dark">
+                          <FaStar className="me-1" />
+                          Favorite
+                        </span>
+                      )}
+                      {file.isPinned && (
+                        <span className="badge bg-dark">
+                          <FaThumbtack className="me-1" />
+                          Pinned
+                        </span>
+                      )}
+                    </div>
                     {file.isShared && file.ownerEmail && (
                       <p className="text-info small mb-0">
                         <FaUsers className="me-1" />
                         Shared by {file.ownerEmail}
                       </p>
                     )}
-                    <div className="btn-group w-100" role="group">
+                    <div className="file-card-actions" role="group">
+                      <button
+                        className={`btn btn-sm file-card-action-btn ${file.isFavorite ? "btn-warning" : "btn-outline-warning"}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFavorite(file);
+                        }}
+                        title={file.isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+                      >
+                        {file.isFavorite ? <FaStar /> : <FaRegStar />}
+                      </button>
+                      <button
+                        className={`btn btn-sm file-card-action-btn ${file.isPinned ? "btn-dark" : "btn-outline-dark"}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          togglePinned(file);
+                        }}
+                        title={file.isPinned ? "Unpin" : "Pin Document"}
+                      >
+                        <FaThumbtack />
+                      </button>
                       <a
-                        className="btn btn-sm btn-outline-primary"
+                        className="btn btn-sm btn-outline-primary file-card-action-btn"
                         href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}`}
                         target="_blank"
                         rel="noreferrer"
@@ -418,15 +559,27 @@ export default function Home() {
                         <FaEye />
                       </a>
                       <a
-                        className="btn btn-sm btn-outline-success"
+                        className="btn btn-sm btn-outline-success file-card-action-btn"
                         href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
                         title="Download"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <FaCloudDownloadAlt />
                       </a>
+                      {isEditableFile(file) && (
+                        <button
+                          className="btn btn-sm btn-outline-dark file-card-action-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate(`/editor/${file._id}`);
+                          }}
+                          title="Edit in built-in editor"
+                        >
+                          <FaEdit />
+                        </button>
+                      )}
                       <button
-                        className="btn btn-sm btn-outline-secondary"
+                        className="btn btn-sm btn-outline-secondary file-card-action-btn"
                         onClick={(e) => {
                           e.stopPropagation();
                           setVersionTarget({ type: "file", item: file });
@@ -436,7 +589,7 @@ export default function Home() {
                         <FaHistory />
                       </button>
                       <button
-                        className="btn btn-sm btn-outline-secondary"
+                        className="btn btn-sm btn-outline-secondary file-card-action-btn"
                         onClick={(e) => {
                           e.stopPropagation();
                           setCommentsTarget({ type: "file", item: file });
@@ -590,6 +743,28 @@ export default function Home() {
                         <span className="text-truncate">
                           {file.originalName}
                         </span>
+                        <div className="ms-2 d-flex gap-1">
+                          {file.classification?.category && (
+                            <span className="badge bg-info text-dark">
+                              {file.classification.category}
+                            </span>
+                          )}
+                          {file.isDuplicate && (
+                            <span className="badge bg-warning text-dark">
+                              Duplicate
+                            </span>
+                          )}
+                          {file.isFavorite && (
+                            <span className="badge bg-warning text-dark">
+                              <FaStar />
+                            </span>
+                          )}
+                          {file.isPinned && (
+                            <span className="badge bg-dark">
+                              <FaThumbtack />
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td>{file.mimetype.split("/")[1] || file.mimetype}</td>
                       <td>
@@ -605,7 +780,21 @@ export default function Home() {
                       <td>{formatFileSize(file.size)}</td>
                       <td>{new Date(file.uploadDate).toLocaleDateString()}</td>
                       <td className="text-center">
-                        <div className="btn-group">
+                        <div className="btn-group flex-wrap gap-1 justify-content-center">
+                          <button
+                            className={`btn btn-sm ${file.isFavorite ? "btn-warning" : "btn-outline-warning"}`}
+                            onClick={() => toggleFavorite(file)}
+                            title={file.isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+                          >
+                            {file.isFavorite ? <FaStar /> : <FaRegStar />}
+                          </button>
+                          <button
+                            className={`btn btn-sm ${file.isPinned ? "btn-dark" : "btn-outline-dark"}`}
+                            onClick={() => togglePinned(file)}
+                            title={file.isPinned ? "Unpin" : "Pin Document"}
+                          >
+                            <FaThumbtack />
+                          </button>
                           <a
                             className="btn btn-sm btn-outline-primary"
                             href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}`}
@@ -622,6 +811,15 @@ export default function Home() {
                           >
                             <FaCloudDownloadAlt />
                           </a>
+                          {isEditableFile(file) && (
+                            <button
+                              className="btn btn-sm btn-outline-dark"
+                              onClick={() => navigate(`/editor/${file._id}`)}
+                              title="Edit in built-in editor"
+                            >
+                              <FaEdit />
+                            </button>
+                          )}
                           <button
                             className="btn btn-sm btn-outline-secondary"
                             onClick={() =>
@@ -927,6 +1125,38 @@ export default function Home() {
                         >
                           <FaComment className="me-2" />
                           Comments
+                        </button>
+                        {isEditableFile(contextMenu.item.data) && (
+                          <button
+                            className="btn btn-outline-dark d-flex align-items-center"
+                            onClick={() => {
+                              navigate(`/editor/${contextMenu.item.data._id}`);
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            <FaEdit className="me-2" />
+                            Edit Document
+                          </button>
+                        )}
+                        <button
+                          className={`btn d-flex align-items-center ${contextMenu.item.data.isFavorite ? "btn-warning" : "btn-outline-warning"}`}
+                          onClick={() => {
+                            toggleFavorite(contextMenu.item.data);
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          {contextMenu.item.data.isFavorite ? <FaStar className="me-2" /> : <FaRegStar className="me-2" />}
+                          {contextMenu.item.data.isFavorite ? "Remove Favorite" : "Add to Favorites"}
+                        </button>
+                        <button
+                          className={`btn d-flex align-items-center ${contextMenu.item.data.isPinned ? "btn-dark" : "btn-outline-dark"}`}
+                          onClick={() => {
+                            togglePinned(contextMenu.item.data);
+                            setContextMenu({ visible: false, item: null });
+                          }}
+                        >
+                          <FaThumbtack className="me-2" />
+                          {contextMenu.item.data.isPinned ? "Unpin Document" : "Pin Document"}
                         </button>
                         <hr />
                         <button
