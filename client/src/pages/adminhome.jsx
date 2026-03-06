@@ -1,5 +1,6 @@
 // src/pages/AdminHome.jsx
 import React, { useState, useEffect, useMemo, useCallback } from "react";
+import { useOutletContext } from "react-router-dom";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -24,11 +25,15 @@ import { BACKEND_URL } from "../config";
 
 export default function AdminHome() {
   const role = localStorage.getItem("role") || "admin"; // admin or superadmin
+  const userId = localStorage.getItem("userId");
   const [currentFolderId, setCurrentFolderId] = useState(null);
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
   const [breadcrumbs, setBreadcrumbs] = useState([]);
   const [view, setView] = useState("grid");
+
+  // Get search results from navbar
+  const { searchResults } = useOutletContext();
 
   // ✅ Fetch folders + files + breadcrumbs
   const fetchFolderContents = useCallback(async (folderId) => {
@@ -99,9 +104,17 @@ export default function AdminHome() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
-  // Always show all files/folders (no search in admin)
-  const visibleFolders = folders;
-  const visibleFiles = files;
+  // ✅ Use search results if available, otherwise show all files/folders
+  // Search results from admin search include files, folders, users, groups, logs
+  // Filter only files and folders for display
+  const searchFiles = searchResults?.filter(item => item.type === 'file') || [];
+  const searchFolders = searchResults?.filter(item => item.type === 'folder') || [];
+  
+  const visibleFolders = searchResults ? searchFolders : folders;
+  const visibleFiles = searchResults ? searchFiles : files;
+
+  // Show search indicator when searching
+  const isSearching = searchResults && searchResults.length > 0;
 
   return (
     <div className="container-fluid py-3 file-manager-container">
@@ -113,6 +126,21 @@ export default function AdminHome() {
             <button className="btn btn-outline-secondary" onClick={goUp}>
               <FaArrowLeft className="me-1" /> Back
             </button>
+          )}
+          {/* Search indicator */}
+          {isSearching && (
+            <span className="badge bg-info me-2">
+              Search Results ({searchResults.length})
+              <button 
+                className="btn-close btn-close-white ms-2" 
+                style={{ fontSize: '10px' }}
+                onClick={() => {
+                  // Clear search by refreshing the page or navigating
+                  window.location.reload();
+                }}
+                title="Clear search"
+              />
+            </span>
           )}
           <div className="d-flex align-items-center flex-wrap overflow-auto">
             <span className="fw-bold me-2 text-primary">Admin Drive</span>

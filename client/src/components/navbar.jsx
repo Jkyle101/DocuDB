@@ -167,33 +167,52 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
 
         let res;
         if (isAdminPage) {
-          // Admin search
+          // Admin search - includes files, folders, users, groups, and logs
           res = await axios.get(`${BACKEND_URL}/admin/search`, {
             params: { query: searchTerm, userId, role, limit: 8 },
           });
 
-          // Format admin suggestions
+          // Format admin suggestions - include files, folders, users, groups, and logs
           const formattedSuggestions = res.data.map(item => {
-            let icon, type, name;
-            if (item.type === 'user') {
+            let icon, type, name, path, size;
+
+            if (item.type === 'file') {
+              icon = getFileIcon(item.mimetype);
+              name = item.originalName || item.name;
+              type = 'File';
+              path = item.path || (item.parentFolder ? 'In folder' : 'Root');
+              size = item.size;
+            } else if (item.type === 'folder') {
+              icon = <FaFolder className="text-warning" />;
+              name = item.name;
+              type = 'Folder';
+              path = item.path || (item.parentFolder ? 'In folder' : 'Root');
+            } else if (item.type === 'user') {
               icon = <FaUser className="text-primary" />;
               name = item.name || item.email;
               type = 'User';
+              path = 'User account';
             } else if (item.type === 'group') {
               icon = <FaUsers className="text-success" />;
               name = item.name;
               type = 'Group';
+              path = 'Group';
             } else if (item.type === 'log') {
               icon = <FaClipboardList className="text-info" />;
               name = item.action;
               type = 'Log';
+              path = 'System log';
             }
+
             return {
               id: item._id,
               name: name,
               type: type.toLowerCase(),
-              path: item.type === 'user' ? 'User account' : item.type === 'group' ? 'Group' : 'System log',
-              icon: icon
+              path: path,
+              icon: icon,
+              size: size,
+              mimetype: item.mimetype,
+              ownerEmail: item.ownerEmail
             };
           });
 
@@ -222,9 +241,11 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
         setShowSuggestions(true);
 
         if (onSearch) {
+          // For admin search, deduplicate by id and type (file, folder, user, group, log)
+          // For regular search, use originalName to determine file vs folder
           const dedupedResults = uniqueByKey(
             Array.isArray(res.data) ? res.data : [],
-            item => `${item._id}-${item.originalName ? 'file' : 'folder'}`
+            item => `${item._id}-${item.type || (item.originalName ? 'file' : 'folder')}`
           );
           onSearch(dedupedResults);
         }
@@ -270,9 +291,11 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
         });
       }
       if (onSearch) {
+        // For admin search, deduplicate by id and type (file, folder, user, group, log)
+        // For regular search, use originalName to determine file vs folder
         const dedupedResults = uniqueByKey(
           Array.isArray(res.data) ? res.data : [],
-          item => `${item._id}-${item.originalName ? 'file' : 'folder'}`
+          item => `${item._id}-${item.type || (item.originalName ? 'file' : 'folder')}`
         );
         onSearch(dedupedResults);
       }

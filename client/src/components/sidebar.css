@@ -7,6 +7,7 @@
   transition: all 0.2s ease;
   border-radius: 6px;
   margin-bottom: 2px;
+  background-color: transparent;
 }
 
 .sidebar-admin-clean .nav-link:hover {
@@ -21,9 +22,36 @@
   box-shadow: 0 2px 4px rgba(0,123,255,0.2);
 }
 
+/* Reset focus, active, and visited states to prevent blue highlight from sticking */
 .sidebar-admin-clean .nav-link:focus {
   box-shadow: none;
   outline: none;
+  background-color: transparent;
+}
+
+.sidebar-admin-clean .nav-link:active {
+  background-color: transparent !important;
+  color: inherit !important;
+  box-shadow: none !important;
+}
+
+.sidebar-admin-clean .nav-link:visited {
+  background-color: transparent;
+  color: #212529;
+}
+
+/* Ensure the active state is properly maintained based on React Router's isActive */
+.sidebar-admin-clean .nav-link.active:focus,
+.sidebar-admin-clean .nav-link.active:active,
+.sidebar-admin-clean .nav-link.active:visited {
+  background-color: #007bff !important;
+  color: white !important;
+  box-shadow: 0 2px 4px rgba(0,123,255,0.2);
+}
+
+/* Remove Bootstrap's default button active state override */
+.sidebar-admin-clean .nav-link.btn:active {
+  background-color: transparent;
 }
 
 /* Mobile responsiveness */

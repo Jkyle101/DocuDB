@@ -1,4 +1,4 @@
-const path = require("path");
+﻿const path = require("path");
 const fs = require("fs");
 require("dotenv").config({ path: path.join(__dirname, '.env') });
 
@@ -3396,7 +3396,335 @@ app.post("/test-email", async (req, res) => {
 /* ========================
    START SERVER
 ======================== */
+
+/* ========================
+   ADMIN SEARCH
+======================== */
+app.get("/admin/search", async (req, res) => {
+  try {
+    const { query, userId, role, limit, searchType } = req.query;
+    const searchTerm = query;
+
+    if (role !== "admin" && role !== "superadmin") {
+      return res.status(403).json({ error: "Admin access required" });
+    }
+
+    if (!searchTerm) return res.json([]);
+
+    const limitNum = parseInt(limit) || 10;
+    const results = [];
+
+    // If searchType is 'all' or not specified, search everything
+    // If searchType is specific, only search that type
+    const shouldSearchUsers = !searchType || searchType === 'all' || searchType === 'user';
+    const shouldSearchGroups = !searchType || searchType === 'all' || searchType === 'group';
+    const shouldSearchLogs = !searchType || searchType === 'all' || searchType === 'log';
+    const shouldSearchFiles = !searchType || searchType === 'all' || searchType === 'file';
+    const shouldSearchFolders = !searchType || searchType === 'all' || searchType === 'folder';
+
+    // Search users
+    if (shouldSearchUsers) {
+      const users = await UserModel.find({
+        $or: [
+          { name: { $regex: searchTerm, $options: "i" } },
+          { email: { $regex: searchTerm, $options: "i" } }
+        ]
+      })
+        .select("name email role createdAt active")
+        .limit(limitNum);
+
+      users.forEach(user => {
+        results.push({
+          _id: user._id,
+          type: "user",
+          name: user.name || user.email,
+          email: user.email,
+          role: user.role,
+          createdAt: user.createdAt,
+          active: user.active
+        });
+      });
+    }
+
+    // Search groups
+    if (shouldSearchGroups) {
+      const groups = await Group.find({
+        $or: [
+          { name: { $regex: searchTerm, $options: "i" } },
+          { description: { $regex: searchTerm, $options: "i" } }
+        ]
+      })
+        .select("name description createdAt members")
+        .limit(limitNum);
+
+      groups.forEach(group => {
+        results.push({
+          _id: group._id,
+          type: "group",
+          name: group.name,
+          description: group.description,
+          createdAt: group.createdAt,
+          memberCount: group.members?.length || 0
+        });
+      });
+    }
+
+    // Search logs
+    if (shouldSearchLogs) {
+      const logs = await Log.find({
+        $or: [
+          { action: { $regex: searchTerm, $options: "i" } },
+          { details: { $regex: searchTerm, $options: "i" } }
+        ]
+      })
+        .populate("user", "email")
+        .sort({ date: -1 })
+        .limit(limitNum);
+
+      logs.forEach(log => {
+        results.push({
+          _id: log._id,
+          type: "log",
+          action: log.action,
+          details: log.details,
+          date: log.date,
+          userEmail: log.user?.email || "System"
+        });
+      });
+    }
+
+    // Search files across ALL users (admin can see all files)
+    if (shouldSearchFiles) {
+      // Search files by name
+      const filesByName = await File.find({
+        originalName: { $regex: searchTerm, $options: "i" },
+        deletedAt: null
+      })
+        .populate("owner", "email")
+        .limit(limitNum);
+
+      filesByName.forEach(file => {
+        results.push({
+          _id: file._id,
+          type: "file",
+          name: file.originalName,
+          originalName: file.originalName,
+          mimetype: file.mimetype,
+          size: file.size,
+          uploadDate: file.uploadDate,
+          ownerEmail: file.owner?.email || null,
+          path: file.parentFolder ? 'In folder' : 'Root'
+        });
+      });
+
+      // Search inside file contents for text-based files
+      const allFiles = await File.find({
+        deletedAt: null
+      })
+        .populate("owner", "email")
+        .limit(limitNum * 2);
+
+      const searchLower = searchTerm.toLowerCase();
+      const fileIdsAlreadyFound = new Set(filesByName.map(f => f._id.toString()));
+
+      for (const file of allFiles) {
+        // Skip files already found by name
+        if (fileIdsAlreadyFound.has(file._id.toString())) {
+          continue;
+        }
+
+        // Only search inside text-based files or supported document types
+        const textMimeTypes = [
+          "text/",
+          "application/json",
+          "application/javascript",
+          "application/xml",
+          "application/x-sh",
+          "application/x-bat",
+          "application/x-csv",
+        ];
+
+        const isTextFile = textMimeTypes.some(mime => file.mimetype?.startsWith(mime));
+        const isPdf = file.mimetype?.includes("pdf");
+        const isDocx = file.mimetype?.includes("vnd.openxmlformats-officedocument.wordprocessingml.document") ||
+                       (file.originalName && file.originalName.toLowerCase().endsWith(".docx"));
+        const isXlsx = file.mimetype?.includes("spreadsheetml") ||
+                       file.mimetype?.includes("vnd.ms-excel") ||
+                       (file.originalName && (file.originalName.toLowerCase().endsWith(".xlsx") || file.originalName.toLowerCase().endsWith(".xls")));
+
+        if (isTextFile) {
+          try {
+            const filePath = path.join(__dirname, "uploads", file.filename);
+
+            // Check if file exists and is not too large (limit to 10MB for search)
+            if (fs.existsSync(filePath) && file.size < 10 * 1024 * 1024) {
+              // Read text file content
+              const fileContent = fs.readFileSync(filePath, "utf8").toLowerCase();
+
+              // Search for the term in file content
+              if (fileContent.includes(searchLower)) {
+                results.push({
+                  _id: file._id,
+                  type: "file",
+                  name: file.originalName,
+                  originalName: file.originalName,
+                  mimetype: file.mimetype,
+                  size: file.size,
+                  uploadDate: file.uploadDate,
+                  ownerEmail: file.owner?.email || null,
+                  path: file.parentFolder ? 'In folder' : 'Root',
+                  matchedBy: 'content'
+                });
+                fileIdsAlreadyFound.add(file._id.toString());
+              }
+            }
+          } catch (readErr) {
+            continue;
+          }
+        } else if ((isPdf || isDocx || isXlsx) && file.size < 15 * 1024 * 1024) {
+          try {
+            const filePath = path.join(__dirname, "uploads", file.filename);
+            if (!fs.existsSync(filePath)) continue;
+
+            if (isPdf) {
+              try {
+                const pdfParse = require("pdf-parse");
+                const dataBuffer = fs.readFileSync(filePath);
+                const parsed = await pdfParse(dataBuffer);
+                const text = (parsed.text || "").toLowerCase();
+                if (text.includes(searchLower)) {
+                  results.push({
+                    _id: file._id,
+                    type: "file",
+                    name: file.originalName,
+                    originalName: file.originalName,
+                    mimetype: file.mimetype,
+                    size: file.size,
+                    uploadDate: file.uploadDate,
+                    ownerEmail: file.owner?.email || null,
+                    path: file.parentFolder ? 'In folder' : 'Root',
+                    matchedBy: 'content'
+                  });
+                  fileIdsAlreadyFound.add(file._id.toString());
+                }
+              } catch (pdfErr) {
+                console.error(`PDF parse failed for ${file.filename}:`, pdfErr.message);
+              }
+            }
+
+            if (isDocx && !fileIdsAlreadyFound.has(file._id.toString())) {
+              try {
+                const mammoth = require("mammoth");
+                const result = await mammoth.extractRawText({ path: filePath });
+                const text = (result.value || "").toLowerCase();
+                if (text.includes(searchLower)) {
+                  results.push({
+                    _id: file._id,
+                    type: "file",
+                    name: file.originalName,
+                    originalName: file.originalName,
+                    mimetype: file.mimetype,
+                    size: file.size,
+                    uploadDate: file.uploadDate,
+                    ownerEmail: file.owner?.email || null,
+                    path: file.parentFolder ? 'In folder' : 'Root',
+                    matchedBy: 'content'
+                  });
+                  fileIdsAlreadyFound.add(file._id.toString());
+                }
+              } catch (docxErr) {
+                console.error(`DOCX parse failed for ${file.filename}:`, docxErr.message);
+              }
+            }
+
+            if (isXlsx && !fileIdsAlreadyFound.has(file._id.toString())) {
+              try {
+                const XLSX = require("xlsx");
+                const workbook = XLSX.readFile(filePath, { cellHTML: false, cellText: true });
+                let combined = "";
+                for (const sheetName of workbook.SheetNames) {
+                  const sheet = workbook.Sheets[sheetName];
+                  const csv = XLSX.utils.sheet_to_csv(sheet);
+                  if (csv) combined += " " + csv.toLowerCase();
+                }
+                if (combined.includes(searchLower)) {
+                  results.push({
+                    _id: file._id,
+                    type: "file",
+                    name: file.originalName,
+                    originalName: file.originalName,
+                    mimetype: file.mimetype,
+                    size: file.size,
+                    uploadDate: file.uploadDate,
+                    ownerEmail: file.owner?.email || null,
+                    path: file.parentFolder ? 'In folder' : 'Root',
+                    matchedBy: 'content'
+                  });
+                  fileIdsAlreadyFound.add(file._id.toString());
+                }
+              } catch (xlsxErr) {
+                console.error(`XLSX parse failed for ${file.filename}:`, xlsxErr.message);
+              }
+            }
+          } catch (docErr) {
+            continue;
+          }
+        }
+      }
+    }
+
+    // Search folders across ALL users
+    if (shouldSearchFolders) {
+      const foldersByName = await Folder.find({
+        deletedAt: null,
+        name: { $regex: searchTerm, $options: "i" },
+      })
+        .populate("owner", "email")
+        .limit(limitNum);
+
+      foldersByName.forEach(folder => {
+        results.push({
+          _id: folder._id,
+          type: "folder",
+          name: folder.name,
+          createdAt: folder.createdAt,
+          ownerEmail: folder.owner?.email || null,
+          path: folder.parentFolder ? 'In folder' : 'Root'
+        });
+      });
+    }
+
+    // Sort results - prioritize exact matches, then by date
+    results.sort((a, b) => {
+      const aName = a.name || a.action || "";
+      const bName = b.name || b.action || "";
+      const aExact = aName.toLowerCase() === searchTerm.toLowerCase();
+      const bExact = bName.toLowerCase() === searchTerm.toLowerCase();
+      if (aExact && !bExact) return -1;
+      if (!aExact && bExact) return 1;
+      
+      // Files and folders first, then users, groups, logs
+      const typeOrder = { file: 0, folder: 0, user: 1, group: 2, log: 3 };
+      const typeA = typeOrder[a.type] ?? 4;
+      const typeB = typeOrder[b.type] ?? 4;
+      if (typeA !== typeB) return typeA - typeB;
+      
+      const dateA = new Date(a.createdAt || a.date || a.uploadDate || 0);
+      const dateB = new Date(b.createdAt || b.date || b.uploadDate || 0);
+      return dateB - dateA;
+    });
+
+    res.json(results.slice(0, limitNum * 5));
+  } catch (err) {
+    console.error("Admin search error:", err);
+    res.status(500).json({ error: "Failed to search" });
+  }
+});
+
+/* ========================
+   START SERVER
+======================== */
 app.listen(PORT, HOST, () => {
-  console.log(`🚀 Server running on http://${HOST}:${PORT}`);
+  console.log(`ðŸš€ Server running on http://${HOST}:${PORT}`);
   createLog("SYSTEM", null, `Server started on ${HOST}:${PORT}`);
 });
