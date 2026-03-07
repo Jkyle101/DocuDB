@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { FaBell, FaShareAlt, FaComment, FaKey, FaUser, FaFile, FaFolder, FaUsers, FaCheckCircle, FaTimesCircle, FaClock, FaEye } from "react-icons/fa";
+import { FaBell, FaShareAlt, FaComment, FaKey, FaUser, FaFile, FaFolder, FaUsers, FaCheckCircle, FaTimesCircle, FaClock, FaEye, FaExclamationTriangle } from "react-icons/fa";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
 
@@ -72,6 +72,10 @@ function Notifications() {
         return <FaFile className="text-secondary" />;
       case "CREATE_FOLDER":
         return <FaFolder className="text-warning" />;
+      case "ACTION_REQUIRED":
+      case "REVIEW_REQUIRED":
+      case "DUPLICATE_ALERT":
+        return <FaExclamationTriangle className="text-warning" />;
       default:
         return <FaBell className="text-muted" />;
     }
@@ -99,6 +103,12 @@ function Notifications() {
         return `${user?.email || "Someone"} uploaded a new file: ${details}`;
       case "CREATE_FOLDER":
         return `${user?.email || "Someone"} created a new folder: ${details}`;
+      case "ACTION_REQUIRED":
+        return `Action required: ${details}`;
+      case "REVIEW_REQUIRED":
+        return `Review required: ${details}`;
+      case "DUPLICATE_ALERT":
+        return `Duplicate alert: ${details}`;
       default:
         return details || "You have a new notification.";
     }
@@ -158,6 +168,8 @@ function Notifications() {
                   { key: "comment", label: "Comments", icon: FaComment },
                   { key: "password", label: "Password", icon: FaKey },
                   { key: "group", label: "Groups", icon: FaUsers }
+                  ,
+                  { key: "action", label: "Action", icon: FaExclamationTriangle }
                 ].map(({ key, label, icon: Icon }) => (
                   <button
                     key={key}

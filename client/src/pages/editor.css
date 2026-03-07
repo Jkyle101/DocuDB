@@ -1,21 +1,24 @@
 .office-editor-page {
-  padding-top: 0.25rem;
+  padding-top: 0.35rem;
 }
 
 .office-editor-card {
-  border: 1px solid #d0d7de;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  overflow: hidden;
 }
 
 .office-topbar {
-  background: #f3f4f6;
-  border-bottom: 1px solid #d9dde3;
-  padding: 0.5rem 0.75rem;
+  background: linear-gradient(180deg, var(--bg-soft) 0%, color-mix(in srgb, var(--bg-soft) 60%, #eef5ff) 100%);
+  border-bottom: 1px solid var(--border-soft);
+  padding: 0.65rem 0.8rem;
 }
 
 .office-file-name {
-  font-weight: 600;
-  font-size: 0.95rem;
+  font-weight: 700;
+  font-size: 0.94rem;
+  color: var(--text-strong);
 }
 
 .office-qat {
@@ -24,43 +27,44 @@
 }
 
 .office-qat-btn {
-  border: 1px solid #d0d7de;
-  background: #ffffff;
-  color: #334155;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+  color: var(--text-strong);
   min-width: 32px;
   height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border-radius: 9px;
 }
 
 .office-qat-btn:hover {
-  background: #eef2f7;
+  background: var(--bg-soft);
 }
 
 .office-ribbon-tabs {
-  border-bottom: 1px solid #cfd8e3;
+  border-bottom: 1px solid var(--border-soft);
 }
 
 .office-ribbon-tabs .nav-link {
   border: 0;
   border-radius: 0;
-  color: #1f2937;
+  color: var(--text-muted);
   font-weight: 600;
   font-size: 0.9rem;
   padding: 0.5rem 0.9rem;
 }
 
 .office-ribbon-tabs .nav-link.active {
-  background: #eaf2ff;
-  color: #0f3b92;
+  background: color-mix(in srgb, var(--brand-soft) 75%, #eaf2ff);
+  color: var(--brand-strong);
   border-bottom: 2px solid #0f62fe;
 }
 
 .office-ribbon {
-  border: 1px solid #d7dde6;
+  border: 1px solid var(--border-soft);
   border-top: 0;
-  background: linear-gradient(to bottom, #f8fafc, #f1f5f9);
+  background: linear-gradient(to bottom, var(--bg-soft), color-mix(in srgb, var(--bg-soft) 60%, #edf5ff));
   padding: 0.55rem 0.7rem;
 }
 
@@ -88,9 +92,9 @@
 
 .ribbon-group-label {
   font-size: 0.72rem;
-  color: #475569;
+  color: var(--text-muted);
   text-align: center;
-  border-top: 1px solid #d8dee7;
+  border-top: 1px solid var(--border-soft);
   margin-top: 0.3rem;
   padding-top: 0.25rem;
   letter-spacing: 0.2px;
@@ -99,25 +103,26 @@
 .ribbon-sep {
   width: 1px;
   align-self: stretch;
-  background: #d4dae3;
+  background: var(--border-soft);
   margin: 0 0.15rem;
 }
 
 .ribbon-icon-btn {
-  border: 1px solid #ced6e0;
-  background: #fff;
-  color: #27364a;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+  color: var(--text-strong);
   min-width: 32px;
   height: 30px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   padding: 0;
+  border-radius: 8px;
 }
 
 .ribbon-icon-btn:hover {
-  background: #e9f0fb;
-  border-color: #b8c7dd;
+  background: var(--bg-soft);
+  border-color: #9cb6d8;
 }
 
 .ribbon-icon-btn:disabled,
@@ -125,3 +130,52 @@
   opacity: 0.45;
 }
 
+.office-editor-card .card-body {
+  background: var(--bg-surface);
+}
+
+.office-editor-page .alert {
+  border-radius: 10px;
+}
+
+body.dark-mode .office-editor-card,
+body.dark-mode .office-ribbon,
+body.dark-mode .office-topbar {
+  border-color: var(--border-soft);
+}
+
+body.dark-mode .office-topbar,
+body.dark-mode .office-ribbon {
+  background: linear-gradient(180deg, #122641, #132f52);
+}
+
+body.dark-mode .office-ribbon-tabs .nav-link {
+  color: #c6d8f1;
+}
+
+body.dark-mode .office-ribbon-tabs .nav-link.active {
+  color: #ffffff;
+  background: #1b3d68;
+}
+
+body.dark-mode .office-qat-btn,
+body.dark-mode .ribbon-icon-btn {
+  background: #122643;
+  color: #e3edfc;
+  border-color: #335173;
+}
+
+body.dark-mode .office-qat-btn:hover,
+body.dark-mode .ribbon-icon-btn:hover {
+  background: #18345a;
+}
+
+body.dark-mode .office-editor-page .border,
+body.dark-mode .office-editor-page .table-responsive,
+body.dark-mode .office-editor-page .rounded {
+  border-color: var(--border-soft) !important;
+}
+
+body.dark-mode .office-editor-page iframe {
+  background: #0f1b30;
+}

@@ -3,14 +3,13 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import logo from "../assets/dblogo2.png";
+import { BACKEND_URL } from "../config";
+import "./login.css";
 
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const navigate = useNavigate();
-
-  // Use backend IP (localhost for dev, server LAN IP for other devices)
-  const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || "http://localhost:3001";
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -39,40 +38,47 @@ function Login() {
   };
 
   return (
-    <div className="d-flex justify-content-center align-items-center vh-100 bg-light">
-      <div className="card p-4 shadow-lg" style={{ width: "350px" }}>
-        <img src={logo} alt="DocuDB Logo" className="mb-3" />
-        <form onSubmit={handleSubmit}>
-          <div className="mb-3">
-            <label className="form-label">Email address</label>
-            <input
-              type="email"
-              className="form-control"
-              placeholder="Enter email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-            />
+    <div className="login-page">
+      <div className="login-shell">
+        <div className="login-card card">
+          <div className="login-brand">
+            <img src={logo} alt="DocuDB Logo" className="login-logo" />
+            <h1>Welcome to DocuDB</h1>
+            <p>Sign in to continue to your document workspace.</p>
           </div>
 
-          <div className="mb-3">
-            <label className="form-label">Password</label>
-            <input
-              type="password"
-              className="form-control"
-              placeholder="Enter password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-            />
-          </div>
+          <form onSubmit={handleSubmit} className="login-form">
+            <div className="mb-3">
+              <label className="form-label">Email address</label>
+              <input
+                type="email"
+                className="form-control"
+                placeholder="name@company.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+              />
+            </div>
 
-          <button type="submit" className="btn btn-primary w-100">
-            Login
-          </button>
+            <div className="mb-3">
+              <label className="form-label">Password</label>
+              <input
+                type="password"
+                className="form-control"
+                placeholder="Enter your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
+              />
+            </div>
 
-          <h1 className="foter">version 3.1.0 | Made Prodly by LLCC Students</h1>
-        </form>
+            <button type="submit" className="btn btn-primary w-100">
+              Sign in
+            </button>
+          </form>
+
+          <p className="login-version">Version 3.1.0 | Made proudly by LLCC students</p>
+        </div>
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import {
 import { NavLink, useNavigate } from "react-router-dom";
 import "bootstrap/dist/css/bootstrap.min.css";
 import "./sidebar.css";
+import { BACKEND_URL } from "../config";
 
 function Sidebar({ onClose }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
@@ -38,15 +39,7 @@ function Sidebar({ onClose }) {
 
   return (
     <>
-      <div
-        className="d-flex flex-column sidebar-admin-clean"
-        style={{
-          width: "250px",
-          height: "100vh",
-          backgroundColor: "#f8f9fa",
-          borderRight: "1px solid #e9ecef"
-        }}
-      >
+      <div className="d-flex flex-column sidebar-admin-clean app-sidebar-shell">
         {/* Mobile close button */}
         {isMobile && (
           <div className="d-flex justify-content-end p-2 border-bottom">
@@ -61,7 +54,7 @@ function Sidebar({ onClose }) {
         )}
 
         {/* Header */}
-        <div className="p-3 border-bottom bg-white flex-shrink-0">
+        <div className="p-3 border-bottom sidebar-header-block flex-shrink-0">
           <h5 className="mb-1 text-primary">DocuDB</h5>
           <small className="text-muted">Document Management</small>
         </div>
@@ -72,7 +65,7 @@ function Sidebar({ onClose }) {
             <div className="profile-picture-sidebar me-3">
               {localStorage.getItem('profilePicture') ? (
                 <img
-                  src={`${import.meta.env.VITE_BACKEND_URL || 'http://localhost:3001'}/uploads/${localStorage.getItem('profilePicture')}`}
+                  src={`${BACKEND_URL}/uploads/${localStorage.getItem('profilePicture')}`}
                   alt="Profile"
                   className="profile-picture-img"
                 />
@@ -103,9 +96,7 @@ function Sidebar({ onClose }) {
                 <NavLink
                   to="/"
                   className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${
-                      isActive ? "active bg-primary text-white" : "text-dark"
-                    }`
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
                   }
                   onClick={handleLinkClick}
                 >
@@ -118,9 +109,7 @@ function Sidebar({ onClose }) {
                 <NavLink
                   to="/shared"
                   className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${
-                      isActive ? "active bg-primary text-white" : "text-dark"
-                    }`
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
                   }
                   onClick={handleLinkClick}
                 >
@@ -133,9 +122,7 @@ function Sidebar({ onClose }) {
                 <NavLink
                   to="/recent"
                   className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${
-                      isActive ? "active bg-primary text-white" : "text-dark"
-                    }`
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
                   }
                   onClick={handleLinkClick}
                 >
@@ -156,9 +143,7 @@ function Sidebar({ onClose }) {
                 <NavLink
                   to="/groups"
                   className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${
-                      isActive ? "active bg-primary text-white" : "text-dark"
-                    }`
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
                   }
                   onClick={handleLinkClick}
                 >
@@ -170,9 +155,7 @@ function Sidebar({ onClose }) {
                 <NavLink
                   to="/forms"
                   className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${
-                      isActive ? "active bg-primary text-white" : "text-dark"
-                    }`
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
                   }
                   onClick={handleLinkClick}
                 >

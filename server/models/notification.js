@@ -17,7 +17,10 @@ const notificationSchema = new mongoose.Schema({
       "PASSWORD_CHANGE_REJECTED",
       "GROUP_INVITE",
       "UPLOAD",
-      "CREATE_FOLDER"
+      "CREATE_FOLDER",
+      "ACTION_REQUIRED",
+      "REVIEW_REQUIRED",
+      "DUPLICATE_ALERT"
     ],
     required: true
   },

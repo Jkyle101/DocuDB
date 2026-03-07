@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { FaSearch, FaSignOutAlt, FaBars, FaTimes, FaFolder, FaFileAlt, FaFilePdf, FaFileWord, FaFileExcel, FaFileImage, FaFileArchive, FaFileVideo, FaHistory, FaTimes as FaTimesIcon, FaUser, FaUsers, FaClipboardList, FaCog, FaQuestionCircle, FaBell } from "react-icons/fa";
+import { FaSearch, FaSignOutAlt, FaBars, FaTimes, FaFolder, FaFileAlt, FaFilePdf, FaFileWord, FaFileExcel, FaFileImage, FaFileArchive, FaFileVideo, FaHistory, FaTimes as FaTimesIcon, FaUser, FaUsers, FaClipboardList, FaCog, FaQuestionCircle, FaBell, FaMoon, FaSun, FaSlidersH } from "react-icons/fa";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Link } from "react-router-dom";
 import axios from "axios";
@@ -34,13 +34,123 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
   const [lastNotificationCount, setLastNotificationCount] = useState(0);
   const [isMobileSearchExpanded, setIsMobileSearchExpanded] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [isDarkMode, setIsDarkMode] = useState(false);
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+  const [advancedFilters, setAdvancedFilters] = useState({
+    entityTypes: ["file", "folder"],
+    fileTypes: [],
+    scope: "both",
+    sortBy: "relevance",
+    sortOrder: "desc",
+    datePreset: "any",
+    dateFrom: "",
+    dateTo: "",
+    favoritesOnly: false,
+    pinnedOnly: false,
+    sharedOnly: false,
+    duplicatesOnly: false,
+    exactMatch: false,
+    owner: "",
+  });
 
   const userId = localStorage.getItem("userId");
   const role = localStorage.getItem("role") || "user";
   const isAdminPage = location.pathname.startsWith('/admin');
   const searchRef = useRef(null);
   const suggestionsRef = useRef(null);
+  const advancedFiltersRef = useRef(null);
   const notificationAudioRef = useRef(null);
+
+  useEffect(() => {
+    const savedPrefs = localStorage.getItem(`userPreferences_${userId}`);
+    if (savedPrefs) {
+      try {
+        const parsed = JSON.parse(savedPrefs);
+        setIsDarkMode(!!parsed.darkMode);
+      } catch {
+        setIsDarkMode(false);
+      }
+    }
+  }, [userId]);
+
+  useEffect(() => {
+    document.body.classList.toggle("dark-mode", isDarkMode);
+    const savedPrefs = localStorage.getItem(`userPreferences_${userId}`);
+    let prefs = { emailNotifications: true, darkMode: false, language: "en" };
+    if (savedPrefs) {
+      try {
+        prefs = { ...prefs, ...JSON.parse(savedPrefs) };
+      } catch {}
+    }
+    prefs.darkMode = isDarkMode;
+    localStorage.setItem(`userPreferences_${userId}`, JSON.stringify(prefs));
+  }, [isDarkMode, userId]);
+
+  useEffect(() => {
+    setAdvancedFilters((prev) => ({
+      ...prev,
+      entityTypes: isAdminPage ? ["file", "folder", "user", "group", "log"] : ["file", "folder"],
+      owner: isAdminPage ? prev.owner : "",
+    }));
+  }, [isAdminPage]);
+
+  const hasActiveAdvancedFilters = useCallback(() => {
+    const defaultTypes = isAdminPage ? ["file", "folder", "user", "group", "log"] : ["file", "folder"];
+    const sameEntityTypes =
+      advancedFilters.entityTypes.length === defaultTypes.length &&
+      advancedFilters.entityTypes.every((type) => defaultTypes.includes(type));
+    return !(
+      sameEntityTypes &&
+      advancedFilters.fileTypes.length === 0 &&
+      advancedFilters.scope === "both" &&
+      advancedFilters.sortBy === "relevance" &&
+      advancedFilters.sortOrder === "desc" &&
+      advancedFilters.datePreset === "any" &&
+      !advancedFilters.dateFrom &&
+      !advancedFilters.dateTo &&
+      !advancedFilters.favoritesOnly &&
+      !advancedFilters.pinnedOnly &&
+      !advancedFilters.sharedOnly &&
+      !advancedFilters.duplicatesOnly &&
+      !advancedFilters.exactMatch &&
+      !advancedFilters.owner
+    );
+  }, [advancedFilters, isAdminPage]);
+
+  const buildSearchParams = useCallback(
+    (searchTerm, limitNum = 8) => {
+      const hasTerm = !!searchTerm?.trim();
+      const hasFilters = hasActiveAdvancedFilters();
+      if (!hasTerm && !hasFilters) return null;
+
+      const params = {
+        userId,
+        role,
+        limit: limitNum,
+        entityTypes: advancedFilters.entityTypes.join(","),
+        scope: advancedFilters.scope,
+        sortBy: advancedFilters.sortBy,
+        sortOrder: advancedFilters.sortOrder,
+        exactMatch: advancedFilters.exactMatch,
+        favoritesOnly: advancedFilters.favoritesOnly,
+        pinnedOnly: advancedFilters.pinnedOnly,
+        sharedOnly: advancedFilters.sharedOnly,
+        duplicatesOnly: advancedFilters.duplicatesOnly,
+      };
+
+      if (hasTerm) params.query = searchTerm.trim();
+      if (advancedFilters.fileTypes.length) params.fileTypes = advancedFilters.fileTypes.join(",");
+      if (advancedFilters.datePreset && advancedFilters.datePreset !== "any") {
+        params.datePreset = advancedFilters.datePreset;
+      }
+      if (advancedFilters.dateFrom) params.dateFrom = advancedFilters.dateFrom;
+      if (advancedFilters.dateTo) params.dateTo = advancedFilters.dateTo;
+      if (isAdminPage && advancedFilters.owner.trim()) params.owner = advancedFilters.owner.trim();
+
+      return params;
+    },
+    [advancedFilters, hasActiveAdvancedFilters, isAdminPage, role, userId]
+  );
 
   const uniqueByKey = (arr, keyFn) => {
     const seen = new Set();
@@ -155,7 +265,8 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
   // Debounced search function
   const debouncedSearch = useCallback(
     debounce(async (searchTerm) => {
-      if (!searchTerm.trim()) {
+      const searchParams = buildSearchParams(searchTerm, 12);
+      if (!searchParams) {
         setSuggestions([]);
         setShowSuggestions(false);
         if (onSearch) onSearch(null);
@@ -167,9 +278,8 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
 
         let res;
         if (isAdminPage) {
-          // Admin search - includes files, folders, users, groups, and logs
           res = await axios.get(`${BACKEND_URL}/admin/search`, {
-            params: { query: searchTerm, userId, role, limit: 8 },
+            params: searchParams,
           });
 
           // Format admin suggestions - include files, folders, users, groups, and logs
@@ -218,9 +328,8 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
 
           setSuggestions(formattedSuggestions);
         } else {
-          // Regular user search
           res = await axios.get(`${BACKEND_URL}/search`, {
-            params: { query: searchTerm, userId, role, limit: 8 },
+            params: searchParams,
           });
 
           // Format suggestions
@@ -256,7 +365,7 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
         setIsLoading(false);
       }
     }, 300),
-    [userId, role, isAdminPage, onSearch]
+    [buildSearchParams, isAdminPage, onSearch]
   );
 
   // Handle input change with debounced search
@@ -265,7 +374,7 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
     setQuery(value);
     setSelectedIndex(-1);
 
-    if (!value.trim()) {
+    if (!value.trim() && !hasActiveAdvancedFilters()) {
       setSuggestions([]);
       setShowSuggestions(false);
       if (onSearch) onSearch(null);
@@ -276,18 +385,23 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
   };
 
   // Handle search submission
-  const handleSearch = async (searchTerm = query) => {
-    if (!searchTerm.trim()) return;
+  const handleSearch = async (searchTermOrEvent = query) => {
+    if (searchTermOrEvent && typeof searchTermOrEvent.preventDefault === "function") {
+      searchTermOrEvent.preventDefault();
+    }
+    const searchTerm = typeof searchTermOrEvent === "string" ? searchTermOrEvent : query;
+    const searchParams = buildSearchParams(searchTerm, 50);
+    if (!searchParams) return;
 
     try {
       let res;
       if (isAdminPage) {
         res = await axios.get(`${BACKEND_URL}/admin/search`, {
-          params: { query: searchTerm, userId, role },
+          params: searchParams,
         });
       } else {
         res = await axios.get(`${BACKEND_URL}/search`, {
-          params: { query: searchTerm, userId, role },
+          params: searchParams,
         });
       }
       if (onSearch) {
@@ -299,7 +413,7 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
         );
         onSearch(dedupedResults);
       }
-      saveRecentSearch(searchTerm);
+      if (searchTerm?.trim()) saveRecentSearch(searchTerm);
       setShowSuggestions(false);
       setSelectedIndex(-1);
     } catch (err) {
@@ -372,6 +486,49 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
     if (onSearch) onSearch(null);
   };
 
+  const resetAdvancedFilters = () => {
+    setAdvancedFilters({
+      entityTypes: isAdminPage ? ["file", "folder", "user", "group", "log"] : ["file", "folder"],
+      fileTypes: [],
+      scope: "both",
+      sortBy: "relevance",
+      sortOrder: "desc",
+      datePreset: "any",
+      dateFrom: "",
+      dateTo: "",
+      favoritesOnly: false,
+      pinnedOnly: false,
+      sharedOnly: false,
+      duplicatesOnly: false,
+      exactMatch: false,
+      owner: "",
+    });
+    if (!query.trim()) {
+      setSuggestions([]);
+      if (onSearch) onSearch(null);
+    }
+  };
+
+  const toggleEntityType = (type) => {
+    setAdvancedFilters((prev) => {
+      const exists = prev.entityTypes.includes(type);
+      const next = exists
+        ? prev.entityTypes.filter((entry) => entry !== type)
+        : [...prev.entityTypes, type];
+      return { ...prev, entityTypes: next.length ? next : prev.entityTypes };
+    });
+  };
+
+  const toggleFileType = (type) => {
+    setAdvancedFilters((prev) => {
+      const exists = prev.fileTypes.includes(type);
+      const next = exists
+        ? prev.fileTypes.filter((entry) => entry !== type)
+        : [...prev.fileTypes, type];
+      return { ...prev, fileTypes: next };
+    });
+  };
+
   // Close suggestions when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {
@@ -382,6 +539,7 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
         !suggestionsRef.current.contains(event.target)
       ) {
         setShowSuggestions(false);
+        setShowAdvancedFilters(false);
         setSelectedIndex(-1);
       }
     };
@@ -416,7 +574,201 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
     setQuery("");
     setSuggestions([]);
     setShowSuggestions(false);
+    setShowAdvancedFilters(false);
   };
+
+  const entityTypeOptions = isAdminPage
+    ? [
+        { key: "file", label: "Files" },
+        { key: "folder", label: "Folders" },
+        { key: "user", label: "Users" },
+        { key: "group", label: "Groups" },
+        { key: "log", label: "Logs" },
+      ]
+    : [
+        { key: "file", label: "Files" },
+        { key: "folder", label: "Folders" },
+      ];
+
+  const fileTypeOptions = ["pdf", "docx", "xlsx", "image", "video", "archive", "text"];
+
+  const advancedFilterPanel = (
+    <div ref={advancedFiltersRef} className="advanced-filters-panel">
+      <div className="advanced-filters-header">
+        <h6>Advanced Search</h6>
+        <div className="d-flex gap-2">
+          <button type="button" className="btn btn-sm btn-outline-secondary" onClick={resetAdvancedFilters}>
+            Reset
+          </button>
+          <button type="button" className="btn btn-sm btn-primary" onClick={() => handleSearch(query)}>
+            Apply
+          </button>
+        </div>
+      </div>
+
+      <div className="advanced-filters-grid">
+        <div className="advanced-filter-group">
+          <label>Search Scope</label>
+          <select
+            className="form-select form-select-sm"
+            value={advancedFilters.scope}
+            onChange={(e) => setAdvancedFilters((prev) => ({ ...prev, scope: e.target.value }))}
+          >
+            <option value="both">Name + Content</option>
+            <option value="name">Name only</option>
+            <option value="content">Content only</option>
+          </select>
+        </div>
+
+        <div className="advanced-filter-group">
+          <label>Sort</label>
+          <div className="d-flex gap-2">
+            <select
+              className="form-select form-select-sm"
+              value={advancedFilters.sortBy}
+              onChange={(e) => setAdvancedFilters((prev) => ({ ...prev, sortBy: e.target.value }))}
+            >
+              <option value="relevance">Relevance</option>
+              <option value="recent">Recent</option>
+              <option value="name">Name</option>
+              <option value="size">Size</option>
+            </select>
+            <select
+              className="form-select form-select-sm"
+              value={advancedFilters.sortOrder}
+              onChange={(e) => setAdvancedFilters((prev) => ({ ...prev, sortOrder: e.target.value }))}
+            >
+              <option value="desc">Desc</option>
+              <option value="asc">Asc</option>
+            </select>
+          </div>
+        </div>
+
+        <div className="advanced-filter-group">
+          <label>Date</label>
+          <select
+            className="form-select form-select-sm"
+            value={advancedFilters.datePreset}
+            onChange={(e) => setAdvancedFilters((prev) => ({ ...prev, datePreset: e.target.value }))}
+          >
+            <option value="any">Any time</option>
+            <option value="today">Today</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+            <option value="custom">Custom range</option>
+          </select>
+          {advancedFilters.datePreset === "custom" && (
+            <div className="d-flex gap-2 mt-2">
+              <input
+                className="form-control form-control-sm"
+                type="date"
+                value={advancedFilters.dateFrom}
+                onChange={(e) => setAdvancedFilters((prev) => ({ ...prev, dateFrom: e.target.value }))}
+              />
+              <input
+                className="form-control form-control-sm"
+                type="date"
+                value={advancedFilters.dateTo}
+                onChange={(e) => setAdvancedFilters((prev) => ({ ...prev, dateTo: e.target.value }))}
+              />
+            </div>
+          )}
+        </div>
+
+        {isAdminPage && (
+          <div className="advanced-filter-group">
+            <label>Owner (Admin)</label>
+            <input
+              className="form-control form-control-sm"
+              value={advancedFilters.owner}
+              placeholder="email or name"
+              onChange={(e) => setAdvancedFilters((prev) => ({ ...prev, owner: e.target.value }))}
+            />
+          </div>
+        )}
+      </div>
+
+      <div className="advanced-filter-group">
+        <label>Entity Types</label>
+        <div className="advanced-filter-chips">
+          {entityTypeOptions.map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              className={`chip-btn ${advancedFilters.entityTypes.includes(option.key) ? "active" : ""}`}
+              onClick={() => toggleEntityType(option.key)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="advanced-filter-group">
+        <label>File Types</label>
+        <div className="advanced-filter-chips">
+          {fileTypeOptions.map((typeName) => (
+            <button
+              key={typeName}
+              type="button"
+              className={`chip-btn ${advancedFilters.fileTypes.includes(typeName) ? "active" : ""}`}
+              onClick={() => toggleFileType(typeName)}
+            >
+              {typeName.toUpperCase()}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="advanced-filter-flags">
+        <label className="form-check">
+          <input
+            className="form-check-input"
+            type="checkbox"
+            checked={advancedFilters.favoritesOnly}
+            onChange={(e) => setAdvancedFilters((prev) => ({ ...prev, favoritesOnly: e.target.checked }))}
+          />
+          <span className="form-check-label">Favorites only</span>
+        </label>
+        <label className="form-check">
+          <input
+            className="form-check-input"
+            type="checkbox"
+            checked={advancedFilters.pinnedOnly}
+            onChange={(e) => setAdvancedFilters((prev) => ({ ...prev, pinnedOnly: e.target.checked }))}
+          />
+          <span className="form-check-label">Pinned only</span>
+        </label>
+        <label className="form-check">
+          <input
+            className="form-check-input"
+            type="checkbox"
+            checked={advancedFilters.sharedOnly}
+            onChange={(e) => setAdvancedFilters((prev) => ({ ...prev, sharedOnly: e.target.checked }))}
+          />
+          <span className="form-check-label">Shared only</span>
+        </label>
+        <label className="form-check">
+          <input
+            className="form-check-input"
+            type="checkbox"
+            checked={advancedFilters.duplicatesOnly}
+            onChange={(e) => setAdvancedFilters((prev) => ({ ...prev, duplicatesOnly: e.target.checked }))}
+          />
+          <span className="form-check-label">Duplicates only</span>
+        </label>
+        <label className="form-check">
+          <input
+            className="form-check-input"
+            type="checkbox"
+            checked={advancedFilters.exactMatch}
+            onChange={(e) => setAdvancedFilters((prev) => ({ ...prev, exactMatch: e.target.checked }))}
+          />
+          <span className="form-check-label">Exact match</span>
+        </label>
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -459,6 +811,15 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
             </div>
 
             <div className="mobile-search-actions">
+              <button
+                className={`navbar-icon-google ${hasActiveAdvancedFilters() ? "active-advanced" : ""}`}
+                type="button"
+                onClick={() => setShowAdvancedFilters((prev) => !prev)}
+                title="Advanced search filters"
+              >
+                <FaSlidersH size={18} />
+              </button>
+
               <Link to="/notifications" className="navbar-icon-google position-relative" title="Notifications">
                 <FaBell size={20} />
                 {unreadNotifications > 0 && (
@@ -467,6 +828,15 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
                   </span>
                 )}
               </Link>
+
+              <button
+                className="navbar-icon-google"
+                type="button"
+                onClick={() => setIsDarkMode((v) => !v)}
+                title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+              >
+                {isDarkMode ? <FaSun size={18} /> : <FaMoon size={18} />}
+              </button>
 
               <div className="dropdown">
                 <button
@@ -524,7 +894,7 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
                 <li>
                   <Link to="/help" className="dropdown-item dropdown-item-google"
                         onClick={() => {
-                          document.querySelector('#settingsDropdown').click();
+                          document.querySelector('#mobileUserDropdown')?.click();
                           setIsMobileSearchExpanded(false);
                         }}>
                     <FaQuestionCircle />
@@ -553,6 +923,10 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
           </div>
 
           <div className="mobile-search-body">
+            {showAdvancedFilters && (
+              <div className="mobile-advanced-filters-wrap">{advancedFilterPanel}</div>
+            )}
+
             {/* Mobile Search Suggestions */}
             {((query === "" && isInputFocused && recentSearches.length > 0) || showSuggestions) && (
               <div className="mobile-suggestions-google">
@@ -608,8 +982,8 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
                           <div className="suggestion-content-google">
                             <div className="suggestion-title-google">{suggestion.name}</div>
                             <div className="suggestion-meta-google">
-                              {suggestion.type} • {suggestion.path}
-                              {suggestion.size && ` • ${formatFileSize(suggestion.size)}`}
+                              {suggestion.type} | {suggestion.path}
+                              {suggestion.size && ` | ${formatFileSize(suggestion.size)}`}
                             </div>
                           </div>
                         </div>
@@ -738,6 +1112,7 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
 
           {/* Center Section: Desktop Search Bar */}
           <div className="search-container-google" ref={searchRef}>
+            <div className="search-toolbar-google">
             <div className="search-wrapper-google">
               <form onSubmit={handleSearch}>
                 <FaSearch className="search-icon-google" />
@@ -833,8 +1208,8 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
                             <div className="suggestion-content-google">
                               <div className="suggestion-title-google">{suggestion.name}</div>
                               <div className="suggestion-meta-google">
-                                {suggestion.type} • {suggestion.path}
-                                {suggestion.size && ` • ${formatFileSize(suggestion.size)}`}
+                                {suggestion.type} | {suggestion.path}
+                                {suggestion.size && ` | ${formatFileSize(suggestion.size)}`}
                               </div>
                             </div>
                           </div>
@@ -853,6 +1228,16 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
                 </div>
               )}
             </div>
+            <button
+              className={`search-advanced-toggle ${hasActiveAdvancedFilters() ? "active" : ""}`}
+              type="button"
+              onClick={() => setShowAdvancedFilters((prev) => !prev)}
+              title="Advanced search filters"
+            >
+              <FaSlidersH size={14} />
+            </button>
+            </div>
+            {showAdvancedFilters && advancedFilterPanel}
           </div>
 
           {/* Mobile Search Button */}
@@ -877,6 +1262,15 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
                 )}
               </Link>
             )}
+
+            <button
+              className="navbar-icon-google"
+              type="button"
+              onClick={() => setIsDarkMode((v) => !v)}
+              title={isDarkMode ? "Switch to light mode" : "Switch to dark mode"}
+            >
+              {isDarkMode ? <FaSun size={20} /> : <FaMoon size={20} />}
+            </button>
 
             {/* Settings Button */}
             <button

@@ -48,6 +48,10 @@ function Settings() {
     }
   }, [userId]);
 
+  useEffect(() => {
+    document.body.classList.toggle("dark-mode", !!preferences.darkMode);
+  }, [preferences.darkMode]);
+
   const showMessage = (msg, type = "success") => {
     setMessage(msg);
     setMessageType(type);
@@ -104,6 +108,7 @@ function Settings() {
 
   const handlePreferencesUpdate = () => {
     localStorage.setItem(`userPreferences_${userId}`, JSON.stringify(preferences));
+    document.body.classList.toggle("dark-mode", !!preferences.darkMode);
     showMessage("Preferences saved successfully!");
   };
 
@@ -224,7 +229,7 @@ function Settings() {
   };
 
   return (
-    <div className="container-fluid py-4">
+    <div className="container-fluid py-4 page-container">
       <div className="row">
         <div className="col-12">
           <h2 className="mb-4">
@@ -491,7 +496,7 @@ function Settings() {
                         />
                         <label className="form-check-label" htmlFor="darkMode">
                           <FaPalette className="me-2" />
-                          Dark Mode (Coming Soon)
+                          Dark Mode
                         </label>
                         <small className="form-text text-muted d-block">
                           Enable dark theme for better visibility in low light conditions.

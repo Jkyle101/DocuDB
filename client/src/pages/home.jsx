@@ -70,7 +70,6 @@ export default function Home() {
   });
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [showPinnedOnly, setShowPinnedOnly] = useState(false);
-
   const { searchResults } = useOutletContext();
   const navigate = useNavigate();
 
@@ -102,6 +101,10 @@ export default function Home() {
   useEffect(() => {
     fetchFolderContents(currentFolder).catch(console.error);
   }, [fetchFolderContents, currentFolder]);
+
+  useEffect(() => {
+    axios.post(`${BACKEND_URL}/notifications/smart/${userId}`).catch(() => {});
+  }, [userId]);
 
   // File icons
   const iconByMime = useMemo(
@@ -251,9 +254,40 @@ export default function Home() {
     );
   };
 
+  const trackAccess = async (file, action = "OPEN") => {
+    if (!file?._id) return;
+    try {
+      await axios.post(`${BACKEND_URL}/files/${file._id}/access`, {
+        userId,
+        role,
+        action,
+      });
+    } catch (err) {
+      console.error("Track access failed:", err);
+    }
+  };
+
   // ✅ Use search results if available, otherwise normal data
+  const searchFiles = useMemo(
+    () =>
+      (searchResults || []).filter((item) => {
+        const kind = item?.type || (item?.originalName ? "file" : "folder");
+        return kind === "file";
+      }),
+    [searchResults]
+  );
+
+  const searchFolders = useMemo(
+    () =>
+      (searchResults || []).filter((item) => {
+        const kind = item?.type || (item?.originalName ? "file" : "folder");
+        return kind === "folder";
+      }),
+    [searchResults]
+  );
+
   const visibleFiles = useMemo(() => {
-    const base = searchResults || files;
+    const base = searchResults ? searchFiles : files;
     let filtered = base;
     if (showPinnedOnly) filtered = filtered.filter((f) => !!f.isPinned);
     if (showFavoritesOnly) filtered = filtered.filter((f) => !!f.isFavorite);
@@ -262,8 +296,8 @@ export default function Home() {
       if (pinnedDelta !== 0) return pinnedDelta;
       return new Date(b.uploadDate || 0) - new Date(a.uploadDate || 0);
     });
-  }, [searchResults, files, showFavoritesOnly, showPinnedOnly]);
-  const visibleFolders = searchResults ? [] : folders;
+  }, [searchResults, searchFiles, files, showFavoritesOnly, showPinnedOnly]);
+  const visibleFolders = searchResults ? searchFolders : folders;
 
   // ✅ Paginated arrays
   const paginatedFolders = visibleFolders.slice(0, itemsToShow);
@@ -380,7 +414,7 @@ export default function Home() {
 
         {/* ✅ Grid & List Views (use paginated arrays) */}
         {view === "grid" ? (
-          <div className="row g-4">
+          <div className="row g-3 documents-spotlight-grid">
             {/* Folders */}
             {paginatedFolders.map((folder) => (
               <div
@@ -554,7 +588,10 @@ export default function Home() {
                         target="_blank"
                         rel="noreferrer"
                         title="Preview"
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          trackAccess(file, "PREVIEW");
+                        }}
                       >
                         <FaEye />
                       </a>
@@ -562,7 +599,10 @@ export default function Home() {
                         className="btn btn-sm btn-outline-success file-card-action-btn"
                         href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
                         title="Download"
-                        onClick={(e) => e.stopPropagation()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          trackAccess(file, "DOWNLOAD");
+                        }}
                       >
                         <FaCloudDownloadAlt />
                       </a>
@@ -571,6 +611,7 @@ export default function Home() {
                           className="btn btn-sm btn-outline-dark file-card-action-btn"
                           onClick={(e) => {
                             e.stopPropagation();
+                            trackAccess(file, "EDITOR_OPEN");
                             navigate(`/editor/${file._id}`);
                           }}
                           title="Edit in built-in editor"
@@ -606,7 +647,7 @@ export default function Home() {
           </div>
         ) : (
           //  List view (use paginated arrays)
-          <div className="table-container">
+          <div className="table-container documents-spotlight-table">
             <div className="table-responsive">
               <table className="table table-hover align-middle">
                 <thead className="table-light">
@@ -801,6 +842,7 @@ export default function Home() {
                             target="_blank"
                             rel="noreferrer"
                             title="Preview"
+                            onClick={() => trackAccess(file, "PREVIEW")}
                           >
                             <FaEye />
                           </a>
@@ -808,13 +850,17 @@ export default function Home() {
                             className="btn btn-sm btn-outline-success"
                             href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
                             title="Download"
+                            onClick={() => trackAccess(file, "DOWNLOAD")}
                           >
                             <FaCloudDownloadAlt />
                           </a>
                           {isEditableFile(file) && (
                             <button
                               className="btn btn-sm btn-outline-dark"
-                              onClick={() => navigate(`/editor/${file._id}`)}
+                              onClick={() => {
+                                trackAccess(file, "EDITOR_OPEN");
+                                navigate(`/editor/${file._id}`);
+                              }}
                               title="Edit in built-in editor"
                             >
                               <FaEdit />
@@ -1051,7 +1097,10 @@ export default function Home() {
                           href={`${BACKEND_URL}/preview/${contextMenu.item.data.filename}?userId=${userId}&role=${role}`}
                           target="_blank"
                           rel="noreferrer"
-                          onClick={() => setContextMenu({ visible: false, item: null })}
+                          onClick={() => {
+                            trackAccess(contextMenu.item.data, "PREVIEW");
+                            setContextMenu({ visible: false, item: null });
+                          }}
                         >
                           <FaEye className="me-2" />
                           Preview
@@ -1059,7 +1108,10 @@ export default function Home() {
                         <a
                           className="btn btn-outline-success d-flex align-items-center"
                           href={`${BACKEND_URL}/download/${contextMenu.item.data.filename}?userId=${userId}`}
-                          onClick={() => setContextMenu({ visible: false, item: null })}
+                          onClick={() => {
+                            trackAccess(contextMenu.item.data, "DOWNLOAD");
+                            setContextMenu({ visible: false, item: null });
+                          }}
                         >
                           <FaCloudDownloadAlt className="me-2" />
                           Download
@@ -1130,6 +1182,7 @@ export default function Home() {
                           <button
                             className="btn btn-outline-dark d-flex align-items-center"
                             onClick={() => {
+                              trackAccess(contextMenu.item.data, "EDITOR_OPEN");
                               navigate(`/editor/${contextMenu.item.data._id}`);
                               setContextMenu({ visible: false, item: null });
                             }}

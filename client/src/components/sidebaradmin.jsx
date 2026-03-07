@@ -54,15 +54,7 @@ function SidebarSuperAdmin({ onClose }) {
 
   return (
     <>
-      <div
-        className="d-flex flex-column sidebar-admin-clean"
-        style={{
-          width: "250px",
-          height: "100vh",
-          backgroundColor: "#f8f9fa",
-          borderRight: "1px solid #e9ecef"
-        }}
-      >
+      <div className="d-flex flex-column sidebar-admin-clean app-sidebar-shell">
         {/* Mobile close button */}
         {isMobile && (
           <div className="d-flex justify-content-end p-2 border-bottom">
@@ -77,7 +69,7 @@ function SidebarSuperAdmin({ onClose }) {
         )}
 
         {/* Header */}
-        <div className="p-3 border-bottom bg-white flex-shrink-0">
+        <div className="p-3 border-bottom sidebar-header-block flex-shrink-0">
           <h5 className="mb-1 text-primary">Admin Panel</h5>
           <small className="text-muted">Management Console</small>
         </div>
@@ -106,9 +98,7 @@ function SidebarSuperAdmin({ onClose }) {
                 <NavLink
                   to="/admin/manageusers"
                   className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${
-                      isActive ? "active bg-primary text-white" : "text-dark"
-                    }`
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
                   }
                   onClick={handleLinkClick}
                 >
@@ -121,9 +111,7 @@ function SidebarSuperAdmin({ onClose }) {
                 <NavLink
                   to="/admin/groups"
                   className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${
-                      isActive ? "active bg-primary text-white" : "text-dark"
-                    }`
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
                   }
                   onClick={handleLinkClick}
                 >
@@ -144,9 +132,7 @@ function SidebarSuperAdmin({ onClose }) {
                 <NavLink
                   to="/admin/"
                   className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${
-                      isActive ? "active bg-primary text-white" : "text-dark"
-                    }`
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
                   }
                   onClick={handleLinkClick}
                 >
@@ -159,9 +145,7 @@ function SidebarSuperAdmin({ onClose }) {
                 <NavLink
                   to="/admin/trash"
                   className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${
-                      isActive ? "active bg-primary text-white" : "text-dark"
-                    }`
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
                   }
                   onClick={handleLinkClick}
                 >
@@ -174,9 +158,7 @@ function SidebarSuperAdmin({ onClose }) {
                 <NavLink
                   to="/admin/systemlogs"
                   className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${
-                      isActive ? "active bg-primary text-white" : "text-dark"
-                    }`
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
                   }
                   onClick={handleLinkClick}
                 >

@@ -464,6 +464,53 @@ function sanitizeName(name) {
   return (name || "document").replace(/[^\w\- ]+/g, "").trim() || "document";
 }
 
+function encodeAccessDetails(action, file) {
+  const fileId = file?._id?.toString?.() || "";
+  const safeName = (file?.originalName || "").replace(/[|]/g, " ");
+  return `FILE_ACCESS|${action}|${fileId}|${safeName}`;
+}
+
+function parseAccessDetails(details) {
+  const raw = String(details || "");
+  const parts = raw.split("|");
+  if (parts.length < 4 || parts[0] !== "FILE_ACCESS") return null;
+  return {
+    action: parts[1] || "",
+    fileId: parts[2] || "",
+    fileName: parts.slice(3).join("|") || "",
+  };
+}
+
+function scoreRelevantFile(file, userId) {
+  let score = 0;
+  if (isFlaggedByUser(file.pinnedBy, userId)) score += 5;
+  if (isFlaggedByUser(file.favoritedBy, userId)) score += 4;
+  if (!file.duplicateOf) score += 1;
+  const uploadedAt = new Date(file.uploadDate || 0).getTime();
+  const ageHours = Math.max(1, (Date.now() - uploadedAt) / (1000 * 60 * 60));
+  score += Math.max(0, 3 - ageHours / 24);
+  return Number(score.toFixed(2));
+}
+
+function buildAutoReportContent(data = {}) {
+  const safe = (value, fallback = "N/A") => {
+    const normalized = value === undefined || value === null ? "" : String(value).trim();
+    return normalized || fallback;
+  };
+  return [
+    safe(data.reportTitle, "Document Activity Report"),
+    `Period: ${safe(data.period)}`,
+    "",
+    "Summary",
+    safe(data.summary),
+    "",
+    "Metrics",
+    `- Total Documents: ${safe(data.totalDocuments, "0")}`,
+    `- New Uploads: ${safe(data.newUploads, "0")}`,
+    `- Duplicate Files: ${safe(data.duplicateFiles, "0")}`,
+  ].join("\n");
+}
+
 async function createGeneratedDocumentBuffer(outputType, content) {
   if (outputType === "txt") {
     return Buffer.from(content || "", "utf8");
@@ -1185,6 +1232,79 @@ app.post("/form-templates/:id/generate", async (req, res) => {
   }
 });
 
+app.post("/reports/auto-generate", async (req, res) => {
+  try {
+    const { userId, reportData } = req.body || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    const outputType = ["txt", "docx", "pdf"].includes(reportData?.outputType)
+      ? reportData.outputType
+      : "docx";
+    const content = buildAutoReportContent(reportData || {});
+    const ext = outputType === "pdf" ? ".pdf" : outputType === "txt" ? ".txt" : ".docx";
+    const mime =
+      outputType === "pdf"
+        ? "application/pdf"
+        : outputType === "txt"
+          ? "text/plain"
+          : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
+    const buffer = await createGeneratedDocumentBuffer(outputType, content);
+    const reportName = `${sanitizeName(reportData?.reportTitle || "Auto Report")}_${Date.now()}${ext}`;
+    const storedFilename = `${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
+    const targetPath = path.join(__dirname, "uploads", storedFilename);
+    fs.writeFileSync(targetPath, buffer);
+
+    const targetFolder = reportData?.destinationFolder || null;
+    const contentHash = await computeFileHash(targetPath);
+    const extractedText = await extractTextForClassification(targetPath, mime, reportName);
+    const classificationResult = classifyDocument({
+      originalName: reportName,
+      mimetype: mime,
+      text: extractedText,
+    });
+
+    const file = await File.create({
+      originalName: reportName,
+      filename: storedFilename,
+      mimetype: mime,
+      size: buffer.length,
+      userId,
+      owner: userId,
+      parentFolder: targetFolder,
+      uploadDate: new Date(),
+      contentHash,
+      classification: {
+        category: classificationResult.category,
+        confidence: classificationResult.confidence,
+        tags: classificationResult.tags,
+        classifiedAt: new Date(),
+        classifierVersion: CLASSIFICATION_VERSION,
+      },
+    });
+
+    await reconcileDuplicateGroup(contentHash);
+
+    const version = await FileVersion.create({
+      fileId: file._id,
+      versionNumber: 1,
+      originalName: file.originalName,
+      filename: file.filename,
+      mimetype: file.mimetype,
+      size: file.size,
+      createdBy: userId,
+      changeDescription: "Auto-generated report",
+      isCurrent: true,
+    });
+
+    createLog("AUTO_GENERATE_REPORT", userId, `Generated report "${file.originalName}"`);
+    res.json({ success: true, file, version });
+  } catch (err) {
+    console.error("Auto-generate report error:", err);
+    res.status(500).json({ error: "Failed to auto-generate report" });
+  }
+});
+
 // Get file versions
 app.get("/files/:id/versions", async (req, res) => {
   try {
@@ -1863,6 +1983,154 @@ app.get("/files", async (req, res) => {
   }
 });
 
+// Mark file access events for personalized recent files and activity timeline
+app.post("/files/:id/access", async (req, res) => {
+  try {
+    const { userId, role, action } = req.body || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    const file = await File.findById(req.params.id).populate("owner");
+    if (!file) return res.status(404).json({ error: "File not found" });
+    if (!userHasFileAccess(file, userId, role)) {
+      return res.status(403).json({ error: "Not authorized to access this file" });
+    }
+
+    const normalizedAction = String(action || "OPEN").toUpperCase();
+    file.lastAccessedAt = new Date();
+    await file.save();
+
+    createLog("ACCESS_FILE", userId, encodeAccessDetails(normalizedAction, file));
+    res.json({ success: true });
+  } catch (err) {
+    console.error("Track access error:", err);
+    res.status(500).json({ error: "Failed to track access" });
+  }
+});
+
+// Personalized dashboard data for the current user
+app.get("/dashboard/personalized/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { role } = req.query;
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const isAdmin = role === "admin" || role === "superadmin";
+
+    const baseQuery = isAdmin
+      ? { deletedAt: null }
+      : {
+          deletedAt: null,
+          $or: [{ userId }, { sharedWith: userId }],
+        };
+
+    const rawFiles = await File.find(baseQuery)
+      .populate("owner", "email")
+      .sort({ uploadDate: -1 })
+      .limit(200);
+
+    const relevantFiles = rawFiles
+      .map((f) => {
+        const isOwner = f.owner?._id?.toString?.() === userId || f.userId?.toString?.() === userId;
+        return {
+          _id: f._id,
+          originalName: f.originalName,
+          filename: f.filename,
+          mimetype: f.mimetype,
+          uploadDate: f.uploadDate,
+          ownerEmail: f.owner?.email || null,
+          isShared: !isOwner,
+          isFavorite: isFlaggedByUser(f.favoritedBy, userId),
+          isPinned: isFlaggedByUser(f.pinnedBy, userId),
+          isDuplicate: !!f.duplicateOf,
+          classification: f.classification || null,
+          relevanceScore: scoreRelevantFile(f, userId),
+        };
+      })
+      .sort((a, b) => b.relevanceScore - a.relevanceScore)
+      .slice(0, 8);
+
+    const requiresAction = rawFiles
+      .map((f) => {
+        const actions = [];
+        if (f.duplicateOf) actions.push("Duplicate detected");
+        if ((f.classification?.confidence || 1) < 0.6) actions.push("Low classification confidence");
+        if (f.sharedWith?.some((id) => id?.toString?.() === userId) && f.permissions === "write") {
+          actions.push("Shared with write access - review needed");
+        }
+        if (!actions.length) return null;
+        return {
+          fileId: f._id,
+          originalName: f.originalName,
+          actions,
+          priority: actions.length >= 2 ? "high" : "medium",
+        };
+      })
+      .filter(Boolean)
+      .slice(0, 10);
+
+    const accessLogs = await Log.find({
+      user: userId,
+      action: "ACCESS_FILE",
+      date: { $gte: new Date(Date.now() - 1000 * 60 * 60 * 24 * 30) },
+    })
+      .sort({ date: -1 })
+      .limit(80);
+
+    const recentAccessItems = [];
+    const seenAccess = new Set();
+    for (const item of accessLogs) {
+      const parsed = parseAccessDetails(item.details);
+      if (!parsed?.fileId || seenAccess.has(parsed.fileId)) continue;
+      seenAccess.add(parsed.fileId);
+      recentAccessItems.push({ fileId: parsed.fileId, lastAction: parsed.action, at: item.date });
+      if (recentAccessItems.length >= 8) break;
+    }
+    const recentIds = recentAccessItems.map((i) => i.fileId);
+    const recentFilesRaw = recentIds.length
+      ? await File.find({ _id: { $in: recentIds }, deletedAt: null }).select("_id originalName filename mimetype")
+      : [];
+    const recentMap = new Map(recentFilesRaw.map((f) => [f._id.toString(), f]));
+    const recentAccessed = recentAccessItems
+      .map((item) => {
+        const f = recentMap.get(item.fileId);
+        if (!f) return null;
+        return {
+          _id: f._id,
+          originalName: f.originalName,
+          filename: f.filename,
+          mimetype: f.mimetype,
+          lastAction: item.lastAction,
+          lastAccessedAt: item.at,
+        };
+      })
+      .filter(Boolean);
+
+    const timeline = await Log.find({ user: userId })
+      .sort({ date: -1 })
+      .limit(30);
+    const timelineItems = timeline.map((entry) => ({
+      _id: entry._id,
+      action: entry.action,
+      details: entry.details,
+      date: entry.date || entry.timeStamp,
+    }));
+
+    res.json({
+      relevantFiles,
+      requiresAction,
+      recentAccessed,
+      timeline: timelineItems,
+      stats: {
+        relevantCount: relevantFiles.length,
+        actionRequiredCount: requiresAction.length,
+        recentAccessCount: recentAccessed.length,
+      },
+    });
+  } catch (err) {
+    console.error("Personalized dashboard error:", err);
+    res.status(500).json({ error: "Failed to fetch personalized dashboard" });
+  }
+});
+
 // View file inline
 app.get("/view/:filename", async (req, res) => {
   try {
@@ -1883,6 +2151,12 @@ app.get("/view/:filename", async (req, res) => {
       if (!isOwner && !isShared) {
         return res.status(403).send("You don't have permission to view this file");
       }
+    }
+
+    if (userId) {
+      doc.lastAccessedAt = new Date();
+      await doc.save();
+      createLog("ACCESS_FILE", userId, encodeAccessDetails("VIEW", doc));
     }
 
     const filePath = path.join(__dirname, "uploads", req.params.filename);
@@ -2030,6 +2304,12 @@ app.get("/download/:filename", async (req, res) => {
       }
     }
 
+    if (userId) {
+      doc.lastAccessedAt = new Date();
+      await doc.save();
+      createLog("ACCESS_FILE", userId, encodeAccessDetails("DOWNLOAD", doc));
+    }
+
     const filePath = path.join(__dirname, "uploads", req.params.filename);
     const finalName = ensureExtension(doc.originalName, doc.mimetype);
     const safeName = finalName.replace(/[\\"]/g, "_").replace(/\r?\n/g, "");
@@ -2143,6 +2423,12 @@ app.get("/files/:id/content", async (req, res) => {
     }
     if (!isEditableDocument(file)) {
       return res.status(400).json({ error: "This file type is not editable in-app" });
+    }
+
+    if (userId) {
+      file.lastAccessedAt = new Date();
+      await file.save();
+      createLog("ACCESS_FILE", userId, encodeAccessDetails("EDITOR_OPEN", file));
     }
 
     const filePath = path.join(__dirname, "uploads", file.filename);
@@ -2900,38 +3186,169 @@ app.get("/shared/groups", async (req, res) => {
 /* ========================
    SEARCH
 ======================== */
+const parseCsvList = (value) =>
+  String(value || "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+const parseBoolean = (value) => String(value || "").toLowerCase() === "true";
+
+const escapeRegex = (value = "") => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+const resolveDateRange = ({ datePreset, dateFrom, dateTo }) => {
+  const now = new Date();
+  if (datePreset === "today") {
+    const start = new Date(now);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(now);
+    end.setHours(23, 59, 59, 999);
+    return { $gte: start, $lte: end };
+  }
+  if (datePreset === "7d") {
+    const start = new Date(now);
+    start.setDate(start.getDate() - 7);
+    return { $gte: start, $lte: now };
+  }
+  if (datePreset === "30d") {
+    const start = new Date(now);
+    start.setDate(start.getDate() - 30);
+    return { $gte: start, $lte: now };
+  }
+
+  const range = {};
+  if (dateFrom) range.$gte = new Date(dateFrom);
+  if (dateTo) {
+    const end = new Date(dateTo);
+    end.setHours(23, 59, 59, 999);
+    range.$lte = end;
+  }
+  return Object.keys(range).length ? range : null;
+};
+
+const buildMimeRegex = (fileTypes = []) => {
+  if (!fileTypes.length) return null;
+  const matcher = fileTypes
+    .map((type) => String(type || "").toLowerCase())
+    .filter(Boolean)
+    .map((type) => {
+      switch (type) {
+        case "pdf":
+          return "pdf";
+        case "doc":
+        case "docx":
+        case "word":
+          return "(word|doc|officedocument\\.wordprocessingml)";
+        case "xls":
+        case "xlsx":
+        case "excel":
+          return "(excel|sheet|spreadsheet)";
+        case "image":
+          return "image/";
+        case "video":
+          return "video/";
+        case "archive":
+          return "(zip|rar|7z|tar|gzip)";
+        case "text":
+          return "(text/|json|xml|csv)";
+        default:
+          return escapeRegex(type);
+      }
+    });
+
+  if (!matcher.length) return null;
+  return new RegExp(matcher.join("|"), "i");
+};
+
 app.get("/search", async (req, res) => {
   try {
-    const fs = require("fs");
-    const { userId, query, type, date, q } = req.query;
-    const searchTerm = query || q;
+    const {
+      userId,
+      query,
+      q,
+      limit,
+      entityTypes,
+      type,
+      fileTypes,
+      datePreset,
+      dateFrom,
+      dateTo,
+      date,
+      scope = "both",
+      sortBy = "relevance",
+      sortOrder = "desc",
+      favoritesOnly,
+      pinnedOnly,
+      sharedOnly,
+      duplicatesOnly,
+      exactMatch,
+    } = req.query;
+
+    const searchTerm = (query || q || "").trim();
 
     if (!userId) return res.status(400).json({ error: "Missing userId" });
-    if (!searchTerm) return res.json([]);
 
-    // Search files
-    let fileSearchQuery = { userId, deletedAt: null };
+    const limitNum = Math.max(5, Math.min(parseInt(limit || "20", 10) || 20, 100));
+    const includeTypes = new Set(parseCsvList(entityTypes || type || "file,folder"));
+    const includeFiles = includeTypes.has("file");
+    const includeFolders = includeTypes.has("folder");
+    const includeName = scope !== "content";
+    const includeContent = scope === "content" || scope === "both";
+    const hasSearchTerm = searchTerm.length > 0;
+    const useExactMatch = parseBoolean(exactMatch);
+    const dateRange = resolveDateRange({
+      datePreset,
+      dateFrom: dateFrom || date,
+      dateTo,
+    });
+    const mimeRegex = buildMimeRegex(parseCsvList(fileTypes));
 
-    // Search files by name
-    const filesByName = await File.find({
-      ...fileSearchQuery,
-      originalName: { $regex: searchTerm, $options: "i" },
-    }).populate("owner", "email");
-
-    if (type) fileSearchQuery.mimetype = { $regex: type, $options: "i" };
-    if (date) {
-      const start = new Date(date);
-      const end = new Date(date);
-      end.setHours(23, 59, 59, 999);
-      fileSearchQuery.uploadDate = { $gte: start, $lte: end };
+    const fileBaseQuery = {
+      deletedAt: null,
+      $or: [{ owner: userId }, { userId }, { sharedWith: userId }],
+    };
+    if (mimeRegex) fileBaseQuery.mimetype = mimeRegex;
+    if (dateRange) fileBaseQuery.uploadDate = dateRange;
+    if (parseBoolean(favoritesOnly)) fileBaseQuery.favoritedBy = userId;
+    if (parseBoolean(pinnedOnly)) fileBaseQuery.pinnedBy = userId;
+    if (parseBoolean(duplicatesOnly)) fileBaseQuery.duplicateOf = { $ne: null };
+    if (parseBoolean(sharedOnly)) {
+      fileBaseQuery.sharedWith = userId;
+      fileBaseQuery.owner = { $ne: userId };
     }
 
-    // Search inside file contents for text-based files
-    const allFiles = await File.find(fileSearchQuery).populate("owner", "email");
+    const folderBaseQuery = {
+      deletedAt: null,
+      $or: [{ owner: userId }, { sharedWith: userId }],
+    };
+    if (dateRange) folderBaseQuery.createdAt = dateRange;
+    if (parseBoolean(sharedOnly)) {
+      folderBaseQuery.sharedWith = userId;
+      folderBaseQuery.owner = { $ne: userId };
+    }
+
+    const termRegex = useExactMatch
+      ? new RegExp(`^${escapeRegex(searchTerm)}$`, "i")
+      : new RegExp(escapeRegex(searchTerm), "i");
+
+    const filesByName =
+      includeFiles && includeName && hasSearchTerm
+        ? await File.find({
+            ...fileBaseQuery,
+            originalName: termRegex,
+          }).populate("owner", "email")
+        : [];
+
+    const allFiles =
+      includeFiles && (includeContent || !hasSearchTerm)
+        ? await File.find(fileBaseQuery).populate("owner", "email").limit(limitNum * 5)
+        : [];
     const filesWithContent = [];
     const searchLower = searchTerm.toLowerCase();
 
     for (const file of allFiles) {
+      if (!hasSearchTerm && !includeName) continue;
+      if (!hasSearchTerm && includeName) continue;
       // Skip files already found by name
       if (filesByName.some(f => f._id.toString() === file._id.toString())) {
         continue;
@@ -2956,7 +3373,7 @@ app.get("/search", async (req, res) => {
                      file.mimetype?.includes("vnd.ms-excel") ||
                      (file.originalName && (file.originalName.toLowerCase().endsWith(".xlsx") || file.originalName.toLowerCase().endsWith(".xls")));
 
-      if (isTextFile) {
+      if (includeContent && hasSearchTerm && isTextFile) {
         try {
           const filePath = path.join(__dirname, "uploads", file.filename);
 
@@ -2975,7 +3392,7 @@ app.get("/search", async (req, res) => {
           console.error(`Error reading file ${file.filename} for search:`, readErr.message);
           continue;
         }
-      } else if ((isPdf || isDocx || isXlsx) && file.size < 15 * 1024 * 1024) {
+      } else if (includeContent && hasSearchTerm && (isPdf || isDocx || isXlsx) && file.size < 15 * 1024 * 1024) {
         try {
           const filePath = path.join(__dirname, "uploads", file.filename);
           if (!fs.existsSync(filePath)) continue;
@@ -3031,16 +3448,33 @@ app.get("/search", async (req, res) => {
       }
     }
 
-    // Search folders by name
-    const foldersByName = await Folder.find({
-      owner: userId,
-      deletedAt: null,
-      name: { $regex: searchTerm, $options: "i" },
-    }).populate("owner", "email");
+    const foldersByName =
+      includeFolders && hasSearchTerm && includeName
+        ? await Folder.find({
+            ...folderBaseQuery,
+            name: termRegex,
+          }).populate("owner", "email")
+        : [];
+
+    const foldersByFilterOnly =
+      includeFolders && !hasSearchTerm
+        ? await Folder.find(folderBaseQuery)
+            .populate("owner", "email")
+            .sort({ createdAt: -1 })
+            .limit(limitNum * 3)
+        : [];
+
+    const filesByFilterOnly =
+      includeFiles && !hasSearchTerm
+        ? await File.find(fileBaseQuery)
+            .populate("owner", "email")
+            .sort({ uploadDate: -1 })
+            .limit(limitNum * 3)
+        : [];
 
     // Combine files and folders
-    const allFilesResult = [...filesByName, ...filesWithContent];
-    const allFoldersResult = [...foldersByName];
+    const allFilesResult = [...filesByName, ...filesWithContent, ...filesByFilterOnly];
+    const allFoldersResult = [...foldersByName, ...foldersByFilterOnly];
 
     // Remove duplicates
     const uniqueFiles = [];
@@ -3061,24 +3495,48 @@ app.get("/search", async (req, res) => {
       }
     }
 
-    // Combine and sort all results (folders first, then files by date)
     const results = [
-      ...uniqueFolders.map(folder => ({ ...folder.toObject(), isFolder: true })),
-      ...uniqueFiles.map(file => ({ ...file.toObject(), isFile: true }))
-    ].sort((a, b) => {
-      // Folders come first
-      if (a.isFolder && !b.isFolder) return -1;
-      if (!a.isFolder && b.isFolder) return 1;
+      ...uniqueFolders.map((folder) => ({ ...folder.toObject(), isFolder: true, type: "folder" })),
+      ...uniqueFiles.map((file) => ({
+        ...file.toObject(),
+        isFile: true,
+        type: "file",
+        isFavorite: isFlaggedByUser(file.favoritedBy, userId),
+        isPinned: isFlaggedByUser(file.pinnedBy, userId),
+      })),
+    ];
 
-      // Within same type, sort by date
-      if (a.isFolder) {
-        return new Date(b.createdAt) - new Date(a.createdAt);
-      } else {
-        return new Date(b.uploadDate) - new Date(a.uploadDate);
+    const scoreResult = (item) => {
+      if (!hasSearchTerm) return 0;
+      const target = (item.originalName || item.name || "").toLowerCase();
+      if (target === searchLower) return 100;
+      if (target.startsWith(searchLower)) return 70;
+      if (target.includes(searchLower)) return 50;
+      if (item.matchedBy === "content") return 35;
+      return 10;
+    };
+
+    results.sort((a, b) => {
+      const direction = sortOrder === "asc" ? 1 : -1;
+      if (sortBy === "name") {
+        return direction * (a.originalName || a.name || "").localeCompare(b.originalName || b.name || "");
       }
+      if (sortBy === "size") {
+        return direction * ((a.size || 0) - (b.size || 0));
+      }
+      if (sortBy === "date" || !hasSearchTerm || sortBy === "recent") {
+        const dateA = new Date(a.uploadDate || a.createdAt || 0).getTime();
+        const dateB = new Date(b.uploadDate || b.createdAt || 0).getTime();
+        return direction * (dateA - dateB);
+      }
+      const scoreDelta = scoreResult(b) - scoreResult(a);
+      if (scoreDelta !== 0) return scoreDelta;
+      const dateA = new Date(a.uploadDate || a.createdAt || 0).getTime();
+      const dateB = new Date(b.uploadDate || b.createdAt || 0).getTime();
+      return dateB - dateA;
     });
 
-    res.json(results);
+    res.json(results.slice(0, limitNum));
   } catch (err) {
     console.error("Search error:", err);
     res.status(500).json({ error: "Failed to search files and folders" });
@@ -4420,6 +4878,107 @@ app.patch("/admin/password-requests/:id/reject", async (req, res) => {
    NOTIFICATIONS MANAGEMENT
 ======================== */
 
+app.post("/notifications/smart/:userId", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) return res.status(400).json({ error: "User ID required" });
+
+    const now = Date.now();
+    const created = [];
+    const createdKeys = new Set();
+
+    const canCreate = async (type, details) => {
+      const key = `${type}:${details}`;
+      if (createdKeys.has(key)) return false;
+      createdKeys.add(key);
+      const existing = await Notification.findOne({
+        userId,
+        type,
+        details,
+        createdAt: { $gte: new Date(now - 1000 * 60 * 60 * 12) },
+      });
+      return !existing;
+    };
+
+    const duplicateFiles = await File.find({
+      userId,
+      deletedAt: null,
+      duplicateOf: { $ne: null },
+    })
+      .select("_id originalName")
+      .limit(5);
+
+    for (const file of duplicateFiles) {
+      const details = file.originalName;
+      if (await canCreate("DUPLICATE_ALERT", details)) {
+        const notif = await createNotification(
+          userId,
+          "DUPLICATE_ALERT",
+          "Duplicate File Detected",
+          `Duplicate found: ${file.originalName}. Review and clean up duplicates.`,
+          details,
+          file._id,
+          "File"
+        );
+        if (notif) created.push(notif);
+      }
+    }
+
+    const writableSharedFiles = await File.find({
+      sharedWith: userId,
+      deletedAt: null,
+      permissions: "write",
+    })
+      .select("_id originalName")
+      .limit(5);
+
+    for (const file of writableSharedFiles) {
+      const details = file.originalName;
+      if (await canCreate("REVIEW_REQUIRED", details)) {
+        const notif = await createNotification(
+          userId,
+          "REVIEW_REQUIRED",
+          "Document Requires Your Action",
+          `You have write access to "${file.originalName}". Review or update if needed.`,
+          details,
+          file._id,
+          "File"
+        );
+        if (notif) created.push(notif);
+      }
+    }
+
+    const lowConfidenceFiles = await File.find({
+      userId,
+      deletedAt: null,
+      "classification.confidence": { $lt: 0.6 },
+    })
+      .select("_id originalName")
+      .limit(5);
+
+    for (const file of lowConfidenceFiles) {
+      const details = file.originalName;
+      if (await canCreate("ACTION_REQUIRED", details)) {
+        const notif = await createNotification(
+          userId,
+          "ACTION_REQUIRED",
+          "Document Needs Review",
+          `"${file.originalName}" may need recategorization or validation.`,
+          details,
+          file._id,
+          "File"
+        );
+        if (notif) created.push(notif);
+      }
+    }
+
+    res.json({ success: true, createdCount: created.length, notifications: created });
+  } catch (err) {
+    console.error("Smart notifications error:", err);
+    res.status(500).json({ error: "Failed to generate smart notifications" });
+  }
+});
+
 // Get notifications for a user
 app.get("/notifications/:userId", async (req, res) => {
   try {
@@ -4605,36 +5164,70 @@ app.post("/test-email", async (req, res) => {
 ======================== */
 app.get("/admin/search", async (req, res) => {
   try {
-    const { query, userId, role, limit, searchType } = req.query;
-    const searchTerm = query;
+    const {
+      query,
+      role,
+      limit,
+      searchType,
+      entityTypes,
+      fileTypes,
+      owner,
+      datePreset,
+      dateFrom,
+      dateTo,
+      scope = "both",
+      sortBy = "relevance",
+      sortOrder = "desc",
+      exactMatch,
+      favoritesOnly,
+      pinnedOnly,
+      sharedOnly,
+      duplicatesOnly,
+    } = req.query;
+    const searchTerm = String(query || "").trim();
 
     if (role !== "admin" && role !== "superadmin") {
       return res.status(403).json({ error: "Admin access required" });
     }
 
-    if (!searchTerm) return res.json([]);
+    const hasSearchTerm = searchTerm.length > 0;
+    const limitNum = Math.max(5, Math.min(parseInt(limit || "20", 10) || 20, 120));
+    const typeValues = parseCsvList(entityTypes);
+    const includeTypes = new Set(
+      typeValues.length
+        ? typeValues
+        : searchType && searchType !== "all"
+        ? [searchType]
+        : ["file", "folder", "user", "group", "log"]
+    );
+    const includeName = scope !== "content";
+    const includeContent = scope === "content" || scope === "both";
+    const useExactMatch = parseBoolean(exactMatch);
+    const dateRange = resolveDateRange({ datePreset, dateFrom, dateTo });
+    const mimeRegex = buildMimeRegex(parseCsvList(fileTypes));
+    const termRegex = useExactMatch
+      ? new RegExp(`^${escapeRegex(searchTerm)}$`, "i")
+      : new RegExp(escapeRegex(searchTerm), "i");
+    const searchLower = searchTerm.toLowerCase();
 
-    const limitNum = parseInt(limit) || 10;
     const results = [];
 
-    // If searchType is 'all' or not specified, search everything
-    // If searchType is specific, only search that type
-    const shouldSearchUsers = !searchType || searchType === 'all' || searchType === 'user';
-    const shouldSearchGroups = !searchType || searchType === 'all' || searchType === 'group';
-    const shouldSearchLogs = !searchType || searchType === 'all' || searchType === 'log';
-    const shouldSearchFiles = !searchType || searchType === 'all' || searchType === 'file';
-    const shouldSearchFolders = !searchType || searchType === 'all' || searchType === 'folder';
+    let ownerIds = null;
+    if (owner) {
+      const ownerUsers = await UserModel.find({
+        $or: [{ email: { $regex: owner, $options: "i" } }, { name: { $regex: owner, $options: "i" } }],
+      }).select("_id");
+      ownerIds = ownerUsers.map((u) => u._id);
+      if (!ownerIds.length) ownerIds = ["000000000000000000000000"];
+    }
 
-    // Search users
-    if (shouldSearchUsers) {
-      const users = await UserModel.find({
-        $or: [
-          { name: { $regex: searchTerm, $options: "i" } },
-          { email: { $regex: searchTerm, $options: "i" } }
-        ]
-      })
-        .select("name email role createdAt active")
-        .limit(limitNum);
+    if (includeTypes.has("user")) {
+      const userQuery = {};
+      if (hasSearchTerm) {
+        userQuery.$or = [{ name: termRegex }, { email: termRegex }];
+      }
+      if (dateRange) userQuery.createdAt = dateRange;
+      const users = await UserModel.find(userQuery).select("name email role createdAt active").limit(limitNum);
 
       users.forEach(user => {
         results.push({
@@ -4649,16 +5242,13 @@ app.get("/admin/search", async (req, res) => {
       });
     }
 
-    // Search groups
-    if (shouldSearchGroups) {
-      const groups = await Group.find({
-        $or: [
-          { name: { $regex: searchTerm, $options: "i" } },
-          { description: { $regex: searchTerm, $options: "i" } }
-        ]
-      })
-        .select("name description createdAt members")
-        .limit(limitNum);
+    if (includeTypes.has("group")) {
+      const groupQuery = {};
+      if (hasSearchTerm) {
+        groupQuery.$or = [{ name: termRegex }, { description: termRegex }];
+      }
+      if (dateRange) groupQuery.createdAt = dateRange;
+      const groups = await Group.find(groupQuery).select("name description createdAt members").limit(limitNum);
 
       groups.forEach(group => {
         results.push({
@@ -4672,14 +5262,13 @@ app.get("/admin/search", async (req, res) => {
       });
     }
 
-    // Search logs
-    if (shouldSearchLogs) {
-      const logs = await Log.find({
-        $or: [
-          { action: { $regex: searchTerm, $options: "i" } },
-          { details: { $regex: searchTerm, $options: "i" } }
-        ]
-      })
+    if (includeTypes.has("log")) {
+      const logQuery = {};
+      if (hasSearchTerm) {
+        logQuery.$or = [{ action: termRegex }, { details: termRegex }];
+      }
+      if (dateRange) logQuery.date = dateRange;
+      const logs = await Log.find(logQuery)
         .populate("user", "email")
         .sort({ date: -1 })
         .limit(limitNum);
@@ -4696,15 +5285,25 @@ app.get("/admin/search", async (req, res) => {
       });
     }
 
-    // Search files across ALL users (admin can see all files)
-    if (shouldSearchFiles) {
-      // Search files by name
-      const filesByName = await File.find({
-        originalName: { $regex: searchTerm, $options: "i" },
-        deletedAt: null
-      })
-        .populate("owner", "email")
-        .limit(limitNum);
+    if (includeTypes.has("file")) {
+      const fileBaseQuery = { deletedAt: null };
+      if (ownerIds) fileBaseQuery.owner = { $in: ownerIds };
+      if (mimeRegex) fileBaseQuery.mimetype = mimeRegex;
+      if (dateRange) fileBaseQuery.uploadDate = dateRange;
+      if (parseBoolean(favoritesOnly)) fileBaseQuery.favoritedBy = { $exists: true, $ne: [] };
+      if (parseBoolean(pinnedOnly)) fileBaseQuery.pinnedBy = { $exists: true, $ne: [] };
+      if (parseBoolean(duplicatesOnly)) fileBaseQuery.duplicateOf = { $ne: null };
+      if (parseBoolean(sharedOnly)) fileBaseQuery.sharedWith = { $exists: true, $ne: [] };
+
+      const filesByName =
+        hasSearchTerm && includeName
+          ? await File.find({ ...fileBaseQuery, originalName: termRegex })
+              .populate("owner", "email")
+              .limit(limitNum * 2)
+          : await File.find(fileBaseQuery)
+              .populate("owner", "email")
+              .sort({ uploadDate: -1 })
+              .limit(limitNum * 2);
 
       filesByName.forEach(file => {
         results.push({
@@ -4720,14 +5319,10 @@ app.get("/admin/search", async (req, res) => {
         });
       });
 
-      // Search inside file contents for text-based files
-      const allFiles = await File.find({
-        deletedAt: null
-      })
-        .populate("owner", "email")
-        .limit(limitNum * 2);
-
-      const searchLower = searchTerm.toLowerCase();
+      if (!(hasSearchTerm && includeContent)) {
+        // skip deep content search when query is empty or name-only scope
+      } else {
+      const allFiles = await File.find(fileBaseQuery).populate("owner", "email").limit(limitNum * 4);
       const fileIdsAlreadyFound = new Set(filesByName.map(f => f._id.toString()));
 
       for (const file of allFiles) {
@@ -4873,17 +5468,19 @@ app.get("/admin/search", async (req, res) => {
             continue;
           }
         }
-      }
+      }}
     }
 
-    // Search folders across ALL users
-    if (shouldSearchFolders) {
-      const foldersByName = await Folder.find({
-        deletedAt: null,
-        name: { $regex: searchTerm, $options: "i" },
-      })
+    if (includeTypes.has("folder")) {
+      const folderQuery = { deletedAt: null };
+      if (ownerIds) folderQuery.owner = { $in: ownerIds };
+      if (dateRange) folderQuery.createdAt = dateRange;
+      if (parseBoolean(sharedOnly)) folderQuery.sharedWith = { $exists: true, $ne: [] };
+      if (hasSearchTerm) folderQuery.name = termRegex;
+      const foldersByName = await Folder.find(folderQuery)
         .populate("owner", "email")
-        .limit(limitNum);
+        .sort({ createdAt: -1 })
+        .limit(limitNum * 2);
 
       foldersByName.forEach(folder => {
         results.push({
@@ -4897,27 +5494,40 @@ app.get("/admin/search", async (req, res) => {
       });
     }
 
-    // Sort results - prioritize exact matches, then by date
+    const scoreResult = (item) => {
+      if (!hasSearchTerm) return 0;
+      const val = (item.name || item.action || "").toLowerCase();
+      if (val === searchLower) return 100;
+      if (val.startsWith(searchLower)) return 70;
+      if (val.includes(searchLower)) return 50;
+      if (item.matchedBy === "content") return 35;
+      return 10;
+    };
+
     results.sort((a, b) => {
-      const aName = a.name || a.action || "";
-      const bName = b.name || b.action || "";
-      const aExact = aName.toLowerCase() === searchTerm.toLowerCase();
-      const bExact = bName.toLowerCase() === searchTerm.toLowerCase();
-      if (aExact && !bExact) return -1;
-      if (!aExact && bExact) return 1;
-      
-      // Files and folders first, then users, groups, logs
+      const direction = sortOrder === "asc" ? 1 : -1;
+      if (sortBy === "name") {
+        return direction * (a.name || a.action || "").localeCompare(b.name || b.action || "");
+      }
+      if (sortBy === "size") {
+        return direction * ((a.size || 0) - (b.size || 0));
+      }
+      if (sortBy === "relevance" && hasSearchTerm) {
+        const scoreDelta = scoreResult(b) - scoreResult(a);
+        if (scoreDelta !== 0) return scoreDelta;
+      }
+
       const typeOrder = { file: 0, folder: 0, user: 1, group: 2, log: 3 };
       const typeA = typeOrder[a.type] ?? 4;
       const typeB = typeOrder[b.type] ?? 4;
       if (typeA !== typeB) return typeA - typeB;
-      
+
       const dateA = new Date(a.createdAt || a.date || a.uploadDate || 0);
       const dateB = new Date(b.createdAt || b.date || b.uploadDate || 0);
-      return dateB - dateA;
+      return direction * (dateA - dateB);
     });
 
-    res.json(results.slice(0, limitNum * 5));
+    res.json(results.slice(0, limitNum));
   } catch (err) {
     console.error("Admin search error:", err);
     res.status(500).json({ error: "Failed to search" });

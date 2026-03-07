@@ -1,5 +1,5 @@
-import { BrowserRouter as Router, Routes, Route } from "react-router-dom";
-import React from "react";
+import { BrowserRouter as Router, Routes, Route, useLocation } from "react-router-dom";
+import React, { useEffect, useRef, useState } from "react";
 import Login from "./pages/login.jsx";
 import Home from "./pages/home"; // user page
 import AdminHome from "./pages/adminhome"; // admin page
@@ -19,171 +19,198 @@ import Notifications from "./pages/notifications"; // user notifications page
 import Help from "./pages/help"; // help & feedback page
 import FormsPage from "./pages/forms.jsx"; // smart form builder
 import EditorPage from "./pages/editor.jsx"; // full-page document editor
+import LoadingScreen from "./components/LoadingScreen";
+
+function AppRoutes() {
+  return (
+    <Routes>
+      {/* Public Login */}
+      <Route path="/login" element={<Login />} />
+
+      {/* User Protected Routes */}
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute allowedRole="user">
+            <Layout role="user" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Home />} />{" "}
+      </Route>
+
+      <Route path="upload" element={<Upload />} />
+
+      <Route
+        path="/shared"
+        element={
+          <ProtectedRoute allowedRole="user">
+            <Layout role="user" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Shared />} />
+      </Route>
+
+      <Route
+        path="/recent"
+        element={
+          <ProtectedRoute allowedRole="user">
+            <Layout role="user" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Recent />} />
+      </Route>
+
+      <Route
+        path="/groups"
+        element={
+          <ProtectedRoute allowedRole="user">
+            <Layout role="user" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<MyGroups />} />
+      </Route>
+
+      <Route
+        path="/settings"
+        element={
+          <ProtectedRoute allowedRole="user">
+            <Layout role="user" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Settings />} />
+      </Route>
+
+      <Route
+        path="/notifications"
+        element={
+          <ProtectedRoute allowedRole="user">
+            <Layout role="user" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Notifications />} />
+      </Route>
+
+      <Route
+        path="/help"
+        element={
+          <ProtectedRoute allowedRole="user">
+            <Layout role="user" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<Help />} />
+      </Route>
+
+      <Route
+        path="/forms"
+        element={
+          <ProtectedRoute allowedRole="user">
+            <Layout role="user" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<FormsPage />} />
+      </Route>
+
+      <Route
+        path="/editor/:id"
+        element={
+          <ProtectedRoute allowedRole="user">
+            <Layout role="user" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<EditorPage />} />
+      </Route>
+
+      {/* Admin Protected Routes */}
+      <Route
+        path="/admin"
+        element={
+          <ProtectedRoute allowedRole="admin">
+            <Layout role="admin" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<AdminHome />} />
+      </Route>
+
+      <Route
+        path="/admin/manageusers"
+        element={
+          <ProtectedRoute allowedRole="admin">
+            <Layout role="admin" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<ManageUsers />} />
+      </Route>
+      <Route
+        path="/admin/systemlogs"
+        element={
+          <ProtectedRoute allowedRole="admin">
+            <Layout role="admin" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<SystemLogs />} />
+      </Route>
+      <Route
+        path="/admin/groups"
+        element={
+          <ProtectedRoute allowedRole="admin">
+            <Layout role="admin" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<ManageGroups />} />
+      </Route>
+      <Route
+        path="/admin/trash"
+        element={
+          <ProtectedRoute allowedRole="admin">
+            <Layout role="admin" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<AdminTrash />} />
+      </Route>
+    </Routes>
+  );
+}
+
+function AppShell() {
+  const location = useLocation();
+  const [isLoading, setIsLoading] = useState(true);
+  const firstLoad = useRef(true);
+
+  useEffect(() => {
+    setIsLoading(true);
+    const timeout = setTimeout(() => {
+      setIsLoading(false);
+      firstLoad.current = false;
+    }, firstLoad.current ? 950 : 380);
+    return () => clearTimeout(timeout);
+  }, [location.pathname, location.search, location.hash]);
+
+  return (
+    <>
+      {isLoading && <LoadingScreen message="Loading DocuDB..." />}
+      <AppRoutes />
+    </>
+  );
+}
 
 function App() {
   return (
     <Router>
-      <Routes>
-        {/* Public Login */}
-        <Route path="/login" element={<Login />} />
-
-        {/* User Protected Routes */}
-        <Route
-          path="/"
-          element={
-            <ProtectedRoute allowedRole="user">
-              <Layout role="user" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<Home />} />{" "}
-        </Route>
-
-        <Route path="upload" element={<Upload />} />
-
-        <Route
-          path="/shared"
-          element={
-            <ProtectedRoute allowedRole="user">
-              <Layout role="user" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<Shared />} />
-        </Route>
-
-
-
-        <Route
-          path="/recent"
-          element={
-            <ProtectedRoute allowedRole="user">
-              <Layout role="user" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<Recent />} />
-        </Route>
-
-        <Route
-          path="/groups"
-          element={
-            <ProtectedRoute allowedRole="user">
-              <Layout role="user" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<MyGroups />} />
-        </Route>
-
-        <Route
-          path="/settings"
-          element={
-            <ProtectedRoute allowedRole="user">
-              <Layout role="user" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<Settings />} />
-        </Route>
-
-        <Route
-          path="/notifications"
-          element={
-            <ProtectedRoute allowedRole="user">
-              <Layout role="user" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<Notifications />} />
-        </Route>
-
-        <Route
-          path="/help"
-          element={
-            <ProtectedRoute allowedRole="user">
-              <Layout role="user" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<Help />} />
-        </Route>
-
-        <Route
-          path="/forms"
-          element={
-            <ProtectedRoute allowedRole="user">
-              <Layout role="user" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<FormsPage />} />
-        </Route>
-
-        <Route
-          path="/editor/:id"
-          element={
-            <ProtectedRoute allowedRole="user">
-              <Layout role="user" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<EditorPage />} />
-        </Route>
-
-        {/* Admin Protected Routes */}
-        <Route
-          path="/admin"
-          element={
-            <ProtectedRoute allowedRole="admin">
-              <Layout role="admin" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<AdminHome />} />
-        </Route>
-
-        <Route
-          path="/admin/manageusers"
-          element={
-            <ProtectedRoute allowedRole="admin">
-              <Layout role="admin" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<ManageUsers />} />
-        </Route>
-        <Route
-          path="/admin/systemlogs"
-          element={
-            <ProtectedRoute allowedRole="admin">
-              <Layout role="admin" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<SystemLogs />} />
-        </Route>
-        <Route
-          path="/admin/groups"
-          element={
-            <ProtectedRoute allowedRole="admin">
-              <Layout role="admin" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<ManageGroups />} />
-        </Route>
-        <Route
-          path="/admin/trash"
-          element={
-            <ProtectedRoute allowedRole="admin">
-              <Layout role="admin" />
-            </ProtectedRoute>
-          }
-        >
-          <Route index element={<AdminTrash />} />
-        </Route>
-      </Routes>
+      <AppShell />
     </Router>
   );
 }

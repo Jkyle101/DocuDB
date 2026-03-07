@@ -1,32 +1,44 @@
-/* Clean Admin Sidebar Styles */
+.app-sidebar-shell {
+  width: 250px;
+  height: 100vh;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-soft);
+}
+
+.sidebar-header-block {
+  background: linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-soft) 100%);
+}
+
 .sidebar-admin-clean {
-  transition: all 0.3s ease;
+  transition: all 0.24s ease;
+  background: var(--bg-surface);
 }
 
 .sidebar-admin-clean .nav-link {
   transition: all 0.2s ease;
-  border-radius: 6px;
-  margin-bottom: 2px;
+  border-radius: 11px;
+  margin-bottom: 4px;
   background-color: transparent;
+  color: var(--text-strong);
+  font-weight: 600;
 }
 
 .sidebar-admin-clean .nav-link:hover {
-  background-color: rgba(0, 123, 255, 0.1);
-  color: #0056b3;
+  background: linear-gradient(90deg, var(--brand-soft) 0%, #eff7ff 100%);
+  color: var(--brand-strong);
   text-decoration: none;
+  transform: translateX(2px);
 }
 
 .sidebar-admin-clean .nav-link.active {
-  background-color: #007bff !important;
-  color: white !important;
-  box-shadow: 0 2px 4px rgba(0,123,255,0.2);
+  background: linear-gradient(90deg, #2563eb 0%, #1d4ed8 100%) !important;
+  color: #ffffff !important;
+  box-shadow: 0 7px 16px rgba(37, 99, 235, 0.3);
 }
 
-/* Reset focus, active, and visited states to prevent blue highlight from sticking */
 .sidebar-admin-clean .nav-link:focus {
   box-shadow: none;
   outline: none;
-  background-color: transparent;
 }
 
 .sidebar-admin-clean .nav-link:active {
@@ -36,25 +48,23 @@
 }
 
 .sidebar-admin-clean .nav-link:visited {
-  background-color: transparent;
-  color: #212529;
+  color: inherit;
 }
 
-/* Ensure the active state is properly maintained based on React Router's isActive */
 .sidebar-admin-clean .nav-link.active:focus,
 .sidebar-admin-clean .nav-link.active:active,
 .sidebar-admin-clean .nav-link.active:visited {
-  background-color: #007bff !important;
-  color: white !important;
-  box-shadow: 0 2px 4px rgba(0,123,255,0.2);
+  color: #ffffff !important;
 }
 
-/* Remove Bootstrap's default button active state override */
 .sidebar-admin-clean .nav-link.btn:active {
   background-color: transparent;
 }
 
-/* Mobile responsiveness */
+.sidebar-admin-clean .text-muted {
+  color: var(--text-muted) !important;
+}
+
 @media (max-width: 991.98px) {
   .sidebar-admin-clean {
     width: 100% !important;
@@ -62,39 +72,37 @@
     top: 0;
     left: 0;
     z-index: 1050;
-    box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+    box-shadow: 14px 0 28px rgba(2, 6, 23, 0.24);
   }
 }
 
-/* Custom scrollbar */
 .sidebar-admin-clean::-webkit-scrollbar {
-  width: 6px;
+  width: 7px;
 }
 
 .sidebar-admin-clean::-webkit-scrollbar-track {
-  background: #f1f1f1;
+  background: var(--bg-soft);
 }
 
 .sidebar-admin-clean::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
-  border-radius: 3px;
+  background: #9db0c8;
+  border-radius: 999px;
 }
 
 .sidebar-admin-clean::-webkit-scrollbar-thumb:hover {
-  background: #a8a8a8;
+  background: #7f95b1;
 }
 
-/* Profile Picture Styles for Sidebar */
 .profile-picture-sidebar {
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   overflow: hidden;
-  border: 2px solid #e9ecef;
+  border: 2px solid color-mix(in srgb, var(--border-soft) 75%, #dbe5f2);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #f8f9fa;
+  background: var(--bg-soft);
 }
 
 .profile-picture-img {
@@ -104,12 +112,29 @@
 }
 
 .profile-picture-placeholder-sidebar {
-  color: #6c757d;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #007bff, #0056b3);
+  background: linear-gradient(135deg, #2563eb, #1e40af);
   color: white;
   width: 100%;
   height: 100%;
+}
+
+body.dark-mode .app-sidebar-shell {
+  background: var(--bg-surface);
+  border-right-color: var(--border-soft);
+}
+
+body.dark-mode .sidebar-header-block {
+  background: linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-soft) 100%);
+}
+
+body.dark-mode .sidebar-admin-clean .nav-link:not(.active) {
+  color: #cfe0f8;
+}
+
+body.dark-mode .sidebar-admin-clean .nav-link:hover {
+  background: #193254;
+  color: #e9f1ff;
 }
