@@ -9,10 +9,12 @@ export default function CreateFolderModal({ onClose, onCreated, parentFolder }) 
     e.preventDefault();
     try {
       const owner = localStorage.getItem("userId"); // match backend naming
+      const role = localStorage.getItem("role");
 
       const { data } = await axios.post(`${BACKEND_URL}/folders`, {
         name,
         owner,
+        role,
         parentFolder: parentFolder || null,
       });
 

@@ -1,66 +1,57 @@
-// src/components/Layout.jsx
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Outlet } from "react-router-dom";
 import SidebarUser from "./sidebaruser";
 import SidebarAdmin from "./sidebaradmin";
 import NavBar from "./navbar";
 import "./layout.css";
 
+function normalizeRole(value) {
+  const raw = String(value || "").toLowerCase();
+  if (raw === "admin") return "superadmin";
+  if (raw === "user") return "faculty";
+  if (["program_chair", "department_chair", "program_head"].includes(raw)) return "dept_chair";
+  if (["qa_officer", "quality_assurance_admin", "copc_reviewer"].includes(raw)) return "qa_admin";
+  if (raw === "reviewer") return "evaluator";
+  return raw;
+}
+
 function Layout({ role }) {
   const [searchResults, setSearchResults] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
 
+  const activeRole = useMemo(
+    () => normalizeRole(localStorage.getItem("role") || role),
+    [role]
+  );
+
   useEffect(() => {
     const handleResize = () => {
       const mobile = window.innerWidth < 992;
       setIsMobile(mobile);
-      // Close sidebar on mobile when resizing to desktop
-      if (!mobile) {
-        setIsSidebarOpen(false);
-      }
+      if (!mobile) setIsSidebarOpen(false);
     };
-
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  const toggleSidebar = () => {
-    setIsSidebarOpen(!isSidebarOpen);
-  };
-
-  // Close sidebar when clicking outside on mobile
+  const toggleSidebar = () => setIsSidebarOpen((prev) => !prev);
   const handleOverlayClick = () => {
-    if (isMobile) {
-      setIsSidebarOpen(false);
-    }
+    if (isMobile) setIsSidebarOpen(false);
   };
 
   return (
     <div className="layout d-flex flex-column vh-100">
-      {/* Navbar at the top */}
-      <NavBar 
-        onSearch={setSearchResults} 
-        toggleSidebar={toggleSidebar}
-        isSidebarOpen={isSidebarOpen}
-      />
-
-      {/* Main content area (sidebar + page content) */}
+      <NavBar onSearch={setSearchResults} toggleSidebar={toggleSidebar} isSidebarOpen={isSidebarOpen} />
       <div className="d-flex flex-grow-1 overflow-hidden">
-        {/* Mobile overlay */}
-        {isSidebarOpen && isMobile && (
-          <div 
-            className="mobile-overlay"
-            onClick={handleOverlayClick}
-          ></div>
-        )}
-
-        {/* Sidebar (switches by role) */}
-        <div className={`sidebar-wrapper ${isSidebarOpen ? 'sidebar-open' : ''}`}>
-          {role === "admin" ? <SidebarAdmin onClose={handleOverlayClick} /> : <SidebarUser onClose={handleOverlayClick} />}
+        {isSidebarOpen && isMobile && <div className="mobile-overlay" onClick={handleOverlayClick} />}
+        <div className={`sidebar-wrapper ${isSidebarOpen ? "sidebar-open" : ""}`}>
+          {activeRole === "superadmin" ? (
+            <SidebarAdmin onClose={handleOverlayClick} />
+          ) : (
+            <SidebarUser onClose={handleOverlayClick} />
+          )}
         </div>
-
-        {/* Page Content */}
         <main className="content-area flex-grow-1 p-4 overflow-auto">
           <Outlet context={{ searchResults }} />
         </main>
@@ -70,3 +61,4 @@ function Layout({ role }) {
 }
 
 export default Layout;
+

@@ -1,16 +1,18 @@
-import React, { useState, useEffect, useRef } from "react";
+﻿import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
 
 
 export default function ShareModal({ onClose, target }) {
   const [emails, setEmails] = useState(""); // comma separated emails
-  const [permission, setPermission] = useState("read");
+  const [permission, setPermission] = useState("viewer");
   const [allUsers, setAllUsers] = useState([]);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const inputRef = useRef(null);
   const suggestionsRef = useRef(null);
+  const userId = localStorage.getItem("userId");
+  const role = localStorage.getItem("role") || "faculty";
 
   // Fetch all users when modal opens
   useEffect(() => {
@@ -84,13 +86,15 @@ export default function ShareModal({ onClose, target }) {
 
   const submit = async () => {
     try {
-      // backend will resolve emails → userIds
+      // backend will resolve emails â†’ userIds
       const body = {
         emails: emails
           .split(",")
           .map((s) => s.trim())
           .filter(Boolean),
         permission,
+        userId,
+        role,
       };
       if (target.type === "file") {
         await axios.patch(`${BACKEND_URL}/files/${target.item._id}/share`, body);
@@ -148,8 +152,8 @@ export default function ShareModal({ onClose, target }) {
               value={permission}
               onChange={(e) => setPermission(e.target.value)}
             >
-              <option value="read">Read</option>
-              <option value="write">Write</option>
+              <option value="editor">Editor (edit, view, download, comment)</option>
+              <option value="viewer">Viewer (view, download, comment)</option>
             </select>
           </div>
           <div className="modal-footer">
@@ -165,3 +169,4 @@ export default function ShareModal({ onClose, target }) {
     </div>
   );
 }
+

@@ -4,6 +4,11 @@
   gap: 1rem;
 }
 
+.office-forms-page .forms-workspace.forms-workspace-compact {
+  grid-template-columns: 240px 1fr;
+  gap: 0.75rem;
+}
+
 .office-forms-page .forms-sidebar,
 .office-forms-page .forms-main {
   min-height: 70vh;

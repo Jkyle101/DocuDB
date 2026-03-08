@@ -20,7 +20,8 @@ const notificationSchema = new mongoose.Schema({
       "CREATE_FOLDER",
       "ACTION_REQUIRED",
       "REVIEW_REQUIRED",
-      "DUPLICATE_ALERT"
+      "DUPLICATE_ALERT",
+      "DOCUMENT_REQUEST"
     ],
     required: true
   },

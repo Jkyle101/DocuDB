@@ -75,6 +75,7 @@ function Notifications() {
       case "ACTION_REQUIRED":
       case "REVIEW_REQUIRED":
       case "DUPLICATE_ALERT":
+      case "DOCUMENT_REQUEST":
         return <FaExclamationTriangle className="text-warning" />;
       default:
         return <FaBell className="text-muted" />;
@@ -109,6 +110,8 @@ function Notifications() {
         return `Review required: ${details}`;
       case "DUPLICATE_ALERT":
         return `Duplicate alert: ${details}`;
+      case "DOCUMENT_REQUEST":
+        return `Document request: ${details || notification.message}`;
       default:
         return details || "You have a new notification.";
     }

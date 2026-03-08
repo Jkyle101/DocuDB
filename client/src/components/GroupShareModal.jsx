@@ -6,7 +6,7 @@ export default function GroupShareModal({ onClose, group, onShared }) {
   const [files, setFiles] = useState([]);
   const [folders, setFolders] = useState([]);
   const [selectedItems, setSelectedItems] = useState([]);
-  const [permission, setPermission] = useState("read");
+  const [permission, setPermission] = useState("viewer");
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState(false);
   const userId = localStorage.getItem("userId");
@@ -128,8 +128,8 @@ export default function GroupShareModal({ onClose, group, onShared }) {
                 value={permission}
                 onChange={(e) => setPermission(e.target.value)}
               >
-                <option value="read">Read Only</option>
-                <option value="write">Read & Write</option>
+                <option value="editor">Editor (edit, view, download, comment)</option>
+                <option value="viewer">Viewer (view, download, comment)</option>
               </select>
             </div>
 

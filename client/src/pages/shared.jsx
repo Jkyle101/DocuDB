@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+﻿import React, { useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -16,16 +16,13 @@ import {
   FaList,
   FaEye,
   FaCloudDownloadAlt,
-  FaHistory,
   FaComment,
   FaUsers,
-  FaTrash,
   FaEdit,
   FaDownload,
 } from "react-icons/fa";
 
 import ShareModal from "../components/ShareModal";
-import VersionModal from "../components/VersionModal";
 import CommentsModal from "../components/CommentsModal";
 import RenameModal from "../components/RenameModal";
 import "../pages/home.css";
@@ -50,7 +47,6 @@ export default function Shared() {
 
   // Modals
   const [shareTarget, setShareTarget] = useState(null);
-  const [versionTarget, setVersionTarget] = useState(null);
   const [commentsTarget, setCommentsTarget] = useState(null);
   const [renameTarget, setRenameTarget] = useState(null);
   const [view, setView] = useState("grid");
@@ -146,12 +142,34 @@ export default function Shared() {
   };
 
   // Check if user has write permission
-  const hasWritePermission = (item) => {
+  const normalizePermission = (permission) => {
+    if (permission === "owner") return "owner";
+    if (permission === "editor" || permission === "write") return "editor";
+    return "viewer";
+  };
+
+  const canDownload = (item) => {
+    const normalized = normalizePermission(item.permissions || item.permission);
+    return normalized === "owner" || normalized === "editor" || normalized === "viewer";
+  };
+
+  const isEditableFile = (file) => {
+    const name = (file?.originalName || "").toLowerCase();
+    const editableExt = [".txt", ".md", ".json", ".xml", ".csv", ".docx", ".xlsx", ".xls", ".pdf", ".pptx", ".ppt"];
+    return (
+      file?.mimetype?.startsWith("text/") ||
+      file?.mimetype === "application/json" ||
+      file?.mimetype === "application/xml" ||
+      editableExt.some((ext) => name.endsWith(ext))
+    );
+  };
+
+  const hasEditPermission = (item) => {
     if (activeTab === "personal") {
-      return item.permissions === "write";
+      return normalizePermission(item.permissions) === "editor";
     } else {
       // For group shares, owners always have write permission
-      return isOwner(item) || item.permission === "write" || item.isGroupLeader;
+      return isOwner(item) || normalizePermission(item.permission) === "editor" || item.isGroupLeader;
     }
   };
 
@@ -161,7 +179,7 @@ export default function Shared() {
 
     try {
       await axios.delete(`${BACKEND_URL}/files/${file._id}`, {
-        params: { userId, role: localStorage.getItem("role") || "user" }
+        params: { userId, role: localStorage.getItem("role") || "faculty" }
       });
       fetchGroupShared(); // Refresh group shares
     } catch (err) {
@@ -304,40 +322,29 @@ export default function Shared() {
                     {/* Action Buttons - Primary Actions */}
                     <div className="d-flex justify-content-center gap-1 mb-2">
                       <button
+                        className="btn btn-sm btn-outline-secondary"
+                        onClick={() => openFolder(folder)}
+                        title="Open"
+                      >
+                        <FaEye />
+                      </button>
+                      <button
                         className="btn btn-sm btn-outline-primary"
                         onClick={() => setCommentsTarget({ type: "folder", item: folder })}
                         title="Comments"
                       >
                         <FaComment />
                       </button>
-                      <button
-                        className="btn btn-sm btn-outline-info"
-                        onClick={() => setVersionTarget({ type: "folder", item: folder })}
-                        title="Version History"
-                      >
-                        <FaHistory />
-                      </button>
-                    </div>
-
-                    {/* Owner Actions - Secondary Row */}
-                    {hasWritePermission(folder) && activeTab === "groups" && isOwner(folder) && (
-                      <div className="d-flex justify-content-center gap-1">
+                      {hasEditPermission(folder) && (
                         <button
                           className="btn btn-sm btn-outline-secondary"
                           onClick={() => setRenameTarget({ type: "folder", item: folder })}
-                          title="Rename"
+                          title="Edit Folder Name"
                         >
                           <FaEdit />
                         </button>
-                        <button
-                          className="btn btn-sm btn-outline-danger"
-                          onClick={() => handleDeleteFolder(folder)}
-                          title="Delete"
-                        >
-                          <FaTrash />
-                        </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -368,14 +375,14 @@ export default function Shared() {
                     <div className="d-flex justify-content-center gap-1 mb-2">
                       <a
                         className="btn btn-sm btn-outline-primary"
-                        href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${localStorage.getItem("role") || "user"}`}
+                        href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${localStorage.getItem("role") || "faculty"}`}
                         target="_blank"
                         rel="noreferrer"
                         title="View"
                       >
                         <FaEye />
                       </a>
-                      {hasWritePermission(file) && (
+                      {canDownload(file) && (
                         <a
                           className="btn btn-sm btn-outline-success"
                           href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
@@ -391,35 +398,15 @@ export default function Shared() {
                       >
                         <FaComment />
                       </button>
-                    </div>
-
-                    {/* Secondary Actions Row */}
-                    <div className="d-flex justify-content-center gap-1">
-                      {activeTab === "groups" && isOwner(file) && (
-                        <>
-                          <button
-                            className="btn btn-sm btn-outline-secondary"
-                            onClick={() => setRenameTarget({ type: "file", item: file })}
-                            title="Rename"
-                          >
-                            <FaEdit />
-                          </button>
-                          <button
-                            className="btn btn-sm btn-outline-danger"
-                            onClick={() => handleDeleteFile(file)}
-                            title="Delete"
-                          >
-                            <FaTrash />
-                          </button>
-                        </>
+                      {hasEditPermission(file) && isEditableFile(file) && (
+                        <button
+                          className="btn btn-sm btn-outline-dark"
+                          onClick={() => (window.location.href = `/editor/${file._id}`)}
+                          title="Edit"
+                        >
+                          <FaEdit />
+                        </button>
                       )}
-                      <button
-                        className="btn btn-sm btn-outline-secondary"
-                        onClick={() => setVersionTarget({ type: "file", item: file })}
-                        title="Version History"
-                      >
-                        <FaHistory />
-                      </button>
                     </div>
                   </div>
                 </div>
@@ -464,7 +451,7 @@ export default function Shared() {
                       <td className="py-3">
                         <span className="badge bg-light text-dark">Folder</span>
                       </td>
-                      <td className="py-3 text-muted">{folder.ownerEmail || "—"}</td>
+                      <td className="py-3 text-muted">{folder.ownerEmail || "â€”"}</td>
                       {activeTab === "groups" && (
                         <td className="py-3">
                           <span className="badge bg-info">
@@ -476,36 +463,27 @@ export default function Shared() {
                       <td className="py-3 text-center">
                         <div className="d-flex justify-content-center gap-1 flex-wrap">
                           <button
+                            className="btn btn-sm btn-outline-secondary"
+                            onClick={() => openFolder(folder)}
+                            title="Open"
+                          >
+                            <FaEye />
+                          </button>
+                          <button
                             className="btn btn-sm btn-outline-primary"
                             onClick={() => setCommentsTarget({ type: "folder", item: folder })}
                             title="Comments"
                           >
                             <FaComment />
                           </button>
-                          <button
-                            className="btn btn-sm btn-outline-info"
-                            onClick={() => setVersionTarget({ type: "folder", item: folder })}
-                            title="Version History"
-                          >
-                            <FaHistory />
-                          </button>
-                          {hasWritePermission(folder) && activeTab === "groups" && isOwner(folder) && (
-                            <>
-                              <button
-                                className="btn btn-sm btn-outline-secondary"
-                                onClick={() => setRenameTarget({ type: "folder", item: folder })}
-                                title="Rename"
-                              >
-                                <FaEdit />
-                              </button>
-                              <button
-                                className="btn btn-sm btn-outline-danger"
-                                onClick={() => handleDeleteFolder(folder)}
-                                title="Delete"
-                              >
-                                <FaTrash />
-                              </button>
-                            </>
+                          {hasEditPermission(folder) && (
+                            <button
+                              className="btn btn-sm btn-outline-secondary"
+                              onClick={() => setRenameTarget({ type: "folder", item: folder })}
+                              title="Edit Folder Name"
+                            >
+                              <FaEdit />
+                            </button>
                           )}
                         </div>
                       </td>
@@ -534,7 +512,7 @@ export default function Shared() {
                           {file.mimetype?.split("/")[1]?.toUpperCase() || "FILE"}
                         </span>
                       </td>
-                      <td className="py-3 text-muted">{file.ownerEmail || "—"}</td>
+                      <td className="py-3 text-muted">{file.ownerEmail || "â€”"}</td>
                       {activeTab === "groups" && (
                         <td className="py-3">
                           <span className="badge bg-info">
@@ -547,14 +525,14 @@ export default function Shared() {
                         <div className="d-flex justify-content-center gap-1 flex-wrap">
                           <a
                             className="btn btn-sm btn-outline-primary"
-                            href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${localStorage.getItem("role") || "user"}`}
+                            href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${localStorage.getItem("role") || "faculty"}`}
                             target="_blank"
                             rel="noreferrer"
                             title="View"
                           >
                             <FaEye />
                           </a>
-                          {hasWritePermission(file) && (
+                          {canDownload(file) && (
                             <a
                               className="btn btn-sm btn-outline-success"
                               href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
@@ -570,30 +548,14 @@ export default function Shared() {
                           >
                             <FaComment />
                           </button>
-                          <button
-                            className="btn btn-sm btn-outline-secondary"
-                            onClick={() => setVersionTarget({ type: "file", item: file })}
-                            title="Version History"
-                          >
-                            <FaHistory />
-                          </button>
-                          {activeTab === "groups" && isOwner(file) && (
-                            <>
-                              <button
-                                className="btn btn-sm btn-outline-secondary"
-                                onClick={() => setRenameTarget({ type: "file", item: file })}
-                                title="Rename"
-                              >
-                                <FaEdit />
-                              </button>
-                              <button
-                                className="btn btn-sm btn-outline-danger"
-                                onClick={() => handleDeleteFile(file)}
-                                title="Delete"
-                              >
-                                <FaTrash />
-                              </button>
-                            </>
+                          {hasEditPermission(file) && isEditableFile(file) && (
+                            <button
+                              className="btn btn-sm btn-outline-dark"
+                              onClick={() => (window.location.href = `/editor/${file._id}`)}
+                              title="Edit"
+                            >
+                              <FaEdit />
+                            </button>
                           )}
                         </div>
                       </td>
@@ -612,12 +574,6 @@ export default function Shared() {
           onClose={() => setShareTarget(null)}
           target={shareTarget}
         />
-      )}
-      {versionTarget && (
-        <>
-          <div className="modal-backdrop fade show"></div>
-          <VersionModal onClose={() => setVersionTarget(null)} target={versionTarget} />
-        </>
       )}
       {commentsTarget && (
         <>
@@ -642,3 +598,4 @@ export default function Shared() {
     </div>
   );
 }
+

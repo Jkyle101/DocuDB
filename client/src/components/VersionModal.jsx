@@ -16,14 +16,14 @@ export default function VersionModal({ onClose, target, onRestored }) {
   const fileInputRef = useRef(null);
 
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "user";
+  const role = localStorage.getItem("role") || "faculty";
 
   const ownerId =
     target?.item?.owner?._id?.toString?.() ||
     target?.item?.owner?.toString?.() ||
     target?.item?.userId;
   const isOwner = ownerId && userId && ownerId.toString() === userId.toString();
-  const canRestore = isOwner || role === "admin" || role === "superadmin";
+  const canRestore = isOwner || role === "superadmin" || role === "qa_admin" || role === "dept_chair";
   const restoreArmed = confirmText.trim().toUpperCase() === "RESTORE";
   const compareEnabled = target?.type === "file";
 

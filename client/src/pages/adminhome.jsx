@@ -24,18 +24,21 @@ import {
 import { BACKEND_URL } from "../config";
 
 export default function AdminHome() {
-  const role = localStorage.getItem("role") || "admin"; // admin or superadmin
+  const role = localStorage.getItem("role") || "superadmin"; // admin or superadmin
   const userId = localStorage.getItem("userId");
   const [currentFolderId, setCurrentFolderId] = useState(null);
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
   const [breadcrumbs, setBreadcrumbs] = useState([]);
   const [view, setView] = useState("grid");
+  const [dragPayload, setDragPayload] = useState(null);
+  const [activeDropFolderId, setActiveDropFolderId] = useState("");
+  const [movingByDrop, setMovingByDrop] = useState(false);
 
   // Get search results from navbar
   const { searchResults } = useOutletContext();
 
-  // ✅ Fetch folders + files + breadcrumbs
+  // âœ… Fetch folders + files + breadcrumbs
   const fetchFolderContents = useCallback(async (folderId) => {
     try {
       const params = { role, parentFolder: folderId || "" };
@@ -57,6 +60,7 @@ export default function AdminHome() {
   useEffect(() => {
     fetchFolderContents(currentFolderId);
   }, [fetchFolderContents, currentFolderId]);
+
 
   // File icons
   const iconByMime = useMemo(
@@ -104,17 +108,76 @@ export default function AdminHome() {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
-  // ✅ Use search results if available, otherwise show all files/folders
+  // âœ… Use search results if available, otherwise show all files/folders
   // Search results from admin search include files, folders, users, groups, logs
   // Filter only files and folders for display
   const searchFiles = searchResults?.filter(item => item.type === 'file') || [];
   const searchFolders = searchResults?.filter(item => item.type === 'folder') || [];
+  const isSearchMode = Array.isArray(searchResults);
   
   const visibleFolders = searchResults ? searchFolders : folders;
   const visibleFiles = searchResults ? searchFiles : files;
 
   // Show search indicator when searching
   const isSearching = searchResults && searchResults.length > 0;
+
+  const canDragItem = () => !isSearchMode;
+
+  const moveDraggedItem = async (payload, destinationFolderId) => {
+    if (!payload?.id || !destinationFolderId) return;
+    if (String(payload.fromFolderId || "") === String(destinationFolderId)) return;
+
+    const endpoint = payload.type === "file"
+      ? `${BACKEND_URL}/files/${payload.id}/move`
+      : `${BACKEND_URL}/folders/${payload.id}/move`;
+
+    await axios.patch(endpoint, {
+      newFolderId: destinationFolderId,
+      userId,
+      role,
+    });
+
+    await fetchFolderContents(currentFolderId);
+  };
+
+  const handleDragStart = (event, payload) => {
+    if (!payload || !canDragItem()) return;
+    setDragPayload(payload);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `${payload.type}:${payload.id}`);
+  };
+
+  const handleDragEnd = () => {
+    setDragPayload(null);
+    setActiveDropFolderId("");
+  };
+
+  const handleFolderDragOver = (event, folderId) => {
+    if (!dragPayload || !folderId) return;
+    if (dragPayload.type === "folder" && String(dragPayload.id) === String(folderId)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setActiveDropFolderId(String(folderId));
+  };
+
+  const handleFolderDrop = async (event, folderId) => {
+    event.preventDefault();
+    if (!dragPayload || !folderId) return;
+    if (dragPayload.type === "folder" && String(dragPayload.id) === String(folderId)) {
+      setActiveDropFolderId("");
+      return;
+    }
+    setMovingByDrop(true);
+    try {
+      await moveDraggedItem(dragPayload, folderId);
+    } catch (err) {
+      alert(err?.response?.data?.error || "Failed to move item");
+    } finally {
+      setMovingByDrop(false);
+      setDragPayload(null);
+      setActiveDropFolderId("");
+    }
+  };
 
   return (
     <div className="container-fluid py-3 file-manager-container">
@@ -187,16 +250,43 @@ export default function AdminHome() {
       {/* GRID VIEW */}
       {view === "grid" ? (
         <div className="row g-4">
+          {movingByDrop && (
+            <div className="col-12">
+              <div className="alert alert-info py-2 mb-0">Moving item...</div>
+            </div>
+          )}
           {/* Folders */}
           {visibleFolders.map((folder) => (
             <div
               key={folder._id}
               className="col-6 col-sm-4 col-md-3 col-xl-2"
+              draggable={canDragItem()}
+              onDragStart={(e) => handleDragStart(e, {
+                type: "folder",
+                id: folder._id,
+                fromFolderId: currentFolderId || "",
+              })}
+              onDragEnd={handleDragEnd}
               onDoubleClick={() => goInto(folder._id)}
             >
-              <div className="card folder-card h-100 text-center p-3">
+              <div
+                className="card folder-card h-100 text-center p-3"
+                onDragOver={(e) => handleFolderDragOver(e, folder._id)}
+                onDrop={(e) => handleFolderDrop(e, folder._id)}
+                onDragLeave={() => {
+                  if (activeDropFolderId === String(folder._id)) setActiveDropFolderId("");
+                }}
+                style={activeDropFolderId === String(folder._id)
+                  ? { border: "2px dashed #0d6efd", background: "rgba(13,110,253,0.08)" }
+                  : undefined}
+              >
                 <FaFolder size={42} className="text-warning mb-3" />
                 <h6 className="card-title text-truncate">{folder.name}</h6>
+                {folder.isPredefinedRoot && (
+                  <div className="mb-1">
+                    <span className="badge bg-primary">Predefined Folder Tree</span>
+                  </div>
+                )}
                 <p className="text-muted small">Owner: {folder.owner?.email}</p>
                 
               </div>
@@ -205,7 +295,17 @@ export default function AdminHome() {
 
           {/* Files */}
           {visibleFiles.map((file) => (
-            <div key={file._id} className="col-6 col-sm-4 col-md-3 col-xl-2">
+            <div
+              key={file._id}
+              className="col-6 col-sm-4 col-md-3 col-xl-2"
+              draggable={canDragItem()}
+              onDragStart={(e) => handleDragStart(e, {
+                type: "file",
+                id: file._id,
+                fromFolderId: currentFolderId || "",
+              })}
+              onDragEnd={handleDragEnd}
+            >
               <div className="card file-card h-100 text-center p-3">
                 <div className="mb-3">{iconByMime(file.mimetype)}</div>
                 <h6 className="card-title text-truncate">{file.originalName}</h6>
@@ -248,14 +348,33 @@ export default function AdminHome() {
             </thead>
             <tbody>
               {visibleFolders.map((folder) => (
-                <tr key={folder._id} onDoubleClick={() => goInto(folder._id)}>
+                <tr
+                  key={folder._id}
+                  draggable={canDragItem()}
+                  onDragStart={(e) => handleDragStart(e, {
+                    type: "folder",
+                    id: folder._id,
+                    fromFolderId: currentFolderId || "",
+                  })}
+                  onDragEnd={handleDragEnd}
+                  onDragOver={(e) => handleFolderDragOver(e, folder._id)}
+                  onDrop={(e) => handleFolderDrop(e, folder._id)}
+                  onDragLeave={() => {
+                    if (activeDropFolderId === String(folder._id)) setActiveDropFolderId("");
+                  }}
+                  onDoubleClick={() => goInto(folder._id)}
+                  style={activeDropFolderId === String(folder._id) ? { outline: "2px dashed #0d6efd", outlineOffset: "-2px" } : undefined}
+                >
                   <td className="d-flex align-items-center">
                     <FaFolder className="text-warning me-2" />
                     {folder.name}
+                    {folder.isPredefinedRoot && (
+                      <span className="badge bg-primary ms-2">Predefined Folder Tree</span>
+                    )}
                   </td>
                   <td>Folder</td>
                   <td>{folder.owner?.email}</td>
-                  <td>—</td>
+                  <td>â€”</td>
                   <td>{new Date(folder.createdAt).toLocaleDateString()}</td>
                   <td className="text-center">
                     <button
@@ -268,7 +387,16 @@ export default function AdminHome() {
                 </tr>
               ))}
               {visibleFiles.map((file) => (
-                <tr key={file._id}>
+                <tr
+                  key={file._id}
+                  draggable={canDragItem()}
+                  onDragStart={(e) => handleDragStart(e, {
+                    type: "file",
+                    id: file._id,
+                    fromFolderId: currentFolderId || "",
+                  })}
+                  onDragEnd={handleDragEnd}
+                >
                   <td className="d-flex align-items-center">
                     {iconByMime(file.mimetype)} {file.originalName}
                   </td>
@@ -309,6 +437,8 @@ export default function AdminHome() {
           <h5 className="text-muted">No files or folders found</h5>
         </div>
       )}
+
     </div>
   );
 }
+

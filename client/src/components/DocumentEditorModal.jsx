@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
 
@@ -10,7 +10,7 @@ export default function DocumentEditorModal({ file, onClose, onSaved }) {
   const [kind, setKind] = useState("text");
 
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "user";
+  const role = localStorage.getItem("role") || "faculty";
 
   const extension = useMemo(() => {
     const name = (file?.originalName || "").toLowerCase();
@@ -126,3 +126,4 @@ export default function DocumentEditorModal({ file, onClose, onSaved }) {
     </div>
   );
 }
+

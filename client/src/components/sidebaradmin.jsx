@@ -3,15 +3,15 @@ import React, { useState, useEffect } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import {
   FaUsers,
-  FaCog,
   FaDatabase,
-  FaClock,
   FaUser,
   FaFile,
   FaTimes,
   FaTrash,
   FaUserFriends,
-  FaSignOutAlt,
+  FaFolder,
+  FaListUl,
+  FaArchive,
 } from "react-icons/fa";
 import Upload from "../pages/upload";
 import "bootstrap/dist/css/bootstrap.min.css";
@@ -25,7 +25,7 @@ function SidebarSuperAdmin({ onClose }) {
 
   useEffect(() => {
     const email = localStorage.getItem("email") || "admin@example.com";
-    const role = localStorage.getItem("role") || "admin";
+    const role = localStorage.getItem("role") || "superadmin";
     setUserEmail(email);
     setUserRole(role);
 
@@ -119,6 +119,42 @@ function SidebarSuperAdmin({ onClose }) {
                   Groups
                 </NavLink>
               </li>
+              <li className="nav-item">
+                <NavLink
+                  to="/admin/tasks"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaListUl className="me-2" size={16} />
+                  Task Management
+                </NavLink>
+              </li>
+              <li className="nav-item">
+                <NavLink
+                  to="/copc-workflow"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaListUl className="me-2" size={16} />
+                  COPC Workflow
+                </NavLink>
+              </li>
+              <li className="nav-item">
+                <NavLink
+                  to="/admin/copc-programs"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaArchive className="me-2" size={16} />
+                  COPC Program Management
+                </NavLink>
+              </li>
             </ul>
           </div>
 
@@ -130,14 +166,26 @@ function SidebarSuperAdmin({ onClose }) {
             <ul className="nav nav-pills flex-column gap-1">
               <li className="nav-item">
                 <NavLink
-                  to="/admin/"
+                  to="/admin/drive"
                   className={({ isActive }) =>
                     `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
                   }
                   onClick={handleLinkClick}
                 >
                   <FaFile className="me-2" size={16} />
-                  Documents
+                  Admin Drive
+                </NavLink>
+              </li>
+              <li className="nav-item">
+                <NavLink
+                  to="/admin"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaFolder className="me-2" size={16} />
+                  Admin Workspace
                 </NavLink>
               </li>
 
@@ -202,3 +250,4 @@ function SidebarSuperAdmin({ onClose }) {
 }
 
 export default SidebarSuperAdmin;
+

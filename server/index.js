@@ -1,4 +1,4 @@
-﻿const path = require("path");
+const path = require("path");
 const fs = require("fs");
 const crypto = require("crypto");
 require("dotenv").config({ path: path.join(__dirname, '.env') });
@@ -7,6 +7,7 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const multer = require("multer");
+const archiver = require("archiver");
 
 const UserModel = require("./models/users");
 const File = require("./models/file");
@@ -61,13 +62,487 @@ async function isGroupLeaderForFile(userId, fileId) {
   return !!group;
 }
 
+async function isAdminContext(role, userId) {
+  if (String(role || "").toLowerCase() === "superadmin") return true;
+  if (!userId) return false;
+  try {
+    const user = await UserModel.findById(userId).select("role");
+    return String(user?.role || "").toLowerCase() === "superadmin";
+  } catch {
+    return false;
+  }
+}
+
+const PROGRAM_CHAIR_ROLES = new Set(["dept_chair"]);
+const QA_REVIEW_ROLES = new Set(["qa_admin"]);
+const COMPLIANCE_VIEW_ROLES = new Set(["superadmin", "qa_admin", "dept_chair", "faculty", "evaluator"]);
+const READ_ONLY_REVIEWER_ROLES = new Set(["evaluator"]);
+
+function normalizeRole(role) {
+  const value = String(role || "").toLowerCase();
+  if (value === "admin") return "superadmin";
+  if (value === "user") return "faculty";
+  if (["program_chair", "department_chair", "program_head"].includes(value)) return "dept_chair";
+  if (["qa_officer", "quality_assurance_admin", "copc_reviewer"].includes(value)) return "qa_admin";
+  if (value === "reviewer") return "evaluator";
+  return value;
+}
+
+async function resolveActorRole(userId, claimedRole) {
+  const claimed = normalizeRole(claimedRole);
+  if (!userId) return claimed;
+  try {
+    const user = await UserModel.findById(userId).select("role");
+    if (user?.role) return normalizeRole(user.role);
+  } catch (err) {
+    console.error("resolveActorRole error:", err?.message || err);
+  }
+  return claimed;
+}
+
+function isUserAssignedTo(userId, assigned = []) {
+  const target = String(userId || "");
+  if (!target) return false;
+  return (assigned || []).some((entry) => {
+    const value = entry?._id?.toString?.() || entry?.toString?.();
+    return String(value || "") === target;
+  });
+}
+
+function canUploadDocuments(role) {
+  return ["superadmin", "qa_admin", "dept_chair", "faculty"].includes(normalizeRole(role));
+}
+
+function canEditAnyDocuments(role) {
+  return ["superadmin", "qa_admin", "dept_chair"].includes(normalizeRole(role));
+}
+
+function canDeleteDocuments(role) {
+  return ["superadmin", "qa_admin"].includes(normalizeRole(role));
+}
+
+function canApproveDocuments(role) {
+  return ["superadmin", "qa_admin", "dept_chair"].includes(normalizeRole(role));
+}
+
+function canGenerateReports(role) {
+  return ["superadmin", "qa_admin", "dept_chair", "evaluator"].includes(normalizeRole(role));
+}
+
+function canManageUsers(role) {
+  return normalizeRole(role) === "superadmin";
+}
+
+function hasGlobalViewAccess(role) {
+  return normalizeRole(role) === "superadmin";
+}
+
+function isProgramChairRole(role) {
+  return PROGRAM_CHAIR_ROLES.has(normalizeRole(role));
+}
+
+function isQaReviewRole(role) {
+  return QA_REVIEW_ROLES.has(normalizeRole(role));
+}
+
+function canViewCompliance(role) {
+  return COMPLIANCE_VIEW_ROLES.has(normalizeRole(role));
+}
+
+function isReadOnlyReviewerRole(role) {
+  return READ_ONLY_REVIEWER_ROLES.has(normalizeRole(role));
+}
+
+function normalizeTaskNode(task = {}) {
+  const allowedStatuses = new Set(["not_started", "in_progress", "complete"]);
+  const status = allowedStatuses.has(task.status) ? task.status : "not_started";
+  const percentage = Number.isFinite(Number(task.percentage))
+    ? Math.max(0, Math.min(100, Number(task.percentage)))
+    : status === "complete"
+      ? 100
+      : status === "in_progress"
+        ? 50
+        : 0;
+
+  return {
+    _id: task._id,
+    title: String(task.title || "").trim() || "Untitled Task",
+    description: String(task.description || ""),
+    percentage,
+    status,
+    scope: String(task.scope || ""),
+    checks: Array.isArray(task.checks) ? task.checks.filter(Boolean).map(String) : [],
+    assignedUploaders: Array.isArray(task.assignedUploaders) ? task.assignedUploaders : [],
+    assignedProgramChairs: Array.isArray(task.assignedProgramChairs) ? task.assignedProgramChairs : [],
+    assignedQaOfficers: Array.isArray(task.assignedQaOfficers) ? task.assignedQaOfficers : [],
+    children: Array.isArray(task.children) ? task.children.map(normalizeTaskNode) : [],
+  };
+}
+
+function computeTaskProgress(tasks = []) {
+  const normalized = (tasks || []).map(normalizeTaskNode);
+  let nodes = 0;
+  let total = 0;
+  const walk = (arr) => {
+    for (const task of arr || []) {
+      nodes += 1;
+      total += Number(task.percentage || 0);
+      walk(task.children || []);
+    }
+  };
+  walk(normalized);
+  const progress = nodes ? Number((total / nodes).toFixed(2)) : 0;
+  return { normalized, progress, totalNodes: nodes };
+}
+
+function findTaskById(tasks = [], taskId) {
+  for (const task of tasks || []) {
+    if (task?._id?.toString?.() === taskId?.toString?.()) return task;
+    const found = findTaskById(task.children || [], taskId);
+    if (found) return found;
+  }
+  return null;
+}
+
+function removeTaskById(tasks = [], taskId) {
+  for (let i = 0; i < (tasks || []).length; i += 1) {
+    const task = tasks[i];
+    if (task?._id?.toString?.() === taskId?.toString?.()) {
+      tasks.splice(i, 1);
+      return task;
+    }
+    const removed = removeTaskById(task.children || [], taskId);
+    if (removed) return removed;
+  }
+  return null;
+}
+
+function buildFileWorkflowFromFolder(folder) {
+  const chairAssignments = folder?.folderAssignments?.programChairs || [];
+  const qaAssignments = folder?.folderAssignments?.qaOfficers || [];
+  const requiresReview = chairAssignments.length > 0 || qaAssignments.length > 0;
+  const chairRequired = chairAssignments.length > 0;
+  const qaRequired = qaAssignments.length > 0;
+
+  return {
+    requiresReview,
+    status: requiresReview
+      ? (chairRequired ? "pending_program_chair" : "pending_qa")
+      : "approved",
+    assignedProgramChairs: chairAssignments,
+    assignedQaOfficers: qaAssignments,
+    programChair: {
+      status: chairRequired ? "pending" : "not_required",
+      reviewedBy: null,
+      reviewedAt: null,
+      notes: "",
+    },
+    qaOfficer: {
+      status: qaRequired ? "pending" : "not_required",
+      reviewedBy: null,
+      reviewedAt: null,
+      notes: "",
+    },
+  };
+}
+
+function collectTaskAssignmentUserIds(tasks = [], key = "assignedUploaders", out = new Set()) {
+  for (const task of tasks || []) {
+    const ids = Array.isArray(task?.[key]) ? task[key] : [];
+    for (const id of ids) {
+      const raw = id?._id?.toString?.() || id?.toString?.();
+      if (raw) out.add(raw);
+    }
+    collectTaskAssignmentUserIds(task.children || [], key, out);
+  }
+  return out;
+}
+
+function collectFolderAssignmentUserIds(folder) {
+  const out = new Set();
+  if (!folder) return out;
+  const groups = [
+    folder?.folderAssignments?.uploaders || [],
+    folder?.folderAssignments?.programChairs || [],
+    folder?.folderAssignments?.qaOfficers || [],
+    folder?.folderAssignments?.evaluators || [],
+  ];
+  for (const group of groups) {
+    for (const entry of group || []) {
+      const id = entry?._id?.toString?.() || entry?.toString?.();
+      if (id) out.add(String(id));
+    }
+  }
+  collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedUploaders", out);
+  collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedProgramChairs", out);
+  collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedQaOfficers", out);
+  return out;
+}
+
+async function canUserAccessFolderByAssignment(folderId, userId, role, cache = new Map()) {
+  if (!folderId) return true;
+  const normalizedRole = normalizeRole(role);
+  if (normalizedRole === "superadmin") return true;
+  if (!userId) return false;
+
+  const key = String(folderId);
+  let folder = cache.get(key);
+  if (folder === undefined) {
+    folder = await Folder.findById(folderId).select(
+      "owner parentFolder sharedWith folderAssignments complianceTasks deletedAt"
+    );
+    cache.set(key, folder || null);
+  }
+  if (!folder || folder.deletedAt) return false;
+
+  const ownerId = folder.owner?._id?.toString?.() || folder.owner?.toString?.();
+  if (ownerId && ownerId === String(userId)) return true;
+
+  const assigned = collectFolderAssignmentUserIds(folder);
+  const hasAssignments = assigned.size > 0;
+  if (hasAssignments) {
+    // Explicit assignment on this folder grants access to this scope directly.
+    return assigned.has(String(userId));
+  }
+
+  const shared = (folder.sharedWith || []).some((entry) => {
+    const id = entry?._id?.toString?.() || entry?.toString?.();
+    return id === String(userId);
+  });
+  if (shared) {
+    return true;
+  }
+
+  // Inherit access from parent when this node has no explicit assignments/shares.
+  if (folder.parentFolder) {
+    return canUserAccessFolderByAssignment(folder.parentFolder, userId, role, cache);
+  }
+
+  return false;
+}
+
+function canUserAccessFolderDirect(folder, userId, role) {
+  const normalizedRole = normalizeRole(role);
+  if (normalizedRole === "superadmin") return true;
+  if (!folder || !userId) return false;
+
+  const ownerId = folder.owner?._id?.toString?.() || folder.owner?.toString?.();
+  if (ownerId && ownerId === String(userId)) return true;
+
+  const assigned = collectFolderAssignmentUserIds(folder);
+  if (assigned.size > 0) {
+    return assigned.has(String(userId));
+  }
+
+  return (folder.sharedWith || []).some((entry) => {
+    const id = entry?._id?.toString?.() || entry?.toString?.();
+    return id === String(userId);
+  });
+}
+
+async function canUserAccessCopcProgram(rootFolder, userId, role) {
+  const normalizedRole = normalizeRole(role);
+  if (normalizedRole === "superadmin") return true;
+  if (!rootFolder || !userId) return false;
+
+  // Program assignment must grant visibility even if the parent COPC root
+  // itself is not directly shared with the user.
+  if (canUserAccessFolderDirect(rootFolder, userId, normalizedRole)) return true;
+
+  // Fallback: allow if user is assigned inside any descendant scope.
+  const descendantIds = await getDescendantFolderIds(rootFolder._id);
+  const innerIds = descendantIds
+    .map((id) => String(id))
+    .filter((id) => id !== String(rootFolder._id));
+  if (!innerIds.length) return false;
+
+  const target = String(userId);
+  const assignedChild = await Folder.findOne({
+    _id: { $in: innerIds },
+    deletedAt: null,
+    $or: [
+      { "folderAssignments.uploaders": target },
+      { "folderAssignments.programChairs": target },
+      { "folderAssignments.qaOfficers": target },
+      { "folderAssignments.evaluators": target },
+    ],
+  }).select("_id");
+
+  return !!assignedChild;
+}
+
+function canUploadToFolder(folder, userId, role) {
+  if (!folder || !userId) return false;
+  const normalizedRole = normalizeRole(role);
+  if (!canUploadDocuments(normalizedRole)) return false;
+  if (["superadmin", "qa_admin", "dept_chair"].includes(normalizedRole)) return true;
+  const ownerId = folder.owner?._id?.toString?.() || folder.owner?.toString?.();
+  if (ownerId === userId?.toString?.()) return true;
+
+  const folderUploaders = new Set(
+    (folder.folderAssignments?.uploaders || [])
+      .map((id) => id?._id?.toString?.() || id?.toString?.())
+      .filter(Boolean)
+  );
+  const taskUploaders = collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedUploaders");
+  const restrictedByAssignments = folderUploaders.size > 0 || taskUploaders.size > 0;
+  const hasComplianceScope =
+    !!folder?.complianceProfileKey || Array.isArray(folder?.complianceTasks) && folder.complianceTasks.length > 0;
+  if (!restrictedByAssignments && hasComplianceScope) {
+    // Compliance folders must be explicitly assigned for non-admin users.
+    return false;
+  }
+  if (!restrictedByAssignments) return true;
+
+  const target = userId?.toString?.();
+  return folderUploaders.has(target) || taskUploaders.has(target);
+}
+
+function isFileFullyApprovedForCopc(file) {
+  const wf = file?.reviewWorkflow || {};
+  const chairApproved = String(wf?.programChair?.status || "") === "approved";
+  const qaApproved = String(wf?.qaOfficer?.status || "") === "approved";
+  const workflowApproved = String(wf?.status || "") === "approved";
+  return chairApproved && qaApproved && workflowApproved;
+}
+
+function normalizePermissionRole(permission, fallback = "viewer") {
+  const value = String(permission || "").toLowerCase();
+  if (value === "owner") return "owner";
+  if (value === "editor" || value === "write") return "editor";
+  if (value === "viewer" || value === "read") return "viewer";
+  return fallback;
+}
+
+function canRoleEdit(permission) {
+  const role = normalizePermissionRole(permission);
+  return role === "editor" || role === "owner";
+}
+
+const COPC_DEFAULT_STRUCTURE = [
+  "01 Program Profile",
+  "02 Curriculum",
+  "03 Faculty Credentials",
+  "04 Facilities",
+  "05 Library Resources",
+  "06 Administration",
+  "07 Supporting Documents",
+];
+
+const COPC_DEFAULT_TASKS = {
+  "01 Program Profile": ["Program mission and vision", "Program rationale", "Program objectives"],
+  "02 Curriculum": ["Curriculum map", "Program outcomes alignment", "Course syllabi and specifications"],
+  "03 Faculty Credentials": ["TOR", "Diploma", "PRC License", "Curriculum Vitae", "Training Certificates"],
+  "04 Facilities": ["Laboratory inventory", "Lab photos", "Facilities utilization"],
+  "05 Library Resources": ["Library holdings", "Digital resources", "Library utilization report"],
+  "06 Administration": ["Organizational chart", "Admin policies", "Academic governance records"],
+  "07 Supporting Documents": ["MOA/MOU", "Extension programs", "Quality improvement plans"],
+};
+
+async function getDescendantFolderIds(rootId, options = {}) {
+  const includeDeleted = !!options.includeDeleted;
+  const out = [];
+  const queue = [String(rootId)];
+  const seen = new Set();
+  while (queue.length) {
+    const current = queue.shift();
+    if (seen.has(current)) continue;
+    seen.add(current);
+    out.push(current);
+    const query = includeDeleted
+      ? { parentFolder: current }
+      : { parentFolder: current, deletedAt: null };
+    const children = await Folder.find(query).select("_id");
+    for (const child of children) queue.push(String(child._id));
+  }
+  return out;
+}
+
+async function findCopcRootFolderByFolderId(folderId) {
+  if (!folderId) return null;
+  let current = await Folder.findById(folderId).select("parentFolder copc deletedAt");
+  while (current) {
+    if (current.deletedAt) return null;
+    if (current?.copc?.isProgramRoot) return current;
+    if (!current.parentFolder) return null;
+    current = await Folder.findById(current.parentFolder).select("parentFolder copc deletedAt");
+  }
+  return null;
+}
+
+async function isFolderWithinLockedCopc(folderId) {
+  const root = await findCopcRootFolderByFolderId(folderId);
+  return !!(root?.copc?.locked?.isLocked);
+}
+
+async function softDeleteFolderTree(folderId, at = new Date()) {
+  const ids = await getDescendantFolderIds(folderId, { includeDeleted: true });
+  await Folder.updateMany({ _id: { $in: ids } }, { deletedAt: at });
+  await File.updateMany({ parentFolder: { $in: ids }, deletedAt: null }, { deletedAt: at });
+  return ids;
+}
+
+async function restoreFolderTree(folderId) {
+  const ids = await getDescendantFolderIds(folderId, { includeDeleted: true });
+  await Folder.updateMany({ _id: { $in: ids } }, { deletedAt: null });
+  await File.updateMany({ parentFolder: { $in: ids } }, { deletedAt: null });
+  return ids;
+}
+
+async function updateCopcStage(folderId, nextStage, fallbackStatus = "In Progress") {
+  const root = await findCopcRootFolderByFolderId(folderId);
+  if (!root || !root?.copc?.isProgramRoot) return;
+  if (root?.copc?.locked?.isLocked) return;
+  const stageOrder = [
+    "initialized",
+    "collecting_documents",
+    "department_review",
+    "qa_verification",
+    "internal_evaluation",
+    "revision",
+    "package_compiled",
+    "copc_ready",
+    "submitted",
+    "archived",
+  ];
+  const current = String(root?.copc?.workflowStage || "initialized");
+  const next = String(nextStage || current);
+  const currentIndex = stageOrder.indexOf(current);
+  const nextIndex = stageOrder.indexOf(next);
+  if (nextIndex === -1) return;
+  if (next === "revision" || nextIndex >= currentIndex) {
+    root.copc.workflowStage = next;
+    root.copc.workflowStatus = fallbackStatus || "In Progress";
+    await root.save();
+  }
+}
+
+async function getGroupSharePermissionForFile(userId, fileId) {
+  if (!userId || !fileId) return null;
+  const groups = await Group.find({
+    members: userId,
+    "sharedFiles.fileId": fileId,
+  }).select("sharedFiles");
+
+  let best = null;
+  for (const group of groups) {
+    for (const shared of group.sharedFiles || []) {
+      if (shared.fileId?.toString?.() !== fileId.toString()) continue;
+      const normalized = normalizePermissionRole(shared.permission);
+      if (normalized === "editor") return "editor";
+      if (!best) best = normalized;
+    }
+  }
+  return best;
+}
+
 /* ========================
    MONGODB
 ======================== */
 mongoose
   .connect(process.env.MONGO_URI)
   .then(() => {
-    console.log("✅ MongoDB connected");
+    console.log("? MongoDB connected");
     createLog("SYSTEM", null, "MongoDB connected");
   })
   .catch((err) => {
@@ -76,7 +551,7 @@ mongoose
   });
 
 mongoose.connection.on("disconnected", () => {
-  console.warn("⚠️ MongoDB disconnected");
+  console.warn("?? MongoDB disconnected");
   createLog("SYSTEM", null, "MongoDB disconnected");
 });
 
@@ -287,16 +762,46 @@ async function reconcileDuplicateGroup(contentHash) {
   await File.findByIdAndUpdate(canonicalId, { duplicateOf: null });
 }
 
-function userHasFileAccess(file, userId, role) {
+async function userHasFileAccess(file, userId, role) {
   if (!file || !userId) return false;
-  const isAdmin = role === "admin" || role === "superadmin";
-  if (isAdmin) return true;
+  if (normalizeRole(role) === "superadmin") return true;
+
   const ownerId = file.owner?._id?.toString?.() || file.owner?.toString?.() || file.userId?.toString?.() || file.userId;
   if (ownerId?.toString() === userId.toString()) return true;
-  return !!file.sharedWith?.some((id) => {
+
+  const workflow = file.reviewWorkflow || {};
+  const assignedProgramChairs = Array.isArray(workflow.assignedProgramChairs)
+    ? workflow.assignedProgramChairs
+    : [];
+  const assignedQaOfficers = Array.isArray(workflow.assignedQaOfficers)
+    ? workflow.assignedQaOfficers
+    : [];
+  if (
+    isUserAssignedTo(userId, assignedProgramChairs) ||
+    isUserAssignedTo(userId, assignedQaOfficers)
+  ) {
+    return true;
+  }
+
+  // Once fully approved in COPC flow, expose to all users authorized on the COPC program scope.
+  if (file.parentFolder && isFileFullyApprovedForCopc(file)) {
+    const root = await findCopcRootFolderByFolderId(file.parentFolder);
+    if (root && (await canUserAccessCopcProgram(root, userId, role))) {
+      return true;
+    }
+  }
+
+  if (file.parentFolder) {
+    const canViewParent = await canUserAccessFolderByAssignment(file.parentFolder, userId, role);
+    if (!canViewParent) return false;
+  }
+  const isDirectShare = !!file.sharedWith?.some((id) => {
     const sharedId = id?.toString ? id.toString() : id;
     return sharedId?.toString() === userId.toString();
   });
+  if (isDirectShare) return true;
+  const groupPermission = await getGroupSharePermissionForFile(userId, file._id);
+  return groupPermission === "viewer" || groupPermission === "editor";
 }
 
 function isFlaggedByUser(ids, userId) {
@@ -542,17 +1047,19 @@ async function createGeneratedDocumentBuffer(outputType, content) {
 
 async function canUserEditFile(file, userId, role) {
   if (!file || !userId) return false;
-  const isAdmin = role === "admin" || role === "superadmin";
+  const isAdmin = canEditAnyDocuments(role);
   if (isAdmin) return true;
 
   const ownerId = file.owner?._id?.toString?.() || file.owner?.toString?.() || file.userId?.toString?.() || file.userId;
   const isOwner = ownerId?.toString() === userId.toString();
-  const isSharedWithWrite =
+  const isSharedWithEditor =
     !!file.sharedWith?.some((id) => (id?.toString ? id.toString() : id) === userId) &&
-    file.permissions === "write";
+    canRoleEdit(file.permissions);
+  const groupPermission = await getGroupSharePermissionForFile(userId, file._id);
+  const isGroupEditor = groupPermission === "editor";
   const isLeader = await isGroupLeaderForFile(userId, file._id);
 
-  return isOwner || isSharedWithWrite || isLeader;
+  return isOwner || isSharedWithEditor || isGroupEditor || isLeader;
 }
 
 function buildFolderPathMap(folders) {
@@ -683,7 +1190,7 @@ app.post("/login", async (req, res) => {
 
     res.json({
       status: "success",
-      role: user.role,
+      role: normalizeRole(user.role),
       userId: user._id.toString(),
     });
   } catch (err) {
@@ -862,8 +1369,26 @@ app.post("/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const { userId, parentFolder, isUpdate, fileId, changeDescription } = req.body;
+    const { userId, role, parentFolder, isUpdate, fileId, changeDescription } = req.body;
     if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const actorRole = await resolveActorRole(userId, role);
+    if (!canUploadDocuments(actorRole)) {
+      return res.status(403).json({ error: "Your role cannot upload documents" });
+    }
+
+    let targetFolder = null;
+    if (parentFolder) {
+      targetFolder = await Folder.findById(parentFolder).select("owner folderAssignments complianceTasks deletedAt");
+      if (!targetFolder || targetFolder.deletedAt) {
+        return res.status(404).json({ error: "Parent folder not found" });
+      }
+      if (await isFolderWithinLockedCopc(parentFolder)) {
+        return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+      }
+      if (!canUploadToFolder(targetFolder, userId, actorRole)) {
+        return res.status(403).json({ error: "You are not assigned to upload in this folder" });
+      }
+    }
 
     let file;
     let versionNumber = 1;
@@ -883,14 +1408,27 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       if (!file) return res.status(404).json({ error: "File not found" });
       previousHash = file.contentHash || null;
 
+      if (!targetFolder && file.parentFolder) {
+        targetFolder = await Folder.findById(file.parentFolder).select("owner folderAssignments complianceTasks deletedAt");
+      }
+      if (file.parentFolder && await isFolderWithinLockedCopc(file.parentFolder)) {
+        return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+      }
+      if (targetFolder && !canUploadToFolder(targetFolder, userId, actorRole)) {
+        return res.status(403).json({ error: "You are not assigned to upload in this folder" });
+      }
+
       const isOwner =
         file.owner?.toString?.() === userId ||
         file.userId?.toString?.() === userId;
-      const isSharedWithWrite =
+      const isSharedWithEditor =
         file.sharedWith?.some(id => id.toString() === userId) &&
-        file.permissions === "write";
+        canRoleEdit(file.permissions);
+      const isAdmin = await isAdminContext(role, userId);
       const isLeader = await isGroupLeaderForFile(userId, file._id);
-      if (!isOwner && !isSharedWithWrite && !isLeader) {
+      const groupPermission = await getGroupSharePermissionForFile(userId, file._id);
+      const isGroupEditor = groupPermission === "editor";
+      if (!isOwner && !isSharedWithEditor && !isGroupEditor && !isLeader && !isAdmin) {
         return res.status(403).json({ error: "Not authorized to update this file" });
       }
 
@@ -932,6 +1470,9 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         classifiedAt: new Date(),
         classifierVersion: CLASSIFICATION_VERSION,
       };
+      if (targetFolder) {
+        file.reviewWorkflow = buildFileWorkflowFromFolder(targetFolder);
+      }
       await file.save();
     } else {
       // New file upload
@@ -952,6 +1493,26 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         classifiedAt: new Date(),
         classifierVersion: CLASSIFICATION_VERSION,
       },
+      reviewWorkflow: targetFolder
+        ? buildFileWorkflowFromFolder(targetFolder)
+        : {
+            requiresReview: false,
+            status: "approved",
+            assignedProgramChairs: [],
+            assignedQaOfficers: [],
+            programChair: {
+              status: "not_required",
+              reviewedBy: null,
+              reviewedAt: null,
+              notes: "",
+            },
+            qaOfficer: {
+              status: "not_required",
+              reviewedBy: null,
+              reviewedAt: null,
+              notes: "",
+            },
+          },
     });
     await file.save();
     }
@@ -977,6 +1538,9 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     // NEW: log upload
     createLog("UPLOAD", userId, `Uploaded ${req.file.originalname}`);
+    if (file?.parentFolder) {
+      await updateCopcStage(file.parentFolder, "collecting_documents", "Collecting Documents");
+    }
 
     const duplicateCount = await File.countDocuments({
       contentHash,
@@ -1005,9 +1569,10 @@ app.post("/files/predict-destination", async (req, res) => {
   try {
     const { userId, role, filename, mimetype, classification } = req.body || {};
     if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const actorRole = await resolveActorRole(userId, role);
 
     let folders = [];
-    if (role === "admin" || role === "superadmin") {
+    if (hasGlobalViewAccess(actorRole)) {
       folders = await Folder.find({ deletedAt: null }).select("_id name parentFolder createdAt");
     } else {
       const owned = await Folder.find({ owner: userId, deletedAt: null }).select("_id name parentFolder createdAt");
@@ -1085,7 +1650,8 @@ app.get("/form-templates", async (req, res) => {
   try {
     const { userId, role } = req.query;
     if (!userId) return res.status(400).json({ error: "Missing userId" });
-    const isAdmin = role === "admin" || role === "superadmin";
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = hasGlobalViewAccess(actorRole);
     const query = isAdmin ? {} : { owner: userId };
     const templates = await FormTemplate.find(query)
       .populate("destinationFolder", "name parentFolder")
@@ -1133,7 +1699,7 @@ app.delete("/form-templates/:id", async (req, res) => {
     const template = await FormTemplate.findById(req.params.id);
     if (!template) return res.status(404).json({ error: "Template not found" });
 
-    const isAdmin = role === "admin" || role === "superadmin";
+    const isAdmin = canEditAnyDocuments(role);
     if (!isAdmin && template.owner.toString() !== userId.toString()) {
       return res.status(403).json({ error: "Not authorized to delete template" });
     }
@@ -1154,7 +1720,7 @@ app.post("/form-templates/:id/generate", async (req, res) => {
     const template = await FormTemplate.findById(req.params.id);
     if (!template) return res.status(404).json({ error: "Template not found" });
 
-    const isAdmin = role === "admin" || role === "superadmin";
+    const isAdmin = canEditAnyDocuments(role);
     if (!isAdmin && template.owner.toString() !== userId.toString()) {
       return res.status(403).json({ error: "Not authorized to use this template" });
     }
@@ -1234,8 +1800,12 @@ app.post("/form-templates/:id/generate", async (req, res) => {
 
 app.post("/reports/auto-generate", async (req, res) => {
   try {
-    const { userId, reportData } = req.body || {};
+    const { userId, role, reportData } = req.body || {};
     if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const actorRole = await resolveActorRole(userId, role);
+    if (!canGenerateReports(actorRole)) {
+      return res.status(403).json({ error: "Your role cannot generate reports" });
+    }
 
     const outputType = ["txt", "docx", "pdf"].includes(reportData?.outputType)
       ? reportData.outputType
@@ -1324,7 +1894,7 @@ app.patch("/files/:id/favorite", async (req, res) => {
 
     const file = await File.findById(req.params.id).populate("owner");
     if (!file) return res.status(404).json({ error: "File not found" });
-    if (!userHasFileAccess(file, userId, role)) {
+    if (!(await userHasFileAccess(file, userId, role))) {
       return res.status(403).json({ error: "Not authorized to bookmark this file" });
     }
 
@@ -1351,7 +1921,7 @@ app.patch("/files/:id/pin", async (req, res) => {
 
     const file = await File.findById(req.params.id).populate("owner");
     if (!file) return res.status(404).json({ error: "File not found" });
-    if (!userHasFileAccess(file, userId, role)) {
+    if (!(await userHasFileAccess(file, userId, role))) {
       return res.status(403).json({ error: "Not authorized to pin this file" });
     }
 
@@ -1375,7 +1945,8 @@ app.patch("/files/:id/pin", async (req, res) => {
 app.get("/files/duplicates", async (req, res) => {
   try {
     const { userId, role } = req.query;
-    const isAdmin = role === "admin" || role === "superadmin";
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = hasGlobalViewAccess(actorRole);
 
     const match = { deletedAt: null, contentHash: { $ne: null } };
     if (!isAdmin) {
@@ -1431,7 +2002,7 @@ app.get("/files/duplicates", async (req, res) => {
 app.post("/files/:id/reclassify", async (req, res) => {
   try {
     const { userId, role } = req.body || {};
-    const isAdmin = role === "admin" || role === "superadmin";
+    const isAdmin = canEditAnyDocuments(role);
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
 
@@ -1478,7 +2049,7 @@ app.post("/files/:id/reclassify", async (req, res) => {
 app.post("/files/reclassify-bulk", async (req, res) => {
   try {
     const { userId, role } = req.body || {};
-    const isAdmin = role === "admin" || role === "superadmin";
+    const isAdmin = canEditAnyDocuments(role);
     if (!isAdmin && !userId) return res.status(400).json({ error: "Missing userId" });
 
     const query = isAdmin ? { deletedAt: null } : { userId, deletedAt: null };
@@ -1528,17 +2099,10 @@ app.get("/files/:id/preview-metadata", async (req, res) => {
     const doc = await File.findById(req.params.id).populate("owner");
     if (!doc) return res.status(404).json({ error: "File not found" });
 
-    const isAdmin = role === "admin" || role === "superadmin";
-    if (!isAdmin) {
-      const ownerId = doc.owner?._id?.toString() || doc.owner?.toString() || doc.userId;
-      const isOwner = ownerId === userId || doc.userId === userId;
-      const isShared = userId && doc.sharedWith && doc.sharedWith.some(id => {
-        const sharedId = id.toString ? id.toString() : (id._id ? id._id.toString() : id);
-        return sharedId === userId;
-      });
-      if (!isOwner && !isShared) {
-        return res.status(403).json({ error: "Forbidden" });
-      }
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = hasGlobalViewAccess(actorRole);
+    if (!isAdmin && !(await userHasFileAccess(doc, userId, actorRole))) {
+      return res.status(403).json({ error: "Forbidden" });
     }
 
     const ext = (doc.originalName || "").toLowerCase();
@@ -1638,7 +2202,7 @@ app.post("/files/:id/versions/:versionId/restore", async (req, res) => {
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
 
-    const isAdmin = role === "admin" || role === "superadmin";
+    const isAdmin = canEditAnyDocuments(role);
     const ownerId = file.owner?.toString?.() || file.userId?.toString?.() || file.owner;
     if (!isAdmin && (!userId || ownerId.toString() !== userId.toString())) {
       return res.status(403).json({ error: "Not authorized to restore versions" });
@@ -1691,8 +2255,25 @@ app.post("/upload-camera", upload.array("images", 20), async (req, res) => {
     const hasMultiple = Array.isArray(req.files) && req.files.length > 0;
     const single = req.file;
     if (!hasMultiple && !single) return res.status(400).json({ error: "No image captured" });
-    const { userId, parentFolder, desiredType, originalName } = req.body;
+    const { userId, parentFolder, desiredType, originalName, role } = req.body;
     if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const actorRole = await resolveActorRole(userId, role);
+    if (!canUploadDocuments(actorRole)) {
+      return res.status(403).json({ error: "Your role cannot upload documents" });
+    }
+    let targetFolder = null;
+    if (parentFolder) {
+      targetFolder = await Folder.findById(parentFolder).select("owner folderAssignments complianceTasks deletedAt");
+      if (!targetFolder || targetFolder.deletedAt) {
+        return res.status(404).json({ error: "Parent folder not found" });
+      }
+      if (await isFolderWithinLockedCopc(parentFolder)) {
+        return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+      }
+      if (!canUploadToFolder(targetFolder, userId, actorRole)) {
+        return res.status(403).json({ error: "You are not assigned to upload in this folder" });
+      }
+    }
     const type = (desiredType || "pdf").toLowerCase();
     const imageFiles = hasMultiple ? req.files : [single];
     const imageBuffers = imageFiles.map(f => fs.readFileSync(path.join(__dirname, "uploads", f.filename)));
@@ -1816,6 +2397,16 @@ app.post("/upload-camera", upload.array("images", 20), async (req, res) => {
         classifiedAt: new Date(),
         classifierVersion: CLASSIFICATION_VERSION,
       };
+      file.reviewWorkflow = targetFolder
+        ? buildFileWorkflowFromFolder(targetFolder)
+        : {
+            requiresReview: false,
+            status: "approved",
+            assignedProgramChairs: [],
+            assignedQaOfficers: [],
+            programChair: { status: "not_required", reviewedBy: null, reviewedAt: null, notes: "" },
+            qaOfficer: { status: "not_required", reviewedBy: null, reviewedAt: null, notes: "" },
+          };
       await file.save();
       await reconcileDuplicateGroup(contentHash);
 
@@ -1860,7 +2451,8 @@ app.get("/files", async (req, res) => {
   try {
     const { userId, role, parentFolder, sortBy, sortOrder } = req.query;
     let query = { deletedAt: null }; // exclude trashed files
-    const isAdmin = role === "admin" || role === "superadmin";
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = hasGlobalViewAccess(actorRole);
 
     // Sorting
     let sortOptions = {};
@@ -1888,45 +2480,13 @@ app.get("/files", async (req, res) => {
         .sort(sortOptions);
     } else {
       if (!userId) return res.status(400).json({ error: "Missing userId" });
-
-      // Get files owned by user
-      let ownedFiles = await File.find({
-        userId,
+      const scopedParent = parentFolder === "" ? null : parentFolder;
+      files = await File.find({
         deletedAt: null,
-        ...(parentFolder !== undefined && { parentFolder: parentFolder === "" ? null : parentFolder })
+        ...(parentFolder !== undefined && { parentFolder: scopedParent }),
       })
         .populate("owner", "email")
         .sort(sortOptions);
-
-      // If we have a parentFolder, check if user has access to it (for navigation within shared folders)
-      if (parentFolder) {
-        const parent = await Folder.findById(parentFolder);
-        if (parent && (parent.owner.toString() === userId || parent.sharedWith.includes(userId))) {
-          // User has access to parent folder, include ALL files from that folder
-          // This allows users to see files uploaded by different users within shared folders
-          const subFiles = await File.find({
-            parentFolder,
-            deletedAt: null
-          })
-            .populate("owner", "email")
-            .sort(sortOptions);
-
-          ownedFiles = [...ownedFiles, ...subFiles];
-        }
-      } else {
-        // Root level - include files shared with user
-        const sharedFiles = await File.find({
-          sharedWith: userId,
-          deletedAt: null,
-          parentFolder: null
-        })
-          .populate("owner", "email")
-          .sort(sortOptions);
-
-        ownedFiles = [...ownedFiles, ...sharedFiles];
-      }
-
-      files = ownedFiles;
     }
 
     // Filter out files whose parent folders are deleted
@@ -1960,15 +2520,24 @@ app.get("/files", async (req, res) => {
       return true;
     });
 
+    let visibleFiles = uniqueFiles;
+    if (!isAdmin) {
+      const scopedFiles = [];
+      for (const file of uniqueFiles) {
+        if (await userHasFileAccess(file, userId, actorRole)) scopedFiles.push(file);
+      }
+      visibleFiles = scopedFiles;
+    }
+
     // Add permission info for shared files
-    const filesWithPermissions = uniqueFiles.map(file => {
+    const filesWithPermissions = visibleFiles.map(file => {
       const isOwner = file.owner._id.toString() === userId;
       const isFavorite = isFlaggedByUser(file.favoritedBy, userId);
       const isPinned = isFlaggedByUser(file.pinnedBy, userId);
       return {
         ...file.toObject(),
         isShared: !isOwner,
-        permission: isOwner ? "owner" : (file.permissions || "read"),
+        permission: isOwner ? "owner" : normalizePermissionRole(file.permissions, "viewer"),
         ownerEmail: file.owner?.email || null,
         isDuplicate: !!file.duplicateOf,
         classification: file.classification || null,
@@ -1991,7 +2560,7 @@ app.post("/files/:id/access", async (req, res) => {
 
     const file = await File.findById(req.params.id).populate("owner");
     if (!file) return res.status(404).json({ error: "File not found" });
-    if (!userHasFileAccess(file, userId, role)) {
+    if (!(await userHasFileAccess(file, userId, role))) {
       return res.status(403).json({ error: "Not authorized to access this file" });
     }
 
@@ -2013,7 +2582,8 @@ app.get("/dashboard/personalized/:userId", async (req, res) => {
     const { userId } = req.params;
     const { role } = req.query;
     if (!userId) return res.status(400).json({ error: "Missing userId" });
-    const isAdmin = role === "admin" || role === "superadmin";
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = hasGlobalViewAccess(actorRole);
 
     const baseQuery = isAdmin
       ? { deletedAt: null }
@@ -2053,8 +2623,8 @@ app.get("/dashboard/personalized/:userId", async (req, res) => {
         const actions = [];
         if (f.duplicateOf) actions.push("Duplicate detected");
         if ((f.classification?.confidence || 1) < 0.6) actions.push("Low classification confidence");
-        if (f.sharedWith?.some((id) => id?.toString?.() === userId) && f.permissions === "write") {
-          actions.push("Shared with write access - review needed");
+        if (f.sharedWith?.some((id) => id?.toString?.() === userId) && canRoleEdit(f.permissions)) {
+          actions.push("Shared with editor access - review needed");
         }
         if (!actions.length) return null;
         return {
@@ -2138,17 +2708,10 @@ app.get("/view/:filename", async (req, res) => {
     const doc = await File.findOne({ filename: req.params.filename }).populate("owner");
     if (!doc) return res.status(404).send("File not found");
 
-    const isAdmin = role === "admin" || role === "superadmin";
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = hasGlobalViewAccess(actorRole);
     if (!isAdmin) {
-      // Check permissions: owner or shared with user (read or write)
-      const ownerId = doc.owner?._id?.toString() || doc.owner?.toString() || doc.userId;
-      const isOwner = ownerId === userId || doc.userId === userId;
-      const isShared = userId && doc.sharedWith && doc.sharedWith.some(id => {
-        const sharedId = id.toString ? id.toString() : (id._id ? id._id.toString() : id);
-        return sharedId === userId;
-      });
-
-      if (!isOwner && !isShared) {
+      if (!(await userHasFileAccess(doc, userId, actorRole))) {
         return res.status(403).send("You don't have permission to view this file");
       }
     }
@@ -2192,15 +2755,10 @@ app.get("/preview/:filename", async (req, res) => {
     const doc = await File.findOne({ filename: req.params.filename }).populate("owner");
     if (!doc) return res.status(404).send("File not found");
 
-    const isAdmin = role === "admin" || role === "superadmin";
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = hasGlobalViewAccess(actorRole);
     if (!isAdmin) {
-      const ownerId = doc.owner?._id?.toString() || doc.owner?.toString() || doc.userId;
-      const isOwner = ownerId === userId || doc.userId === userId;
-      const isShared = userId && doc.sharedWith && doc.sharedWith.some(id => {
-        const sharedId = id.toString ? id.toString() : (id._id ? id._id.toString() : id);
-        return sharedId === userId;
-      });
-      if (!isOwner && !isShared) return res.status(403).send("Forbidden");
+      if (!(await userHasFileAccess(doc, userId, actorRole))) return res.status(403).send("Forbidden");
     }
 
     const ext = (doc.originalName || "").toLowerCase();
@@ -2293,13 +2851,10 @@ app.get("/download/:filename", async (req, res) => {
     const doc = await File.findOne({ filename: req.params.filename });
     if (!doc) return res.status(404).send("File not found");
 
-    const isAdmin = role === "admin" || role === "superadmin";
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = hasGlobalViewAccess(actorRole);
     if (!isAdmin) {
-      const isOwner = (doc.owner?.toString && doc.owner.toString() === userId) || doc.userId === userId;
-      const isSharedWithWrite = userId &&
-        doc.sharedWith.some(id => (id.toString ? id.toString() : id) === userId) &&
-        doc.permissions === "write";
-      if (!isOwner && !isSharedWithWrite) {
+      if (!(await userHasFileAccess(doc, userId, actorRole))) {
         return res.status(403).send("You don't have permission to download this file");
       }
     }
@@ -2326,25 +2881,20 @@ app.get("/download/:filename", async (req, res) => {
   }
 });
 
-// Soft delete file → moves to Trash
+// Soft delete file ? moves to Trash
 app.delete("/files/:id", async (req, res) => {
   try {
     const { userId, role } = req.query;
-    const isAdmin = role === "admin" || role === "superadmin";
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = canDeleteDocuments(actorRole);
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
+    if (file.parentFolder && await isFolderWithinLockedCopc(file.parentFolder)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
 
     if (!isAdmin) {
-      const isOwner =
-        file.owner?.toString?.() === userId ||
-        file.userId?.toString?.() === userId;
-      const isSharedWithWrite =
-        file.sharedWith?.some(id => id.toString() === userId) &&
-        file.permissions === "write";
-      const isLeader = await isGroupLeaderForFile(userId, file._id);
-      if (!isOwner && !isSharedWithWrite && !isLeader) {
-        return res.status(403).json({ error: "Not authorized to delete this file" });
-      }
+      return res.status(403).json({ error: "Not authorized to delete documents" });
     }
 
     file.deletedAt = new Date();
@@ -2363,13 +2913,41 @@ app.delete("/files/:id", async (req, res) => {
 // Move file
 app.patch("/files/:id/move", async (req, res) => {
   try {
-    const { newFolderId, userId } = req.body;
+    const { newFolderId, userId, role } = req.body;
+    const actorRole = await resolveActorRole(userId, role);
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
+
+    const ownerId = file.owner?.toString?.() || file.userId?.toString?.() || file.userId;
+    const isOwner = !!userId && ownerId?.toString() === userId.toString();
+    const isAdmin = canEditAnyDocuments(actorRole);
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ error: "Not authorized to move this file" });
+    }
+    if (file.parentFolder && await isFolderWithinLockedCopc(file.parentFolder)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
+
+    if (newFolderId) {
+      const targetFolder = await Folder.findById(newFolderId).select("owner folderAssignments complianceTasks deletedAt");
+      if (!targetFolder || targetFolder.deletedAt) {
+        return res.status(404).json({ error: "Destination folder not found" });
+      }
+      if (await isFolderWithinLockedCopc(newFolderId)) {
+        return res.status(423).json({ error: "Destination COPC scope is locked after final approval" });
+      }
+      if (!canUploadToFolder(targetFolder, userId, actorRole)) {
+        return res.status(403).json({ error: "You are not assigned to upload in destination folder" });
+      }
+    }
 
     const oldFolderId = file.parentFolder ? file.parentFolder.toString() : null;
     const nextFolderId = newFolderId || null;
     file.parentFolder = nextFolderId;
+    if (newFolderId) {
+      const targetFolder = await Folder.findById(newFolderId).select("folderAssignments");
+      if (targetFolder) file.reviewWorkflow = buildFileWorkflowFromFolder(targetFolder);
+    }
     await file.save();
 
     const latestVersion = await FileVersion.findOne({ fileId: file._id }).sort({
@@ -2418,7 +2996,7 @@ app.get("/files/:id/content", async (req, res) => {
     const { userId, role } = req.query;
     const file = await File.findById(req.params.id).populate("owner");
     if (!file) return res.status(404).json({ error: "File not found" });
-    if (!userHasFileAccess(file, userId, role)) {
+    if (!(await userHasFileAccess(file, userId, role))) {
       return res.status(403).json({ error: "Not authorized to view file content" });
     }
     if (!isEditableDocument(file)) {
@@ -2454,12 +3032,18 @@ app.get("/files/:id/content", async (req, res) => {
 app.patch("/files/:id/content", async (req, res) => {
   try {
     const { userId, role, content, changeDescription } = req.body || {};
+    if (isReadOnlyReviewerRole(role)) {
+      return res.status(403).json({ error: "Reviewer role is read-only and cannot edit files" });
+    }
     if (typeof content !== "string") {
       return res.status(400).json({ error: "Content must be a string" });
     }
 
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
+    if (file.parentFolder && await isFolderWithinLockedCopc(file.parentFolder)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
     if (!isEditableDocument(file)) {
       return res.status(400).json({ error: "This file type is not editable in-app" });
     }
@@ -2527,7 +3111,7 @@ app.patch("/files/:id/content", async (req, res) => {
 // Share file
 app.patch("/files/:id/share", async (req, res) => {
   try {
-    const { emails, permission } = req.body;
+    const { emails, permission, userId, role } = req.body;
     const users = await UserModel.find({ email: { $in: emails } });
     if (!users.length)
       return res.status(404).json({ error: "No matching users found" });
@@ -2536,8 +3120,19 @@ app.patch("/files/:id/share", async (req, res) => {
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
 
-    file.sharedWith.push(...userIds);
-    if (permission) file.permissions = permission;
+    const ownerId = file.owner?.toString?.() || file.userId?.toString?.() || file.userId;
+    const isOwner = !!userId && ownerId?.toString() === userId.toString();
+    const isAdmin = await isAdminContext(role, userId);
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ error: "Not authorized to share this file" });
+    }
+
+    const nextShared = new Set(
+      (file.sharedWith || []).map((id) => id?.toString?.() || id)
+    );
+    userIds.forEach((id) => nextShared.add(id?.toString?.() || id));
+    file.sharedWith = Array.from(nextShared);
+    if (permission) file.permissions = normalizePermissionRole(permission, "viewer");
 
     await file.save();
     await file.populate("sharedWith", "email");
@@ -2567,9 +3162,16 @@ app.patch("/files/:id/share", async (req, res) => {
 // Unshare file (remove user from sharedWith)
 app.patch("/files/:id/unshare", async (req, res) => {
   try {
-    const { userId } = req.body;
+    const { userId, actorId, role } = req.body;
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
+
+    const ownerId = file.owner?.toString?.() || file.userId?.toString?.() || file.userId;
+    const isOwner = !!actorId && ownerId?.toString() === actorId.toString();
+    const isAdmin = await isAdminContext(role, actorId);
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ error: "Not authorized to unshare this file" });
+    }
 
     file.sharedWith = file.sharedWith.filter(id => id.toString() !== userId.toString());
     await file.save();
@@ -2590,14 +3192,24 @@ app.patch("/files/:id/unshare", async (req, res) => {
 // Create folder
 app.post("/folders", async (req, res) => {
   try {
-    const { name, owner, parentFolder } = req.body;
+    const { name, owner, parentFolder, role, isPredefinedRoot, predefinedTemplateKey } = req.body;
+    if (isReadOnlyReviewerRole(role)) {
+      return res.status(403).json({ error: "Reviewer role is read-only and cannot create folders" });
+    }
     if (!name || !owner)
       return res.status(400).json({ error: "Missing folder name or owner" });
+
+    const isAdmin = await isAdminContext(role, owner);
+    if (parentFolder && await isFolderWithinLockedCopc(parentFolder)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
 
     const folder = new Folder({
       name,
       owner,
       parentFolder: parentFolder || null,
+      isPredefinedRoot: !!(isAdmin && isPredefinedRoot),
+      predefinedTemplateKey: isAdmin && isPredefinedRoot ? (predefinedTemplateKey || null) : null,
       sharedWith: [],
       permissions: "owner",
     });
@@ -2633,6 +3245,7 @@ app.post("/folders", async (req, res) => {
 app.get("/folders", async (req, res) => {
   try {
     const { userId, role, parentFolder, sortBy, sortOrder } = req.query;
+    const actorRole = await resolveActorRole(userId, role);
     let query = { deletedAt: null };
 
     if (parentFolder) query.parentFolder = parentFolder;
@@ -2647,61 +3260,57 @@ app.get("/folders", async (req, res) => {
       sortOptions.createdAt = -1;
     }
 
-    if (role === "admin" || role === "superadmin") {
+    if (hasGlobalViewAccess(actorRole)) {
       const folders = await Folder.find(query)
         .populate("owner", "email")
         .sort(sortOptions);
-      return res.json(folders);
+      return res.json(
+        folders.map((folder) => {
+          const { progress } = computeTaskProgress(folder.complianceTasks || []);
+          return {
+            ...folder.toObject(),
+            isShared: false,
+            permission: "owner",
+            ownerEmail: folder.owner?.email || null,
+            complianceProgress: progress,
+          };
+        })
+      );
     }
 
     if (!userId) return res.status(400).json({ error: "Missing userId" });
 
-    // Get folders owned by user
-    let ownedFolders = await Folder.find({ ...query, owner: userId })
+    // Strict visibility: load candidate folders in the current level and scope by assignment access.
+    const candidateFolders = await Folder.find(query)
       .populate("owner", "email")
       .sort(sortOptions);
 
-    // If we have a parentFolder, check if user has access to it (for navigation within shared folders)
-    if (parentFolder) {
-      const parent = await Folder.findById(parentFolder);
-      if (parent && (parent.owner.toString() === userId || parent.sharedWith.includes(userId))) {
-        // User has access to parent folder, return ALL subfolders (not just owned by parent owner)
-        // This allows users to see subfolders created by different users within shared folders
-        const subFolders = await Folder.find(query) // Remove owner filter to get all subfolders
-          .populate("owner", "email")
-          .sort(sortOptions);
-
-        ownedFolders = [...ownedFolders, ...subFolders];
-      }
-    } else {
-      // Root level - include folders shared with user
-      const sharedFolders = await Folder.find({
-        ...query,
-        owner: { $ne: userId },
-        sharedWith: userId
-      })
-        .populate("owner", "email")
-        .sort(sortOptions);
-
-      ownedFolders = [...ownedFolders, ...sharedFolders];
-    }
-
     // Remove duplicates
     const seenIds = new Set();
-    const uniqueFolders = ownedFolders.filter(folder => {
+    const uniqueFolders = candidateFolders.filter(folder => {
       if (seenIds.has(folder._id.toString())) return false;
       seenIds.add(folder._id.toString());
       return true;
     });
 
+    const accessCache = new Map();
+    const accessibleFolders = [];
+    for (const folder of uniqueFolders) {
+      if (await canUserAccessFolderByAssignment(folder._id, userId, actorRole, accessCache)) {
+        accessibleFolders.push(folder);
+      }
+    }
+
     // Add owner and permission info for all folders
-    const foldersWithPermissions = uniqueFolders.map(folder => {
+    const foldersWithPermissions = accessibleFolders.map(folder => {
       const isOwner = folder.owner._id.toString() === userId;
+      const { progress } = computeTaskProgress(folder.complianceTasks || []);
       return {
         ...folder.toObject(),
         isShared: !isOwner,
-        permission: isOwner ? "owner" : (folder.permissions || "read"),
-        ownerEmail: folder.owner?.email || null
+        permission: isOwner ? "owner" : normalizePermissionRole(folder.permissions, "viewer"),
+        ownerEmail: folder.owner?.email || null,
+        complianceProgress: progress,
       };
     });
 
@@ -2715,23 +3324,15 @@ app.get("/folders", async (req, res) => {
 app.get("/folders/all", async (req, res) => {
   try {
     const { userId, role } = req.query;
+    const actorRole = await resolveActorRole(userId, role);
     let folders = [];
 
-    if (role === "admin" || role === "superadmin") {
+    if (hasGlobalViewAccess(actorRole)) {
       folders = await Folder.find({ deletedAt: null }).sort({ createdAt: -1 });
     } else {
       if (!userId) return res.status(400).json({ error: "Missing userId" });
 
-      // Get owned folders
-      const ownedFolders = await Folder.find({ owner: userId, deletedAt: null }).sort({ createdAt: -1 });
-
-      // Get shared folders
-      const sharedFolders = await Folder.find({
-        sharedWith: userId,
-        deletedAt: null
-      }).sort({ createdAt: -1 });
-
-      folders = [...ownedFolders, ...sharedFolders];
+      folders = await Folder.find({ deletedAt: null }).sort({ createdAt: -1 });
 
       // Remove duplicates
       const seenIds = new Set();
@@ -2740,9 +3341,32 @@ app.get("/folders/all", async (req, res) => {
         seenIds.add(folder._id.toString());
         return true;
       });
+
+      const accessCache = new Map();
+      const scoped = [];
+      for (const folder of folders) {
+        if (await canUserAccessFolderByAssignment(folder._id, userId, actorRole, accessCache)) {
+          scoped.push(folder);
+        }
+      }
+      folders = scoped;
     }
 
-    res.json(folders);
+    // Prune orphan folders whose parent is missing from this non-deleted set.
+    // This removes descendants of previously deleted roots from selectors.
+    let pruned = Array.isArray(folders) ? [...folders] : [];
+    let changed = true;
+    while (changed) {
+      changed = false;
+      const idSet = new Set(pruned.map((f) => String(f._id)));
+      const next = pruned.filter((f) => !f.parentFolder || idSet.has(String(f.parentFolder)));
+      if (next.length !== pruned.length) {
+        changed = true;
+        pruned = next;
+      }
+    }
+
+    res.json(pruned);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2751,12 +3375,48 @@ app.get("/folders/all", async (req, res) => {
 // Move folder
 app.patch("/folders/:id/move", async (req, res) => {
   try {
-    const { newFolderId, userId } = req.body;
+    const { newFolderId, userId, role } = req.body;
+    const actorRole = await resolveActorRole(userId, role);
     const folder = await Folder.findById(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
 
+    const ownerId = folder.owner?.toString?.() || folder.owner;
+    const isOwner = !!userId && ownerId?.toString() === userId.toString();
+    const isAdmin = canEditAnyDocuments(actorRole);
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ error: "Not authorized to move this folder" });
+    }
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
+    if (newFolderId && await isFolderWithinLockedCopc(newFolderId)) {
+      return res.status(423).json({ error: "Destination COPC scope is locked after final approval" });
+    }
+    if (newFolderId && String(newFolderId) === String(folder._id)) {
+      return res.status(400).json({ error: "Cannot move a folder into itself" });
+    }
+
+    if (newFolderId) {
+      const targetFolder = await Folder.findById(newFolderId).select("owner folderAssignments complianceTasks deletedAt");
+      if (!targetFolder || targetFolder.deletedAt) {
+        return res.status(404).json({ error: "Destination folder not found" });
+      }
+
+      const descendantIds = await getDescendantFolderIds(folder._id);
+      if (descendantIds.map((id) => String(id)).includes(String(newFolderId))) {
+        return res.status(400).json({ error: "Cannot move a folder into its child scope" });
+      }
+
+      if (!isAdmin && !canUploadToFolder(targetFolder, userId, actorRole)) {
+        return res.status(403).json({ error: "You are not assigned to move folders into destination folder" });
+      }
+    }
+
     const oldFolderId = folder.parentFolder ? folder.parentFolder.toString() : null;
     const nextFolderId = newFolderId || null;
+    if (String(oldFolderId || "") === String(nextFolderId || "")) {
+      return res.json({ status: "success", folder, version: null, unchanged: true });
+    }
     folder.parentFolder = nextFolderId;
     await folder.save();
 
@@ -2787,20 +3447,25 @@ app.patch("/folders/:id/move", async (req, res) => {
   }
 });
 
-// Soft delete folder → moves to Trash
+// Soft delete folder ? moves to Trash
 app.delete("/folders/:id", async (req, res) => {
   try {
-    const folder = await Folder.findByIdAndUpdate(
-      req.params.id,
-      { deletedAt: new Date() },
-      { new: true }
-    );
+    const { userId, role } = req.query;
+    const actorRole = await resolveActorRole(userId, role);
+    if (!canDeleteDocuments(actorRole)) {
+      return res.status(403).json({ error: "Not authorized to delete folders" });
+    }
+    const folder = await Folder.findById(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
+    const deletedIds = await softDeleteFolderTree(folder._id, new Date());
 
     // NEW: log folder soft delete
     createLog("DELETE_FOLDER", folder.owner, `Moved to trash: ${folder.name}`);
 
-    res.json({ status: "moved-to-trash", folder });
+    res.json({ status: "moved-to-trash", folder, deletedCount: deletedIds.length });
   } catch (err) {
     res.status(500).json({ status: "error", error: err.message });
   }
@@ -2814,6 +3479,1875 @@ app.get("/folders/:id", async (req, res) => {
     res.json(folder);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Program Chair review stage
+app.patch("/files/:id/review/program-chair", async (req, res) => {
+  try {
+    const { userId, role, action, notes } = req.body || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = actorRole === "superadmin";
+    if (!isAdmin && !isProgramChairRole(actorRole)) {
+      return res.status(403).json({ error: "Only super admin or department chair can review this stage" });
+    }
+
+    const file = await File.findById(req.params.id);
+    if (!file) return res.status(404).json({ error: "File not found" });
+    const workflow = file.reviewWorkflow || {};
+    if (!workflow.requiresReview) {
+      return res.status(400).json({ error: "This file does not require review" });
+    }
+    if (!workflow.programChair || workflow.programChair.status === "not_required") {
+      return res.status(400).json({ error: "Program chair review is not required for this file" });
+    }
+    const assignedChairs = Array.isArray(workflow.assignedProgramChairs) ? workflow.assignedProgramChairs : [];
+    if (!isAdmin && assignedChairs.length === 0) {
+      return res.status(403).json({ error: "No department chair is assigned to this document" });
+    }
+    if (!isAdmin && !isUserAssignedTo(userId, assignedChairs)) {
+      return res.status(403).json({ error: "You are not assigned to review this document as department chair" });
+    }
+
+    const normalizedAction = String(action || "").toLowerCase();
+    if (!["approve", "reject"].includes(normalizedAction)) {
+      return res.status(400).json({ error: "Action must be approve or reject" });
+    }
+
+    workflow.programChair = {
+      ...workflow.programChair,
+      status: normalizedAction === "approve" ? "approved" : "rejected",
+      reviewedBy: userId,
+      reviewedAt: new Date(),
+      notes: String(notes || ""),
+    };
+
+    if (normalizedAction === "reject") {
+      workflow.status = "rejected_program_chair";
+      if (workflow.qaOfficer && workflow.qaOfficer.status !== "not_required") {
+        workflow.qaOfficer.status = "pending";
+        workflow.qaOfficer.reviewedBy = null;
+        workflow.qaOfficer.reviewedAt = null;
+        workflow.qaOfficer.notes = "";
+      }
+    } else {
+      const qaRequired = workflow.qaOfficer && workflow.qaOfficer.status !== "not_required";
+      workflow.status = qaRequired ? "pending_qa" : "approved";
+    }
+
+    file.reviewWorkflow = workflow;
+    await file.save();
+    if (file.parentFolder) {
+      await updateCopcStage(
+        file.parentFolder,
+        normalizedAction === "reject" ? "revision" : "department_review",
+        normalizedAction === "reject" ? "Revision Requested" : "Department Review Completed"
+      );
+    }
+    createLog("PROGRAM_CHAIR_REVIEW", userId, `${normalizedAction} file ${file.originalName}`);
+    res.json({ success: true, reviewWorkflow: file.reviewWorkflow });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to process program chair review" });
+  }
+});
+
+// QA/COPC review stage
+app.patch("/files/:id/review/qa", async (req, res) => {
+  try {
+    const { userId, role, action, notes } = req.body || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = actorRole === "superadmin";
+    if (!isAdmin && !isQaReviewRole(actorRole)) {
+      return res.status(403).json({ error: "Only super admin or QA admin can review this stage" });
+    }
+
+    const file = await File.findById(req.params.id);
+    if (!file) return res.status(404).json({ error: "File not found" });
+    const workflow = file.reviewWorkflow || {};
+    if (!workflow.requiresReview) {
+      return res.status(400).json({ error: "This file does not require review" });
+    }
+    if (!workflow.qaOfficer || workflow.qaOfficer.status === "not_required") {
+      return res.status(400).json({ error: "QA review is not required for this file" });
+    }
+    if (workflow.programChair && workflow.programChair.status === "pending") {
+      return res.status(400).json({ error: "Program chair review must be completed first" });
+    }
+    const assignedQa = Array.isArray(workflow.assignedQaOfficers) ? workflow.assignedQaOfficers : [];
+    if (!isAdmin && assignedQa.length === 0) {
+      return res.status(403).json({ error: "No QA admin is assigned to this document" });
+    }
+    if (!isAdmin && !isUserAssignedTo(userId, assignedQa)) {
+      return res.status(403).json({ error: "You are not assigned to review this document as QA admin" });
+    }
+
+    const normalizedAction = String(action || "").toLowerCase();
+    if (!["approve", "reject", "request_missing_files"].includes(normalizedAction)) {
+      return res.status(400).json({ error: "Action must be approve, reject, or request_missing_files" });
+    }
+    const effectiveAction = normalizedAction === "request_missing_files" ? "reject" : normalizedAction;
+    const resolvedNotes = normalizedAction === "request_missing_files"
+      ? (String(notes || "").trim()
+        ? `Missing files requested: ${String(notes || "").trim()}`
+        : "Missing files requested by QA Admin.")
+      : String(notes || "");
+
+    workflow.qaOfficer = {
+      ...workflow.qaOfficer,
+      status: effectiveAction === "approve" ? "approved" : "rejected",
+      reviewedBy: userId,
+      reviewedAt: new Date(),
+      notes: resolvedNotes,
+    };
+    workflow.status = effectiveAction === "approve" ? "approved" : "rejected_qa";
+    workflow.verificationBadge = {
+      verified: effectiveAction === "approve",
+      verifiedBy: effectiveAction === "approve" ? userId : null,
+      verifiedAt: effectiveAction === "approve" ? new Date() : null,
+      label: effectiveAction === "approve" ? "Verified by QA Office" : "Pending Verification",
+    };
+
+    file.reviewWorkflow = workflow;
+    await file.save();
+    if (file.parentFolder) {
+      await updateCopcStage(
+        file.parentFolder,
+        effectiveAction === "approve" ? "qa_verification" : "revision",
+        effectiveAction === "approve"
+          ? "QA Verification Completed"
+          : normalizedAction === "request_missing_files"
+            ? "Missing Files Requested"
+            : "Needs Correction"
+      );
+    }
+    createLog("QA_REVIEW", userId, `${normalizedAction} file ${file.originalName}`);
+    res.json({ success: true, action: normalizedAction, reviewWorkflow: file.reviewWorkflow });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to process QA review" });
+  }
+});
+
+// QA admin tagging for compliance category
+app.patch("/files/:id/review/qa/tag-category", async (req, res) => {
+  try {
+    const { userId, role, category, tags } = req.body || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = actorRole === "superadmin";
+    if (!isAdmin && !isQaReviewRole(actorRole)) {
+      return res.status(403).json({ error: "Only super admin or QA admin can tag compliance category" });
+    }
+
+    const file = await File.findById(req.params.id);
+    if (!file) return res.status(404).json({ error: "File not found" });
+    const workflow = file.reviewWorkflow || {};
+    if (!workflow.requiresReview) {
+      return res.status(400).json({ error: "This file does not require COPC review" });
+    }
+    if (!workflow.qaOfficer || workflow.qaOfficer.status === "not_required") {
+      return res.status(400).json({ error: "QA review is not required for this file" });
+    }
+    const assignedQa = Array.isArray(workflow.assignedQaOfficers) ? workflow.assignedQaOfficers : [];
+    if (!isAdmin && assignedQa.length === 0) {
+      return res.status(403).json({ error: "No QA admin is assigned to this document" });
+    }
+    if (!isAdmin && !isUserAssignedTo(userId, assignedQa)) {
+      return res.status(403).json({ error: "You are not assigned to tag this document as QA admin" });
+    }
+
+    const normalizedCategory = String(category || "").trim();
+    if (!normalizedCategory) {
+      return res.status(400).json({ error: "Compliance category is required" });
+    }
+    const normalizedTags = Array.isArray(tags)
+      ? tags
+      : String(tags || "")
+          .split(",")
+          .map((tag) => String(tag || "").trim())
+          .filter(Boolean);
+    const uniqueTags = Array.from(new Set(normalizedTags)).slice(0, 20);
+
+    const existing = file.classification || {};
+    file.classification = {
+      ...existing,
+      category: normalizedCategory,
+      tags: uniqueTags,
+      confidence: Number.isFinite(Number(existing.confidence)) ? Number(existing.confidence) : 0.95,
+      classifiedAt: new Date(),
+      classifierVersion: "qa-manual-v1",
+    };
+    await file.save();
+
+    createLog("QA_TAG_COMPLIANCE_CATEGORY", userId, `Tagged ${file.originalName} as ${normalizedCategory}`);
+    res.json({ success: true, classification: file.classification });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to tag compliance category" });
+  }
+});
+
+// Get folder compliance tasks + assignments
+app.get("/folders/:id/tasks", async (req, res) => {
+  try {
+    const { userId, role } = req.query || {};
+    const folder = await Folder.findById(req.params.id)
+      .populate("folderAssignments.uploaders", "email name role")
+      .populate("folderAssignments.programChairs", "email name role")
+      .populate("folderAssignments.qaOfficers", "email name role")
+      .populate("folderAssignments.evaluators", "email name role");
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    const ownerId = folder.owner?.toString?.() || folder.owner?._id?.toString?.();
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = actorRole === "superadmin";
+    const isOwner = ownerId && userId && ownerId.toString() === userId.toString();
+    const isAssignedScope = await canUserAccessFolderByAssignment(folder._id, userId, actorRole);
+    const canView = canViewCompliance(actorRole) || isAdmin || isOwner || isAssignedScope;
+    if (!canView) return res.status(403).json({ error: "Not authorized to view folder tasks" });
+
+    const { normalized, progress, totalNodes } = computeTaskProgress(folder.complianceTasks || []);
+    const programChairReviews = (folder.complianceReviews || []).filter((r) => isProgramChairRole(r.role));
+    const qaReviews = (folder.complianceReviews || []).filter((r) => isQaReviewRole(r.role));
+    const root = await findCopcRootFolderByFolderId(folder._id);
+    const fallbackAssignments = folder.folderAssignments || {};
+    const rootAssignments = root?.folderAssignments || {};
+    const prefer = (rootList, fallbackList) => {
+      const primary = Array.isArray(rootList) ? rootList : [];
+      if (primary.length > 0) return primary;
+      return Array.isArray(fallbackList) ? fallbackList : [];
+    };
+    const poolIds = {
+      uploaders: prefer(rootAssignments.uploaders, fallbackAssignments.uploaders),
+      programChairs: prefer(rootAssignments.programChairs, fallbackAssignments.programChairs),
+      qaOfficers: prefer(rootAssignments.qaOfficers, fallbackAssignments.qaOfficers),
+      evaluators: prefer(rootAssignments.evaluators, fallbackAssignments.evaluators),
+    };
+    const uniquePoolIds = Array.from(
+      new Set(
+        Object.values(poolIds)
+          .flat()
+          .map((entry) => entry?._id?.toString?.() || entry?.toString?.())
+          .filter(Boolean)
+      )
+    );
+    const poolUsers = uniquePoolIds.length
+      ? await UserModel.find({ _id: { $in: uniquePoolIds } }).select("name email role")
+      : [];
+    const poolMap = new Map(poolUsers.map((u) => [String(u._id), u]));
+    const mapUsers = (arr) =>
+      (Array.isArray(arr) ? arr : [])
+        .map((entry) => {
+          const id = entry?._id?.toString?.() || entry?.toString?.();
+          return id ? poolMap.get(String(id)) || null : null;
+        })
+        .filter(Boolean);
+
+    res.json({
+      folderId: folder._id,
+      profileKey: folder.complianceProfileKey || null,
+      tasks: normalized,
+      progress,
+      totalNodes,
+      assignments: folder.folderAssignments || { uploaders: [], programChairs: [], qaOfficers: [], evaluators: [] },
+      assignmentPool: {
+        uploaders: mapUsers(poolIds.uploaders),
+        programChairs: mapUsers(poolIds.programChairs),
+        qaOfficers: mapUsers(poolIds.qaOfficers),
+        evaluators: mapUsers(poolIds.evaluators),
+      },
+      reviews: {
+        programChair: programChairReviews,
+        qa: qaReviews,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch folder tasks" });
+  }
+});
+
+// Replace folder compliance tasks + assignments (admin only)
+app.put("/folders/:id/tasks", async (req, res) => {
+  try {
+    const { userId, role, tasks, assignments, profileKey } = req.body || {};
+    const isAdmin = await isAdminContext(role, userId);
+    if (!isAdmin) return res.status(403).json({ error: "Only super admin can modify tasks" });
+
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    folder.complianceTasks = Array.isArray(tasks) ? tasks.map(normalizeTaskNode) : [];
+    folder.complianceProfileKey = profileKey || folder.complianceProfileKey || null;
+    if (assignments && typeof assignments === "object") {
+      folder.folderAssignments = {
+        uploaders: Array.isArray(assignments.uploaders) ? assignments.uploaders : folder.folderAssignments?.uploaders || [],
+        programChairs: Array.isArray(assignments.programChairs) ? assignments.programChairs : folder.folderAssignments?.programChairs || [],
+        qaOfficers: Array.isArray(assignments.qaOfficers) ? assignments.qaOfficers : folder.folderAssignments?.qaOfficers || [],
+        evaluators: Array.isArray(assignments.evaluators) ? assignments.evaluators : folder.folderAssignments?.evaluators || [],
+      };
+    }
+    await folder.save();
+
+    createLog("UPDATE_FOLDER_TASKS", userId, `Updated compliance tasks for folder ${folder.name}`);
+    const { normalized, progress } = computeTaskProgress(folder.complianceTasks || []);
+    res.json({ success: true, tasks: normalized, progress, assignments: folder.folderAssignments || {} });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update folder tasks" });
+  }
+});
+
+// Update folder assignments only (superadmin)
+app.patch("/folders/:id/assignments", async (req, res) => {
+  try {
+    const { userId, role, assignments } = req.body || {};
+    const actorRole = await resolveActorRole(userId, role);
+    if (actorRole !== "superadmin") {
+      return res.status(403).json({ error: "Only super admin can update folder assignments" });
+    }
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
+    if (!assignments || typeof assignments !== "object") {
+      return res.status(400).json({ error: "Assignments payload is required" });
+    }
+
+    const clean = (value) =>
+      Array.from(
+        new Set(
+          (Array.isArray(value) ? value : [])
+            .map((entry) => entry?._id?.toString?.() || entry?.toString?.())
+            .filter(Boolean)
+        )
+      );
+
+    folder.folderAssignments = {
+      uploaders: clean(assignments.uploaders ?? folder.folderAssignments?.uploaders),
+      programChairs: clean(assignments.programChairs ?? folder.folderAssignments?.programChairs),
+      qaOfficers: clean(assignments.qaOfficers ?? folder.folderAssignments?.qaOfficers),
+      evaluators: clean(assignments.evaluators ?? folder.folderAssignments?.evaluators),
+    };
+    await folder.save();
+    createLog("UPDATE_FOLDER_ASSIGNMENTS", userId, `Updated assignments for folder ${folder.name}`);
+    res.json({ success: true, assignments: folder.folderAssignments });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update folder assignments" });
+  }
+});
+
+// Add a task node (admin only)
+app.post("/folders/:id/tasks", async (req, res) => {
+  try {
+    const { userId, role, parentTaskId, task } = req.body || {};
+    const isAdmin = await isAdminContext(role, userId);
+    if (!isAdmin) return res.status(403).json({ error: "Only super admin can add tasks" });
+
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    const nextTask = normalizeTaskNode(task || {});
+    if (!parentTaskId) {
+      folder.complianceTasks.push(nextTask);
+    } else {
+      const parent = findTaskById(folder.complianceTasks || [], parentTaskId);
+      if (!parent) return res.status(404).json({ error: "Parent task not found" });
+      parent.children = Array.isArray(parent.children) ? parent.children : [];
+      parent.children.push(nextTask);
+    }
+
+    await folder.save();
+    const { normalized, progress } = computeTaskProgress(folder.complianceTasks || []);
+    res.json({ success: true, tasks: normalized, progress });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to add task" });
+  }
+});
+
+// Edit a task node (admin only for task structure/text)
+app.patch("/folders/:id/tasks/:taskId", async (req, res) => {
+  try {
+    const { userId, role, updates } = req.body || {};
+    const isAdmin = await isAdminContext(role, userId);
+    if (!isAdmin) return res.status(403).json({ error: "Only super admin can edit task details" });
+
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    const task = findTaskById(folder.complianceTasks || [], req.params.taskId);
+    if (!task) return res.status(404).json({ error: "Task not found" });
+
+    const next = updates || {};
+    if (typeof next.title === "string") task.title = next.title.trim() || task.title;
+    if (typeof next.description === "string") task.description = next.description;
+    if (typeof next.scope === "string") task.scope = next.scope;
+    if (Array.isArray(next.checks)) task.checks = next.checks;
+    if (Array.isArray(next.assignedUploaders)) task.assignedUploaders = next.assignedUploaders;
+    if (Array.isArray(next.assignedProgramChairs)) task.assignedProgramChairs = next.assignedProgramChairs;
+    if (Array.isArray(next.assignedQaOfficers)) task.assignedQaOfficers = next.assignedQaOfficers;
+    if (next.status) task.status = next.status;
+    if (typeof next.percentage !== "undefined") task.percentage = Number(next.percentage) || 0;
+
+    await folder.save();
+    const { normalized, progress } = computeTaskProgress(folder.complianceTasks || []);
+    res.json({ success: true, tasks: normalized, progress });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update task" });
+  }
+});
+
+// Delete a task node (superadmin only, completed tasks only)
+app.delete("/folders/:id/tasks/:taskId", async (req, res) => {
+  try {
+    const { userId, role } = req.body || {};
+    const isAdmin = await isAdminContext(role, userId);
+    if (!isAdmin) return res.status(403).json({ error: "Only super admin can delete tasks" });
+
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
+
+    const task = findTaskById(folder.complianceTasks || [], req.params.taskId);
+    if (!task) return res.status(404).json({ error: "Task not found" });
+
+    const isCompleted = task.status === "complete" || Number(task.percentage || 0) >= 100;
+    if (!isCompleted) {
+      return res.status(400).json({ error: "Only completed tasks can be removed" });
+    }
+
+    removeTaskById(folder.complianceTasks || [], req.params.taskId);
+    await folder.save();
+
+    createLog("DELETE_FOLDER_TASK", userId, `Removed completed task from folder ${folder.name}`);
+    const { normalized, progress } = computeTaskProgress(folder.complianceTasks || []);
+    res.json({ success: true, tasks: normalized, progress });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete task" });
+  }
+});
+
+// Check task status (admin/program chair/qa)
+app.patch("/folders/:id/tasks/:taskId/check", async (req, res) => {
+  try {
+    const { userId, role, status, percentage } = req.body || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = actorRole === "superadmin";
+    const isChair = isProgramChairRole(actorRole);
+    const isQa = isQaReviewRole(actorRole);
+    if (!isAdmin && !isChair && !isQa) {
+      return res.status(403).json({ error: "Not authorized to check tasks" });
+    }
+
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
+    if (!isAdmin) {
+      const assignedList = isChair
+        ? folder?.folderAssignments?.programChairs || []
+        : folder?.folderAssignments?.qaOfficers || [];
+      if (assignedList.length === 0) {
+        return res.status(403).json({ error: "No reviewer assignment found for this folder scope" });
+      }
+      if (!isUserAssignedTo(userId, assignedList)) {
+        return res.status(403).json({ error: "Not assigned to this folder scope" });
+      }
+    }
+
+    const task = findTaskById(folder.complianceTasks || [], req.params.taskId);
+    if (!task) return res.status(404).json({ error: "Task not found" });
+
+    if (status) task.status = status;
+    if (typeof percentage !== "undefined") task.percentage = Number(percentage) || 0;
+    if (status === "complete" && typeof percentage === "undefined") task.percentage = 100;
+
+    await folder.save();
+    const { normalized, progress } = computeTaskProgress(folder.complianceTasks || []);
+    res.json({ success: true, tasks: normalized, progress });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to check task" });
+  }
+});
+
+// Save folder-level compliance review by program chair / QA
+app.post("/folders/:id/reviews", async (req, res) => {
+  try {
+    const { userId, role, scope, checks, notes } = req.body || {};
+    const reviewerRole = await resolveActorRole(userId, role);
+    const isAdmin = reviewerRole === "superadmin";
+    const isChair = isProgramChairRole(reviewerRole);
+    const isQa = isQaReviewRole(reviewerRole);
+    if (!isAdmin && !isChair && !isQa) {
+      return res.status(403).json({ error: "Not authorized to submit review" });
+    }
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
+    if (!isAdmin) {
+      const assignedList = isChair
+        ? folder?.folderAssignments?.programChairs || []
+        : folder?.folderAssignments?.qaOfficers || [];
+      if (assignedList.length === 0) {
+        return res.status(403).json({ error: "No reviewer assignment found for this folder scope" });
+      }
+      if (!isUserAssignedTo(userId, assignedList)) {
+        return res.status(403).json({ error: "Not assigned to this folder scope" });
+      }
+    }
+
+    folder.complianceReviews = folder.complianceReviews || [];
+    folder.complianceReviews.push({
+      reviewer: userId,
+      role: reviewerRole,
+      scope: String(scope || ""),
+      checks: Array.isArray(checks) ? checks : [],
+      notes: String(notes || ""),
+      createdAt: new Date(),
+    });
+    await folder.save();
+    res.json({ success: true, reviews: folder.complianceReviews });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to save review" });
+  }
+});
+
+// Compliance dashboard summary (COPC)
+app.get("/compliance/dashboard", async (req, res) => {
+  try {
+    const { userId, role, profile = "COPC_BSIT" } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = actorRole === "superadmin";
+    if (!isAdmin && !isProgramChairRole(actorRole) && !isQaReviewRole(actorRole)) {
+      return res.status(403).json({ error: "Not authorized to view compliance dashboard" });
+    }
+
+    const folders = await Folder.find({
+      deletedAt: null,
+      $or: [
+        { complianceProfileKey: profile },
+        { name: new RegExp(String(profile).replace("_", " "), "i") },
+      ],
+    }).select("name complianceTasks");
+
+    const categories = [
+      { key: "faculty", label: "Faculty Documents" },
+      { key: "curriculum", label: "Curriculum" },
+      { key: "facilities", label: "Facilities" },
+      { key: "library", label: "Library" },
+      { key: "program", label: "Program Profile" },
+      { key: "administration", label: "Administration" },
+      { key: "supporting", label: "Supporting Documents" },
+    ];
+
+    const map = {};
+    for (const c of categories) {
+      map[c.label] = { label: c.label, total: 0, nodes: 0 };
+    }
+
+    for (const folder of folders) {
+      const lowName = String(folder.name || "").toLowerCase();
+      const { normalized } = computeTaskProgress(folder.complianceTasks || []);
+      let picked = categories.find((c) => lowName.includes(c.key));
+      if (!picked) picked = categories.find((c) => normalized.some((t) => String(t.scope || "").toLowerCase().includes(c.key)));
+      if (!picked) continue;
+      const bucket = map[picked.label];
+      const { progress, totalNodes } = computeTaskProgress(normalized);
+      bucket.total += progress;
+      bucket.nodes += totalNodes > 0 ? 1 : 0;
+    }
+
+    const summary = Object.values(map)
+      .filter((r) => r.nodes > 0)
+      .map((row) => ({
+        label: row.label,
+        percent: Number((row.total / row.nodes).toFixed(2)),
+      }));
+
+    res.json({
+      profile,
+      status: "BSIT COPC Status",
+      summary,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch compliance dashboard" });
+  }
+});
+
+// Initialize COPC program workspace and standardized structure
+app.post("/copc/programs/init", async (req, res) => {
+  try {
+    const {
+      userId,
+      role,
+      programCode,
+      programName,
+      departmentName,
+      year,
+      deptChairIds = [],
+      qaAdminIds = [],
+      evaluatorIds = [],
+      uploaderIds = [],
+      facultyUserIds = [],
+    } = req.body || {};
+
+    const actorRole = await resolveActorRole(userId, role);
+    if (actorRole !== "superadmin") {
+      return res.status(403).json({ error: "Only super admin can initialize COPC programs" });
+    }
+    if (!programCode || !programName || !departmentName || !year) {
+      return res.status(400).json({ error: "programCode, programName, departmentName, and year are required" });
+    }
+
+    const rootFolderName = "COPC";
+    let copcRoot = await Folder.findOne({
+      name: rootFolderName,
+      parentFolder: null,
+      owner: userId,
+      deletedAt: null,
+    });
+    if (!copcRoot) {
+      copcRoot = await Folder.create({
+        name: rootFolderName,
+        owner: userId,
+        parentFolder: null,
+        permissions: "owner",
+        sharedWith: [],
+      });
+    }
+
+    const cleanIds = (arr) =>
+      Array.from(
+        new Set(
+          (Array.isArray(arr) ? arr : [])
+            .map((entry) => entry?._id?.toString?.() || entry?.toString?.())
+            .filter(Boolean)
+        )
+      );
+
+    const programKey = `COPC_${String(programCode).trim().toUpperCase()}`;
+    const existing = await Folder.findOne({
+      parentFolder: copcRoot._id,
+      "copc.isProgramRoot": true,
+      "copc.programCode": String(programCode).trim().toUpperCase(),
+      "copc.year": Number(year),
+      deletedAt: null,
+    });
+    if (existing) {
+      return res.status(409).json({ error: "COPC program workspace already exists for this code and year", folderId: existing._id });
+    }
+
+    const baseAssignments = {
+      uploaders: cleanIds(uploaderIds),
+      programChairs: cleanIds(deptChairIds),
+      qaOfficers: cleanIds(qaAdminIds),
+      evaluators: cleanIds(evaluatorIds),
+    };
+
+    const programFolder = await Folder.create({
+      name: String(programCode).trim().toUpperCase(),
+      owner: userId,
+      parentFolder: copcRoot._id,
+      permissions: "owner",
+      sharedWith: [],
+      complianceProfileKey: programKey,
+      folderAssignments: baseAssignments,
+      copc: {
+        isProgramRoot: true,
+        programCode: String(programCode).trim().toUpperCase(),
+        programName: String(programName).trim(),
+        departmentName: String(departmentName).trim(),
+        year: Number(year),
+        workflowStage: "collecting_documents",
+        workflowStatus: "Collecting Documents",
+      },
+    });
+
+    const createdFolders = [programFolder];
+    let facultyCredentialsFolder = null;
+    for (const sectionName of COPC_DEFAULT_STRUCTURE) {
+      const taskTitles = COPC_DEFAULT_TASKS[sectionName] || [];
+      const tasks = taskTitles.map((title) =>
+        normalizeTaskNode({
+          title,
+          status: "not_started",
+          percentage: 0,
+          scope: sectionName,
+          checks: ["complete", "updated", "aligned with CHED standards"],
+        })
+      );
+      const section = await Folder.create({
+        name: sectionName,
+        owner: userId,
+        parentFolder: programFolder._id,
+        permissions: "owner",
+        sharedWith: [],
+        complianceProfileKey: programKey,
+        folderAssignments: baseAssignments,
+        complianceTasks: tasks,
+      });
+      createdFolders.push(section);
+      if (sectionName.toLowerCase().includes("faculty")) facultyCredentialsFolder = section;
+    }
+
+    if (facultyCredentialsFolder) {
+      const facultyIds = cleanIds(facultyUserIds);
+      for (const facultyId of facultyIds) {
+        const facultyUser = await UserModel.findById(facultyId).select("email");
+        if (!facultyUser) continue;
+        const folderName = String(facultyUser.email || `faculty-${facultyId}`).split("@")[0];
+        const facultyFolder = await Folder.create({
+          name: folderName,
+          owner: userId,
+          parentFolder: facultyCredentialsFolder._id,
+          permissions: "owner",
+          sharedWith: [],
+          complianceProfileKey: programKey,
+          folderAssignments: {
+            uploaders: [facultyId],
+            programChairs: baseAssignments.programChairs,
+            qaOfficers: baseAssignments.qaOfficers,
+            evaluators: baseAssignments.evaluators,
+          },
+          complianceTasks: (COPC_DEFAULT_TASKS["03 Faculty Credentials"] || []).map((title) =>
+            normalizeTaskNode({
+              title,
+              status: "not_started",
+              percentage: 0,
+              scope: "03 Faculty Credentials",
+              checks: ["complete", "updated", "aligned with CHED standards"],
+            })
+          ),
+        });
+        createdFolders.push(facultyFolder);
+      }
+    }
+
+    createLog("COPC_INIT_PROGRAM", userId, `Initialized ${programName} (${programCode}) COPC workflow`);
+    res.json({
+      success: true,
+      programFolderId: programFolder._id,
+      rootFolderId: copcRoot._id,
+      createdCount: createdFolders.length,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to initialize COPC program workflow" });
+  }
+});
+
+// List COPC program roots visible to user
+app.get("/copc/programs", async (req, res) => {
+  try {
+    const { userId, role } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const roots = await Folder.find({
+      deletedAt: null,
+      "copc.isProgramRoot": true,
+    })
+      .select("name copc complianceProfileKey owner folderAssignments")
+      .sort({ createdAt: -1 });
+
+    const visible = [];
+    for (const folder of roots) {
+      if (actorRole === "superadmin") {
+        visible.push(folder);
+        continue;
+      }
+      const canView = await canUserAccessCopcProgram(folder, userId, actorRole);
+      if (canView) visible.push(folder);
+    }
+
+    res.json(
+      visible.map((folder) => ({
+        _id: folder._id,
+        name: folder.name,
+        profileKey: folder.complianceProfileKey || null,
+        programCode: folder?.copc?.programCode || "",
+        programName: folder?.copc?.programName || folder.name,
+        departmentName: folder?.copc?.departmentName || "",
+        year: folder?.copc?.year || null,
+        workflowStage: folder?.copc?.workflowStage || "initialized",
+        workflowStatus: folder?.copc?.workflowStatus || "In Progress",
+        isLocked: !!folder?.copc?.locked?.isLocked,
+      }))
+    );
+  } catch (err) {
+    res.status(500).json({ error: "Failed to list COPC programs" });
+  }
+});
+
+// Detailed COPC workflow state for one program
+app.get("/copc/programs/:id/workflow", async (req, res) => {
+  try {
+    const { userId, role } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const root = await Folder.findById(req.params.id).select("name copc complianceProfileKey folderAssignments owner");
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+    const isAdmin = actorRole === "superadmin";
+    if (!isAdmin && !(await canUserAccessCopcProgram(root, userId, actorRole))) {
+      return res.status(403).json({ error: "Not authorized to view this COPC workflow" });
+    }
+
+    const folderIds = await getDescendantFolderIds(root._id);
+    const folders = await Folder.find({ _id: { $in: folderIds }, deletedAt: null }).select("name complianceTasks");
+    const files = await File.find({ parentFolder: { $in: folderIds }, deletedAt: null }).select("reviewWorkflow parentFolder");
+
+    const counts = {
+      submitted: 0,
+      pendingProgramChair: 0,
+      pendingQa: 0,
+      rejected: 0,
+      approved: 0,
+      verified: 0,
+    };
+    for (const file of files) {
+      const wf = file.reviewWorkflow || {};
+      counts.submitted += 1;
+      if (wf.status === "pending_program_chair") counts.pendingProgramChair += 1;
+      if (wf.status === "pending_qa") counts.pendingQa += 1;
+      if (wf.status === "rejected_program_chair" || wf.status === "rejected_qa") counts.rejected += 1;
+      if (wf.status === "approved") counts.approved += 1;
+      if (wf?.verificationBadge?.verified) counts.verified += 1;
+    }
+
+    const bucketKeywords = [
+      { label: "Faculty Documents", keys: ["faculty"] },
+      { label: "Curriculum", keys: ["curriculum"] },
+      { label: "Facilities", keys: ["facilities"] },
+      { label: "Library Resources", keys: ["library"] },
+      { label: "Program Profile", keys: ["program profile"] },
+      { label: "Administration", keys: ["administration"] },
+      { label: "Supporting Documents", keys: ["supporting"] },
+    ];
+    const summaryMap = {};
+    bucketKeywords.forEach((b) => (summaryMap[b.label] = { total: 0, nodes: 0 }));
+    for (const folder of folders) {
+      const low = String(folder.name || "").toLowerCase();
+      const picked = bucketKeywords.find((b) => b.keys.some((k) => low.includes(k)));
+      if (!picked) continue;
+      const { progress, totalNodes } = computeTaskProgress(folder.complianceTasks || []);
+      summaryMap[picked.label].total += progress;
+      if (totalNodes > 0) summaryMap[picked.label].nodes += 1;
+    }
+    const summary = Object.entries(summaryMap).map(([label, value]) => ({
+      label,
+      percent: value.nodes > 0 ? Number((value.total / value.nodes).toFixed(2)) : 0,
+    }));
+    const overallCompliance = summary.length
+      ? Number((summary.reduce((acc, item) => acc + item.percent, 0) / summary.length).toFixed(2))
+      : 0;
+    const finalApprovalChecklist = {
+      finalDocumentVerification:
+        counts.submitted > 0 && counts.approved === counts.submitted,
+      systemAuditReview:
+        counts.pendingProgramChair === 0 &&
+        counts.pendingQa === 0 &&
+        counts.rejected === 0,
+      lockApprovedDocuments: !!root?.copc?.locked?.isLocked,
+      generateFinalCopcSubmissionFile: !!String(root?.copc?.packageMeta?.fileName || "").trim(),
+    };
+
+    const workflowSteps = [
+      { key: "initialized", label: "System Initialization" },
+      { key: "collecting_documents", label: "Document Upload" },
+      { key: "department_review", label: "Department Review" },
+      { key: "qa_verification", label: "Compliance Verification" },
+      { key: "internal_evaluation", label: "Internal Evaluation" },
+      { key: "package_compiled", label: "COPC Package Compilation" },
+      { key: "copc_ready", label: "Final Approval" },
+      { key: "submitted", label: "CHED Submission" },
+      { key: "archived", label: "Archive" },
+    ];
+    const currentIndex = workflowSteps.findIndex((step) => step.key === (root?.copc?.workflowStage || "initialized"));
+    const steps = workflowSteps.map((step, index) => ({
+      ...step,
+      complete: index <= currentIndex,
+      current: index === currentIndex,
+    }));
+
+    res.json({
+      program: {
+        _id: root._id,
+        code: root?.copc?.programCode || root.name,
+        name: root?.copc?.programName || root.name,
+        department: root?.copc?.departmentName || "",
+        year: root?.copc?.year || null,
+        stage: root?.copc?.workflowStage || "initialized",
+        status: root?.copc?.workflowStatus || "In Progress",
+        isLocked: !!root?.copc?.locked?.isLocked,
+        packageMeta: root?.copc?.packageMeta || {},
+        submissionMeta: root?.copc?.submissionMeta || {},
+        archiveMeta: root?.copc?.archiveMeta || {},
+        assignments: {
+          uploaders: Array.isArray(root?.folderAssignments?.uploaders) ? root.folderAssignments.uploaders : [],
+          programChairs: Array.isArray(root?.folderAssignments?.programChairs) ? root.folderAssignments.programChairs : [],
+          qaOfficers: Array.isArray(root?.folderAssignments?.qaOfficers) ? root.folderAssignments.qaOfficers : [],
+          evaluators: Array.isArray(root?.folderAssignments?.evaluators) ? root.folderAssignments.evaluators : [],
+        },
+      },
+      observations: Array.isArray(root?.copc?.observations) ? root.copc.observations : [],
+      counts,
+      summary,
+      overallCompliance,
+      finalApprovalChecklist,
+      steps,
+      actions: {
+        canCompile: ["superadmin", "qa_admin"].includes(actorRole),
+        canFinalApprove: actorRole === "superadmin",
+        canSubmit: ["superadmin", "qa_admin"].includes(actorRole),
+        canArchive: ["superadmin", "qa_admin"].includes(actorRole),
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch COPC workflow details" });
+  }
+});
+
+// Department chair review queue for a selected COPC program
+app.get("/copc/programs/:id/department-chair/submissions", async (req, res) => {
+  try {
+    const { userId, role, status = "pending" } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = actorRole === "superadmin";
+    if (!isAdmin && !isProgramChairRole(actorRole)) {
+      return res.status(403).json({ error: "Only super admin or department chair can access this review queue" });
+    }
+
+    const root = await Folder.findById(req.params.id).select("name copc complianceProfileKey folderAssignments owner");
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+    if (!isAdmin && !(await canUserAccessCopcProgram(root, userId, actorRole))) {
+      return res.status(403).json({ error: "Not authorized to review this COPC program" });
+    }
+
+    const folderIds = await getDescendantFolderIds(root._id);
+    const files = await File.find({
+      parentFolder: { $in: folderIds },
+      deletedAt: null,
+    })
+      .select("originalName filename mimetype size uploadDate parentFolder reviewWorkflow classification")
+      .populate("parentFolder", "name");
+
+    const normalizedStatus = String(status || "pending").toLowerCase();
+    const submissions = files
+      .filter((file) => {
+        const wf = file?.reviewWorkflow || {};
+        if (!wf?.requiresReview) return false;
+        if (!wf?.programChair || wf.programChair.status === "not_required") return false;
+
+        const assigned = Array.isArray(wf.assignedProgramChairs) ? wf.assignedProgramChairs : [];
+        if (!isAdmin && !isUserAssignedTo(userId, assigned)) return false;
+
+        const chairStatus = String(wf?.programChair?.status || "");
+        if (normalizedStatus === "all") return true;
+        if (normalizedStatus === "pending") return chairStatus === "pending";
+        if (normalizedStatus === "completed") return chairStatus === "approved" || chairStatus === "rejected";
+        if (normalizedStatus === "revision") return String(wf?.status || "") === "rejected_program_chair";
+        return chairStatus === "pending";
+      })
+      .map((file) => {
+        const wf = file?.reviewWorkflow || {};
+        return {
+          _id: file._id,
+          originalName: file.originalName,
+          filename: file.filename,
+          mimetype: file.mimetype,
+          size: file.size,
+          uploadDate: file.uploadDate,
+          folderName: file?.parentFolder?.name || "Unknown Folder",
+          status: wf?.status || "pending_program_chair",
+          programChairStatus: wf?.programChair?.status || "pending",
+          programChairNotes: wf?.programChair?.notes || "",
+          classification: file?.classification || null,
+        };
+      })
+      .sort((a, b) => new Date(b.uploadDate || 0).getTime() - new Date(a.uploadDate || 0).getTime());
+
+    const counts = {
+      pending: submissions.filter((s) => s.programChairStatus === "pending").length,
+      approved: submissions.filter((s) => s.programChairStatus === "approved").length,
+      rejected: submissions.filter((s) => s.programChairStatus === "rejected").length,
+    };
+
+    res.json({
+      program: {
+        _id: root._id,
+        code: root?.copc?.programCode || root.name,
+        name: root?.copc?.programName || root.name,
+        department: root?.copc?.departmentName || "",
+        year: root?.copc?.year || null,
+      },
+      counts,
+      submissions,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load department chair submissions" });
+  }
+});
+
+// QA admin compliance review queue for a selected COPC program
+app.get("/copc/programs/:id/qa/submissions", async (req, res) => {
+  try {
+    const { userId, role, status = "pending" } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = actorRole === "superadmin";
+    if (!isAdmin && !isQaReviewRole(actorRole)) {
+      return res.status(403).json({ error: "Only super admin or QA admin can access this review queue" });
+    }
+
+    const root = await Folder.findById(req.params.id).select("name copc complianceProfileKey folderAssignments owner");
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+    if (!isAdmin && !(await canUserAccessCopcProgram(root, userId, actorRole))) {
+      return res.status(403).json({ error: "Not authorized to review this COPC program" });
+    }
+
+    const folderIds = await getDescendantFolderIds(root._id);
+    const files = await File.find({
+      parentFolder: { $in: folderIds },
+      deletedAt: null,
+    })
+      .select("originalName filename mimetype size uploadDate parentFolder reviewWorkflow classification")
+      .populate("parentFolder", "name");
+
+    const normalizedStatus = String(status || "pending").toLowerCase();
+    const queue = files
+      .filter((file) => {
+        const wf = file?.reviewWorkflow || {};
+        if (!wf?.requiresReview) return false;
+        if (!wf?.qaOfficer || wf.qaOfficer.status === "not_required") return false;
+        if (wf?.programChair && wf.programChair.status === "pending") return false;
+
+        const assigned = Array.isArray(wf.assignedQaOfficers) ? wf.assignedQaOfficers : [];
+        if (!isAdmin && !isUserAssignedTo(userId, assigned)) return false;
+        return true;
+      })
+      .map((file) => {
+        const wf = file?.reviewWorkflow || {};
+        return {
+          _id: file._id,
+          originalName: file.originalName,
+          filename: file.filename,
+          mimetype: file.mimetype,
+          size: file.size,
+          uploadDate: file.uploadDate,
+          folderName: file?.parentFolder?.name || "Unknown Folder",
+          status: wf?.status || "pending_qa",
+          programChairStatus: wf?.programChair?.status || "not_required",
+          programChairNotes: wf?.programChair?.notes || "",
+          qaStatus: wf?.qaOfficer?.status || "pending",
+          qaNotes: wf?.qaOfficer?.notes || "",
+          classification: file?.classification || null,
+        };
+      });
+
+    const submissions = queue
+      .filter((item) => {
+        const qaStatus = String(item.qaStatus || "");
+        const wfStatus = String(item.status || "");
+        if (normalizedStatus === "all") return true;
+        if (normalizedStatus === "pending") return qaStatus === "pending" || wfStatus === "pending_qa";
+        if (normalizedStatus === "completed") return qaStatus === "approved" || qaStatus === "rejected";
+        if (normalizedStatus === "revision") return wfStatus === "rejected_qa";
+        return qaStatus === "pending" || wfStatus === "pending_qa";
+      })
+      .sort((a, b) => new Date(b.uploadDate || 0).getTime() - new Date(a.uploadDate || 0).getTime());
+
+    const counts = {
+      pending: queue.filter((s) => s.qaStatus === "pending" || s.status === "pending_qa").length,
+      approved: queue.filter((s) => s.qaStatus === "approved").length,
+      rejected: queue.filter((s) => s.qaStatus === "rejected").length,
+    };
+
+    res.json({
+      program: {
+        _id: root._id,
+        code: root?.copc?.programCode || root.name,
+        name: root?.copc?.programName || root.name,
+        department: root?.copc?.departmentName || "",
+        year: root?.copc?.year || null,
+      },
+      counts,
+      submissions,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load QA admin submissions" });
+  }
+});
+
+// QA compilation view: approved files grouped by COPC folder structure
+app.get("/copc/programs/:id/compilation/approved-tree", async (req, res) => {
+  try {
+    const { userId, role } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = actorRole === "superadmin";
+    if (!isAdmin && !isQaReviewRole(actorRole) && !isReadOnlyReviewerRole(actorRole)) {
+      return res.status(403).json({ error: "Only super admin, QA admin, or evaluator can access COPC compilation view" });
+    }
+
+    const root = await Folder.findById(req.params.id).select("name copc folderAssignments owner");
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+    if (!isAdmin && !(await canUserAccessCopcProgram(root, userId, actorRole))) {
+      return res.status(403).json({ error: "Not authorized to access this COPC program" });
+    }
+
+    const folderIds = await getDescendantFolderIds(root._id);
+    const folders = await Folder.find({ _id: { $in: folderIds }, deletedAt: null })
+      .select("_id name parentFolder")
+      .sort({ name: 1 });
+    const folderMap = new Map(folders.map((folder) => [String(folder._id), folder]));
+
+    const buildFolderPath = (folderId) => {
+      const parts = [];
+      let cursor = folderMap.get(String(folderId));
+      let guard = 0;
+      while (cursor && guard < 120) {
+        guard += 1;
+        if (String(cursor._id) === String(root._id)) break;
+        parts.unshift(String(cursor.name || ""));
+        if (!cursor.parentFolder) break;
+        cursor = folderMap.get(String(cursor.parentFolder));
+      }
+      return parts.join("/");
+    };
+
+    const rawFiles = await File.find({
+      parentFolder: { $in: folderIds },
+      deletedAt: null,
+    }).select("originalName filename size mimetype uploadDate parentFolder reviewWorkflow");
+
+    const approvedFiles = rawFiles
+      .filter((file) => isFileFullyApprovedForCopc(file))
+      .map((file) => ({
+        _id: file._id,
+        originalName: file.originalName,
+        filename: file.filename,
+        size: file.size,
+        mimetype: file.mimetype,
+        uploadDate: file.uploadDate,
+        parentFolder: file.parentFolder,
+        folderPath: buildFolderPath(file.parentFolder),
+      }));
+
+    const grouped = new Map();
+    approvedFiles.forEach((file) => {
+      const pathKey = String(file.folderPath || "");
+      if (!grouped.has(pathKey)) grouped.set(pathKey, []);
+      grouped.get(pathKey).push(file);
+    });
+
+    const foldersWithFiles = Array.from(grouped.entries())
+      .map(([folderPath, filesInFolder]) => ({
+        folderPath,
+        files: filesInFolder
+          .slice()
+          .sort((a, b) => String(a.originalName || "").localeCompare(String(b.originalName || ""))),
+      }))
+      .sort((a, b) => String(a.folderPath || "").localeCompare(String(b.folderPath || "")));
+
+    res.json({
+      program: {
+        _id: root._id,
+        code: root?.copc?.programCode || root.name,
+        name: root?.copc?.programName || root.name,
+        year: root?.copc?.year || null,
+        packageFileName: `COPC_${root?.copc?.programCode || root.name}_${root?.copc?.year || new Date().getFullYear()}.zip`,
+        packageRootFolder: `COPC_${root?.copc?.programCode || root.name}`,
+      },
+      counts: {
+        approvedFiles: approvedFiles.length,
+        foldersWithApprovedFiles: foldersWithFiles.length,
+      },
+      folders: foldersWithFiles,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load COPC compilation tree" });
+  }
+});
+
+// Evaluator report download (read-only compliance dashboard snapshot)
+app.get("/copc/programs/:id/evaluation/report/download", async (req, res) => {
+  try {
+    const { userId, role } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = actorRole === "superadmin";
+    if (!isAdmin && !isReadOnlyReviewerRole(actorRole) && !isQaReviewRole(actorRole)) {
+      return res.status(403).json({ error: "Only super admin, QA admin, or evaluator can download evaluation report" });
+    }
+
+    const root = await Folder.findById(req.params.id).select("name copc complianceProfileKey folderAssignments owner");
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+    if (!isAdmin && !(await canUserAccessCopcProgram(root, userId, actorRole))) {
+      return res.status(403).json({ error: "Not authorized to access this COPC program" });
+    }
+
+    const folderIds = await getDescendantFolderIds(root._id);
+    const folders = await Folder.find({ _id: { $in: folderIds }, deletedAt: null }).select("_id name parentFolder complianceTasks");
+    const files = await File.find({ parentFolder: { $in: folderIds }, deletedAt: null })
+      .select("originalName uploadDate parentFolder reviewWorkflow");
+    const folderMap = new Map(folders.map((folder) => [String(folder._id), folder]));
+
+    const buildFolderPath = (folderId) => {
+      const parts = [];
+      let cursor = folderMap.get(String(folderId));
+      let guard = 0;
+      while (cursor && guard < 120) {
+        guard += 1;
+        if (String(cursor._id) === String(root._id)) break;
+        parts.unshift(String(cursor.name || ""));
+        if (!cursor.parentFolder) break;
+        cursor = folderMap.get(String(cursor.parentFolder));
+      }
+      return parts.join("/");
+    };
+
+    const counts = {
+      submitted: 0,
+      pendingProgramChair: 0,
+      pendingQa: 0,
+      rejected: 0,
+      approved: 0,
+      verified: 0,
+    };
+    for (const file of files) {
+      const wf = file.reviewWorkflow || {};
+      counts.submitted += 1;
+      if (wf.status === "pending_program_chair") counts.pendingProgramChair += 1;
+      if (wf.status === "pending_qa") counts.pendingQa += 1;
+      if (wf.status === "rejected_program_chair" || wf.status === "rejected_qa") counts.rejected += 1;
+      if (wf.status === "approved") counts.approved += 1;
+      if (wf?.verificationBadge?.verified) counts.verified += 1;
+    }
+
+    const bucketKeywords = [
+      { label: "Faculty Documents", keys: ["faculty"] },
+      { label: "Curriculum", keys: ["curriculum"] },
+      { label: "Facilities", keys: ["facilities"] },
+      { label: "Library Resources", keys: ["library"] },
+      { label: "Program Profile", keys: ["program profile"] },
+      { label: "Administration", keys: ["administration"] },
+      { label: "Supporting Documents", keys: ["supporting"] },
+    ];
+    const summaryMap = {};
+    bucketKeywords.forEach((bucket) => {
+      summaryMap[bucket.label] = { total: 0, nodes: 0 };
+    });
+    for (const folder of folders) {
+      const low = String(folder.name || "").toLowerCase();
+      const picked = bucketKeywords.find((bucket) => bucket.keys.some((key) => low.includes(key)));
+      if (!picked) continue;
+      const { progress, totalNodes } = computeTaskProgress(folder.complianceTasks || []);
+      summaryMap[picked.label].total += progress;
+      if (totalNodes > 0) summaryMap[picked.label].nodes += 1;
+    }
+    const summary = Object.entries(summaryMap).map(([label, value]) => ({
+      label,
+      percent: value.nodes > 0 ? Number((value.total / value.nodes).toFixed(2)) : 0,
+    }));
+    const overallCompliance = summary.length
+      ? Number((summary.reduce((acc, item) => acc + item.percent, 0) / summary.length).toFixed(2))
+      : 0;
+
+    const verifiedDocuments = files
+      .filter((file) => isFileFullyApprovedForCopc(file))
+      .map((file) => ({
+        folderPath: buildFolderPath(file.parentFolder),
+        originalName: file.originalName,
+        uploadedAt: file.uploadDate,
+      }))
+      .sort((a, b) => String(a.folderPath || "").localeCompare(String(b.folderPath || "")) || String(a.originalName || "").localeCompare(String(b.originalName || "")));
+
+    const escapeCsv = (value) => {
+      const raw = String(value ?? "");
+      if (raw.includes(",") || raw.includes("\"") || raw.includes("\n")) {
+        return `"${raw.replace(/"/g, "\"\"")}"`;
+      }
+      return raw;
+    };
+
+    const lines = [];
+    lines.push("Section,Metric,Value");
+    lines.push(`Program,Code,${escapeCsv(root?.copc?.programCode || root.name)}`);
+    lines.push(`Program,Name,${escapeCsv(root?.copc?.programName || root.name)}`);
+    lines.push(`Program,Department,${escapeCsv(root?.copc?.departmentName || "")}`);
+    lines.push(`Program,Academic Year,${escapeCsv(root?.copc?.year || "")}`);
+    lines.push(`Program,Workflow Stage,${escapeCsv(root?.copc?.workflowStage || "initialized")}`);
+    lines.push(`Program,Workflow Status,${escapeCsv(root?.copc?.workflowStatus || "In Progress")}`);
+    lines.push(`Program,Generated At,${escapeCsv(new Date().toISOString())}`);
+
+    lines.push(`Counts,Submitted Documents,${counts.submitted}`);
+    lines.push(`Counts,Pending Department Review,${counts.pendingProgramChair}`);
+    lines.push(`Counts,Pending QA Review,${counts.pendingQa}`);
+    lines.push(`Counts,Rejected For Revision,${counts.rejected}`);
+    lines.push(`Counts,Approved Documents,${counts.approved}`);
+    lines.push(`Counts,Verified Badge Count,${counts.verified}`);
+    lines.push(`Counts,Overall Compliance Percent,${overallCompliance}`);
+
+    summary.forEach((item) => {
+      lines.push(`Compliance Summary,${escapeCsv(item.label)},${item.percent}`);
+    });
+
+    if (verifiedDocuments.length) {
+      lines.push("Verified Documents,Folder Path,Document Name,Uploaded At");
+      verifiedDocuments.forEach((item) => {
+        lines.push(`Verified Documents,${escapeCsv(item.folderPath || "Root")},${escapeCsv(item.originalName || "")},${escapeCsv(item.uploadedAt ? new Date(item.uploadedAt).toISOString() : "")}`);
+      });
+    }
+
+    const fileName = `COPC_${root?.copc?.programCode || root.name}_${root?.copc?.year || new Date().getFullYear()}_evaluation_report.csv`;
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    res.send(lines.join("\n"));
+  } catch (err) {
+    res.status(500).json({ error: "Failed to download evaluation report" });
+  }
+});
+
+// Faculty uploader status tracker for selected COPC program/folder
+app.get("/copc/programs/:id/my-upload-status", async (req, res) => {
+  try {
+    const { userId, role, folderId, status = "all" } = req.query || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+
+    const actorRole = await resolveActorRole(userId, role);
+    const root = await Folder.findById(req.params.id).select("name copc complianceProfileKey folderAssignments owner");
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+
+    if (actorRole !== "superadmin" && !(await canUserAccessCopcProgram(root, userId, actorRole))) {
+      return res.status(403).json({ error: "Not authorized to view this COPC program" });
+    }
+
+    const descendantIds = await getDescendantFolderIds(root._id);
+    const descendantSet = new Set(descendantIds.map((id) => String(id)));
+    const scopedFolderId = folderId ? String(folderId) : "";
+    if (scopedFolderId && !descendantSet.has(scopedFolderId)) {
+      return res.status(400).json({ error: "Selected folder is outside the COPC program scope" });
+    }
+
+    const query = {
+      deletedAt: null,
+      userId: String(userId),
+      parentFolder: scopedFolderId
+        ? scopedFolderId
+        : { $in: descendantIds },
+    };
+
+    const rawFiles = await File.find(query)
+      .select("originalName filename mimetype size uploadDate parentFolder reviewWorkflow classification")
+      .populate("parentFolder", "name")
+      .sort({ uploadDate: -1 });
+
+    const normalizedStatus = String(status || "all").toLowerCase();
+    const mappedRows = rawFiles
+      .map((file) => {
+        const wf = file.reviewWorkflow || {};
+        const workflowStatus = wf.requiresReview ? (wf.status || "pending_program_chair") : "approved";
+        return {
+          _id: file._id,
+          originalName: file.originalName,
+          filename: file.filename,
+          mimetype: file.mimetype,
+          size: file.size,
+          uploadDate: file.uploadDate,
+          folderId: file?.parentFolder?._id || file?.parentFolder || null,
+          folderName: file?.parentFolder?.name || "Unknown Folder",
+          workflowStatus,
+          programChairStatus: wf?.programChair?.status || "not_required",
+          programChairNotes: wf?.programChair?.notes || "",
+          qaStatus: wf?.qaOfficer?.status || "not_required",
+          qaNotes: wf?.qaOfficer?.notes || "",
+          classification: file?.classification || null,
+        };
+      });
+
+    const rows = mappedRows.filter((row) => {
+      if (normalizedStatus === "all") return true;
+      return String(row.workflowStatus || "").toLowerCase() === normalizedStatus;
+    });
+
+    const counts = {
+      total: mappedRows.length,
+      approved: mappedRows.filter((r) => r.workflowStatus === "approved").length,
+      pendingProgramChair: mappedRows.filter((r) => r.workflowStatus === "pending_program_chair").length,
+      pendingQa: mappedRows.filter((r) => r.workflowStatus === "pending_qa").length,
+      rejectedProgramChair: mappedRows.filter((r) => r.workflowStatus === "rejected_program_chair").length,
+      rejectedQa: mappedRows.filter((r) => r.workflowStatus === "rejected_qa").length,
+    };
+
+    res.json({
+      program: {
+        _id: root._id,
+        code: root?.copc?.programCode || root.name,
+        name: root?.copc?.programName || root.name,
+        year: root?.copc?.year || null,
+      },
+      folderId: scopedFolderId || null,
+      counts,
+      files: rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load upload status tracker" });
+  }
+});
+
+// List folders under a COPC program scope with upload eligibility
+app.get("/copc/programs/:id/folders", async (req, res) => {
+  try {
+    const { userId, role } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const root = await Folder.findById(req.params.id).select("name copc complianceProfileKey folderAssignments owner");
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+    const isAdmin = actorRole === "superadmin";
+    if (!isAdmin && !(await canUserAccessCopcProgram(root, userId, actorRole))) {
+      return res.status(403).json({ error: "Not authorized to view this COPC workflow" });
+    }
+
+    const folderIds = await getDescendantFolderIds(root._id);
+    const folders = await Folder.find({ _id: { $in: folderIds }, deletedAt: null })
+      .select("name parentFolder owner folderAssignments complianceTasks complianceProfileKey")
+      .sort({ name: 1 });
+
+    const rows = folders.map((folder) => ({
+      _id: folder._id,
+      name: folder.name,
+      parentFolder: folder.parentFolder || null,
+      canUpload: !root?.copc?.locked?.isLocked && canUploadToFolder(folder, userId, actorRole),
+      isProgramRoot: String(folder._id) === String(root._id),
+      taskCount: Array.isArray(folder.complianceTasks) ? folder.complianceTasks.length : 0,
+    }));
+
+    res.json({
+      program: {
+        _id: root._id,
+        code: root?.copc?.programCode || root.name,
+        name: root?.copc?.programName || root.name,
+        year: root?.copc?.year || null,
+        isLocked: !!root?.copc?.locked?.isLocked,
+      },
+      folders: rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to list COPC folders" });
+  }
+});
+
+// Update COPC program role assignments (superadmin)
+app.patch("/copc/programs/:id/assignments", async (req, res) => {
+  try {
+    const { userId, role, assignments } = req.body || {};
+    const actorRole = await resolveActorRole(userId, role);
+    if (actorRole !== "superadmin") {
+      return res.status(403).json({ error: "Only super admin can update COPC assignments" });
+    }
+    const root = await Folder.findById(req.params.id);
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+    if (root?.copc?.locked?.isLocked) {
+      return res.status(423).json({ error: "This COPC program is locked after final approval" });
+    }
+    if (!assignments || typeof assignments !== "object") {
+      return res.status(400).json({ error: "Assignments payload is required" });
+    }
+
+    const clean = (value) =>
+      Array.from(
+        new Set(
+          (Array.isArray(value) ? value : [])
+            .map((entry) => entry?._id?.toString?.() || entry?.toString?.())
+            .filter(Boolean)
+        )
+      );
+
+    const next = {
+      uploaders: clean(assignments.uploaders),
+      programChairs: clean(assignments.programChairs),
+      qaOfficers: clean(assignments.qaOfficers),
+      evaluators: clean(assignments.evaluators),
+    };
+
+    root.folderAssignments = next;
+    await root.save();
+
+    // Apply same base assignment set to descendants so role visibility is consistent.
+    const descendantIds = await getDescendantFolderIds(root._id);
+    await Folder.updateMany(
+      { _id: { $in: descendantIds.filter((id) => String(id) !== String(root._id)) } },
+      {
+        $set: {
+          "folderAssignments.uploaders": next.uploaders,
+          "folderAssignments.programChairs": next.programChairs,
+          "folderAssignments.qaOfficers": next.qaOfficers,
+          "folderAssignments.evaluators": next.evaluators,
+        },
+      }
+    );
+
+    createLog("COPC_ASSIGNMENTS_UPDATE", userId, `Updated COPC assignments for ${root.name}`);
+    res.json({ success: true, assignments: next });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update COPC assignments" });
+  }
+});
+
+// Delete COPC program scope (superadmin, soft delete)
+app.delete("/copc/programs/:id", async (req, res) => {
+  try {
+    const { userId, role } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    if (actorRole !== "superadmin") {
+      return res.status(403).json({ error: "Only super admin can delete COPC programs" });
+    }
+
+    const root = await Folder.findById(req.params.id).select("name copc");
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+
+    const deletedIds = await softDeleteFolderTree(root._id, new Date());
+    createLog(
+      "COPC_PROGRAM_DELETE",
+      userId,
+      `Deleted COPC program ${root?.copc?.programCode || root.name} (${deletedIds.length} folders/files scoped)`
+    );
+    res.json({ success: true, deletedCount: deletedIds.length });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to delete COPC program" });
+  }
+});
+
+// Evaluator observations during internal evaluation
+app.post("/copc/programs/:id/observations", async (req, res) => {
+  try {
+    const { userId, role, message } = req.body || {};
+    const actorRole = await resolveActorRole(userId, role);
+    if (!["evaluator", "qa_admin", "superadmin"].includes(actorRole)) {
+      return res.status(403).json({ error: "Only evaluator/QA/super admin can add observations" });
+    }
+    if (!String(message || "").trim()) {
+      return res.status(400).json({ error: "Observation message is required" });
+    }
+    const root = await Folder.findById(req.params.id);
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+    if (!(await canUserAccessCopcProgram(root, userId, actorRole)) && actorRole !== "superadmin") {
+      return res.status(403).json({ error: "Not authorized for this workflow scope" });
+    }
+    root.copc.observations = Array.isArray(root.copc.observations) ? root.copc.observations : [];
+    root.copc.observations.push({
+      by: userId,
+      role: actorRole,
+      message: String(message || "").trim(),
+      createdAt: new Date(),
+    });
+    root.copc.workflowStage = "internal_evaluation";
+    root.copc.workflowStatus = "Internal Evaluation";
+    await root.save();
+    createLog("COPC_OBSERVATION", userId, `Added evaluator observation for ${root.name}`);
+    res.json({ success: true, observations: root.copc.observations });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to add observation" });
+  }
+});
+
+// Workflow actions: compile package, final approval, submit, archive
+app.post("/copc/programs/:id/actions", async (req, res) => {
+  try {
+    const { userId, role, action, method, reference } = req.body || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const root = await Folder.findById(req.params.id);
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+    if (!(await canUserAccessCopcProgram(root, userId, actorRole)) && actorRole !== "superadmin") {
+      return res.status(403).json({ error: "Not authorized for this workflow scope" });
+    }
+
+    const normalizedAction = String(action || "").toLowerCase();
+    const now = new Date();
+    if (normalizedAction === "compile_package") {
+      if (!["superadmin", "qa_admin"].includes(actorRole)) {
+        return res.status(403).json({ error: "Only super admin or QA admin can compile package" });
+      }
+      const folderIds = await getDescendantFolderIds(root._id);
+      const candidateFiles = await File.find({
+        parentFolder: { $in: folderIds },
+        deletedAt: null,
+      }).select("reviewWorkflow");
+      const approvedFileCount = candidateFiles.filter((file) => isFileFullyApprovedForCopc(file)).length;
+      if (approvedFileCount === 0) {
+        return res.status(400).json({
+          error: "No fully approved files found. Approve documents in both Department Chair and QA stages first.",
+        });
+      }
+      root.copc.workflowStage = "package_compiled";
+      root.copc.workflowStatus = "Package Compiled";
+      root.copc.packageMeta = {
+        fileName: `COPC_${root?.copc?.programCode || root.name}_${root?.copc?.year || new Date().getFullYear()}.zip`,
+        generatedAt: now,
+        generatedBy: userId || null,
+        approvedFileCount,
+      };
+    } else if (normalizedAction === "final_approval") {
+      if (actorRole !== "superadmin") {
+        return res.status(403).json({ error: "Only super admin can perform final approval" });
+      }
+      const folderIds = await getDescendantFolderIds(root._id);
+      const files = await File.find({
+        parentFolder: { $in: folderIds },
+        deletedAt: null,
+      }).select("reviewWorkflow");
+
+      const audit = {
+        totalDocuments: files.length,
+        approvedDocuments: 0,
+        pendingDepartmentReview: 0,
+        pendingQaReview: 0,
+        rejectedForRevision: 0,
+      };
+      for (const file of files) {
+        const status = String(file?.reviewWorkflow?.status || "");
+        if (status === "approved") audit.approvedDocuments += 1;
+        if (status === "pending_program_chair") audit.pendingDepartmentReview += 1;
+        if (status === "pending_qa") audit.pendingQaReview += 1;
+        if (status === "rejected_program_chair" || status === "rejected_qa") audit.rejectedForRevision += 1;
+      }
+
+      const finalReady =
+        audit.totalDocuments > 0 &&
+        audit.pendingDepartmentReview === 0 &&
+        audit.pendingQaReview === 0 &&
+        audit.rejectedForRevision === 0 &&
+        audit.approvedDocuments === audit.totalDocuments;
+      if (!finalReady) {
+        return res.status(400).json({
+          error: "Final approval blocked. Complete final document verification and system audit review first.",
+          audit,
+        });
+      }
+
+      root.copc.workflowStage = "copc_ready";
+      root.copc.workflowStatus = "COPC Ready";
+      root.copc.packageMeta = {
+        fileName: `COPC_${root?.copc?.programCode || root.name}_${root?.copc?.year || new Date().getFullYear()}.zip`,
+        generatedAt: now,
+        generatedBy: userId || null,
+      };
+      root.copc.locked = {
+        isLocked: true,
+        lockedAt: now,
+        lockedBy: userId || null,
+      };
+    } else if (normalizedAction === "submit_ched") {
+      if (!["superadmin", "qa_admin"].includes(actorRole)) {
+        return res.status(403).json({ error: "Only super admin or QA admin can submit to CHED" });
+      }
+      root.copc.workflowStage = "submitted";
+      root.copc.workflowStatus = "Submitted to CHED";
+      root.copc.submissionMeta = {
+        method: String(method || ""),
+        reference: String(reference || ""),
+        submittedAt: now,
+        submittedBy: userId || null,
+      };
+    } else if (normalizedAction === "archive") {
+      if (!["superadmin", "qa_admin"].includes(actorRole)) {
+        return res.status(403).json({ error: "Only super admin or QA admin can archive documents" });
+      }
+      root.copc.workflowStage = "archived";
+      root.copc.workflowStatus = "Archived";
+      root.copc.archiveMeta = {
+        archiveYear: Number(root?.copc?.year || new Date().getFullYear()),
+        archivedAt: now,
+      };
+    } else {
+      return res.status(400).json({ error: "Unknown workflow action" });
+    }
+
+    await root.save();
+    createLog("COPC_WORKFLOW_ACTION", userId, `${normalizedAction} for ${root?.copc?.programCode || root.name}`);
+    res.json({ success: true, stage: root.copc.workflowStage, status: root.copc.workflowStatus, copc: root.copc });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update COPC workflow action" });
+  }
+});
+
+// Download compiled COPC package as zip
+app.get("/copc/programs/:id/package/download", async (req, res) => {
+  try {
+    const { userId, role } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const root = await Folder.findById(req.params.id);
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+    if (!(await canUserAccessCopcProgram(root, userId, actorRole)) && actorRole !== "superadmin") {
+      return res.status(403).json({ error: "Not authorized to download this package" });
+    }
+    if (!["superadmin", "qa_admin", "dept_chair", "evaluator"].includes(actorRole)) {
+      return res.status(403).json({ error: "Role is not allowed to download COPC package" });
+    }
+
+    const folderIds = await getDescendantFolderIds(root._id);
+    const files = await File.find({
+      parentFolder: { $in: folderIds },
+      deletedAt: null,
+    }).select("filename originalName parentFolder reviewWorkflow");
+    const folderMap = new Map();
+    const allFolders = await Folder.find({ _id: { $in: folderIds } }).select("_id name parentFolder");
+    allFolders.forEach((f) => folderMap.set(String(f._id), f));
+
+    const buildFolderPath = (folderId) => {
+      const parts = [];
+      let cursor = folderMap.get(String(folderId));
+      while (cursor) {
+        if (String(cursor._id) === String(root._id)) break;
+        parts.unshift(cursor.name);
+        if (!cursor.parentFolder) break;
+        cursor = folderMap.get(String(cursor.parentFolder));
+      }
+      return parts.join("/");
+    };
+
+    const fileName = root?.copc?.packageMeta?.fileName || `COPC_${root?.copc?.programCode || root.name}_${root?.copc?.year || new Date().getFullYear()}.zip`;
+    const packageRootFolder = `COPC_${root?.copc?.programCode || root.name}`;
+    const approvedFiles = files.filter((file) => isFileFullyApprovedForCopc(file));
+    if (!approvedFiles.length) {
+      return res.status(400).json({
+        error: "No fully approved files available for COPC package download.",
+      });
+    }
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
+    const archive = archiver("zip", { zlib: { level: 9 } });
+    archive.on("error", () => res.status(500).end());
+    archive.pipe(res);
+
+    for (const file of approvedFiles) {
+      const diskPath = path.join(__dirname, "uploads", file.filename);
+      if (!fs.existsSync(diskPath)) continue;
+      const rel = buildFolderPath(file.parentFolder);
+      const targetPath = rel
+        ? `${packageRootFolder}/${rel}/${file.originalName}`
+        : `${packageRootFolder}/${file.originalName}`;
+      archive.file(diskPath, { name: targetPath });
+    }
+    await archive.finalize();
+  } catch (err) {
+    res.status(500).json({ error: "Failed to download COPC package" });
+  }
+});
+
+// Request missing document from faculty/user
+app.post("/folders/:id/document-requests", async (req, res) => {
+  try {
+    const { userId, role, targetUserId, documentName, deadline, message } = req.body || {};
+    const isAdmin = await isAdminContext(role, userId);
+    if (!isAdmin && !isProgramChairRole(role) && !isQaReviewRole(role)) {
+      return res.status(403).json({ error: "Not authorized to request documents" });
+    }
+    if (!targetUserId || !documentName) {
+      return res.status(400).json({ error: "targetUserId and documentName are required" });
+    }
+    const folder = await Folder.findById(req.params.id).select("name");
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    const dueText = deadline ? `Deadline: ${new Date(deadline).toLocaleDateString()}` : "";
+    const details = `${documentName}${dueText ? ` | ${dueText}` : ""}`;
+    await Notification.create({
+      userId: targetUserId,
+      type: "DOCUMENT_REQUEST",
+      title: "Admin Request",
+      message: message || `Upload your ${documentName}`,
+      details,
+      relatedId: folder._id,
+      relatedModel: "Folder",
+      date: new Date(),
+    });
+    await updateCopcStage(folder._id, "revision", "Revision Requested");
+    createLog("DOCUMENT_REQUEST", userId, `Requested ${documentName} from ${targetUserId}`);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to create document request" });
+  }
+});
+
+// List pending document requests for current user
+app.get("/document-requests", async (req, res) => {
+  try {
+    const { userId } = req.query || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const requests = await Notification.find({
+      userId,
+      type: "DOCUMENT_REQUEST",
+      isRead: false,
+    }).sort({ createdAt: -1 });
+    res.json(requests);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch document requests" });
+  }
+});
+
+// Folder completeness checker for required docs
+app.post("/folders/:id/completeness", async (req, res) => {
+  try {
+    const { requiredDocuments = [] } = req.body || {};
+    const folder = await Folder.findById(req.params.id).select("_id name");
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    const files = await File.find({ parentFolder: folder._id, deletedAt: null }).select("originalName");
+    const names = files.map((f) => String(f.originalName || "").toLowerCase());
+    const rows = requiredDocuments.map((doc) => {
+      const key = String(doc || "").toLowerCase();
+      const exists = names.some((n) => n.includes(key));
+      return { name: doc, exists };
+    });
+    const completeCount = rows.filter((r) => r.exists).length;
+    const percent = rows.length ? Number(((completeCount / rows.length) * 100).toFixed(2)) : 0;
+    res.json({ folderId: folder._id, requirements: rows, percent });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to check completeness" });
+  }
+});
+
+// QA verification badge toggle for a file
+app.patch("/files/:id/verify", async (req, res) => {
+  try {
+    const { userId, role, verified } = req.body || {};
+    const isAdmin = await isAdminContext(role, userId);
+    if (!isAdmin && !isQaReviewRole(role)) {
+      return res.status(403).json({ error: "Only QA/Admin can verify documents" });
+    }
+    const file = await File.findById(req.params.id);
+    if (!file) return res.status(404).json({ error: "File not found" });
+    file.reviewWorkflow = file.reviewWorkflow || {};
+    file.reviewWorkflow.verificationBadge = {
+      verified: !!verified,
+      verifiedBy: verified ? userId : null,
+      verifiedAt: verified ? new Date() : null,
+      label: verified ? "Verified by QA Office" : "Pending Verification",
+    };
+    await file.save();
+    res.json({ success: true, reviewWorkflow: file.reviewWorkflow });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to update verification badge" });
   }
 });
 
@@ -2835,8 +5369,11 @@ app.post("/folders/:id/versions/:versionId/restore", async (req, res) => {
     const { userId, role } = req.body || {};
     const folder = await Folder.findById(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
 
-    const isAdmin = role === "admin" || role === "superadmin";
+    const isAdmin = canEditAnyDocuments(role);
     const ownerId = folder.owner?.toString?.() || folder.owner;
     if (!isAdmin && (!userId || ownerId.toString() !== userId.toString())) {
       return res.status(403).json({ error: "Not authorized to restore versions" });
@@ -2878,7 +5415,7 @@ app.post("/folders/:id/versions/:versionId/restore", async (req, res) => {
 // Share folder
 app.patch("/folders/:id/share", async (req, res) => {
   try {
-    const { emails, permission } = req.body;
+    const { emails, permission, userId, role } = req.body;
     const users = await UserModel.find({ email: { $in: emails } });
     if (!users.length)
       return res.status(404).json({ error: "No matching users found" });
@@ -2886,9 +5423,23 @@ app.patch("/folders/:id/share", async (req, res) => {
     const userIds = users.map((u) => u._id);
     const folder = await Folder.findById(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
 
-    folder.sharedWith.push(...userIds);
-    if (permission) folder.permissions = permission;
+    const ownerId = folder.owner?.toString?.() || folder.owner;
+    const isOwner = !!userId && ownerId?.toString() === userId.toString();
+    const isAdmin = await isAdminContext(role, userId);
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ error: "Not authorized to share this folder" });
+    }
+
+    const nextShared = new Set(
+      (folder.sharedWith || []).map((id) => id?.toString?.() || id)
+    );
+    userIds.forEach((id) => nextShared.add(id?.toString?.() || id));
+    folder.sharedWith = Array.from(nextShared);
+    if (permission) folder.permissions = normalizePermissionRole(permission, "viewer");
 
     await folder.save();
     await folder.populate("sharedWith", "email");
@@ -2905,9 +5456,16 @@ app.patch("/folders/:id/share", async (req, res) => {
 // Unshare folder (remove user from sharedWith)
 app.patch("/folders/:id/unshare", async (req, res) => {
   try {
-    const { userId } = req.body;
+    const { userId, actorId, role } = req.body;
     const folder = await Folder.findById(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+
+    const ownerId = folder.owner?.toString?.() || folder.owner;
+    const isOwner = !!actorId && ownerId?.toString() === actorId.toString();
+    const isAdmin = await isAdminContext(role, actorId);
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ error: "Not authorized to unshare this folder" });
+    }
 
     folder.sharedWith = folder.sharedWith.filter(id => id.toString() !== userId.toString());
     await folder.save();
@@ -3081,7 +5639,7 @@ app.get("/shared/groups", async (req, res) => {
                   ...file,
                   groupId: group._id,
                   groupName: group.name,
-                  permission: sharedFile.permission || "read",
+                  permission: normalizePermissionRole(sharedFile.permission, "viewer"),
                   sharedBy: sharedFile.sharedBy,
                   sharedAt: sharedFile.sharedAt,
                   isGroupLeader: isLeader
@@ -3113,7 +5671,7 @@ app.get("/shared/groups", async (req, res) => {
                   ...folder,
                   groupId: group._id,
                   groupName: group.name,
-                  permission: sharedFolder.permission || "read",
+                  permission: normalizePermissionRole(sharedFolder.permission, "viewer"),
                   sharedBy: sharedFolder.sharedBy,
                   sharedAt: sharedFolder.sharedAt,
                   isGroupLeader: isLeader
@@ -3168,7 +5726,7 @@ app.get("/shared/groups", async (req, res) => {
     sharedFiles = sharedFiles.map(f => ({
       ...f,
       ownerEmail: f.owner?.email || null,
-      permissions: f.permission || "read",
+      permissions: normalizePermissionRole(f.permission, "viewer"),
       isDuplicate: !!f.duplicateOf,
       classification: f.classification || null,
       isFavorite: isFlaggedByUser(f.favoritedBy, userId),
@@ -3549,10 +6107,11 @@ app.get("/search", async (req, res) => {
 app.get("/trash", async (req, res) => {
   try {
     const { userId, role } = req.query;
+    const actorRole = await resolveActorRole(userId, role);
     let fileQuery = { deletedAt: { $ne: null } };
     let folderQuery = { deletedAt: { $ne: null } };
 
-    if (role !== "admin" && role !== "superadmin") {
+    if (!canDeleteDocuments(actorRole)) {
       fileQuery.userId = userId;
       folderQuery.owner = userId;
     }
@@ -3570,10 +6129,11 @@ app.get("/trash", async (req, res) => {
 app.patch("/trash/files/:id/restore", async (req, res) => {
   try {
     const { role, userId } = req.query;
+    const actorRole = await resolveActorRole(userId, role);
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
 
-    const isAdmin = role === "admin" || role === "superadmin";
+    const isAdmin = canEditAnyDocuments(actorRole);
     const ownerId = file.owner?.toString?.() || file.userId?.toString?.() || file.owner;
     if (!isAdmin && (!userId || ownerId.toString() !== userId.toString())) {
       return res.status(403).json({ error: "Not authorized to restore file" });
@@ -3603,10 +6163,11 @@ app.patch("/trash/files/:id/restore", async (req, res) => {
 app.patch("/trash/folders/:id/restore", async (req, res) => {
   try {
     const { role, userId } = req.query;
+    const actorRole = await resolveActorRole(userId, role);
     const folder = await Folder.findById(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
 
-    const isAdmin = role === "admin" || role === "superadmin";
+    const isAdmin = canEditAnyDocuments(actorRole);
     const ownerId = folder.owner?.toString?.() || folder.owner;
     if (!isAdmin && (!userId || ownerId.toString() !== userId.toString())) {
       return res.status(403).json({ error: "Not authorized to restore folder" });
@@ -3621,11 +6182,12 @@ app.patch("/trash/folders/:id/restore", async (req, res) => {
     folder.deletedAt = null;
     folder.parentFolder = nextParent;
     await folder.save();
+    const restoredIds = await restoreFolderTree(folder._id);
 
     // NEW: log restore folder
     createLog("RESTORE_FOLDER", folder.owner, `Restored folder ${folder.name}`);
 
-    res.json({ status: "restored", folder });
+    res.json({ status: "restored", folder, restoredCount: restoredIds.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3634,9 +6196,10 @@ app.patch("/trash/folders/:id/restore", async (req, res) => {
 // Permanently delete file (Admin only)
 app.delete("/trash/files/:id", async (req, res) => {
   try {
-    const { role } = req.query;
-    if (role !== "admin" && role !== "superadmin") {
-      return res.status(403).json({ error: "Only admins can permanently delete files" });
+    const { role, userId } = req.query;
+    const actorRole = await resolveActorRole(userId, role);
+    if (!canDeleteDocuments(actorRole)) {
+      return res.status(403).json({ error: "Only super admin or QA admin can permanently delete files" });
     }
 
     const file = await File.findByIdAndDelete(req.params.id);
@@ -3654,18 +6217,22 @@ app.delete("/trash/files/:id", async (req, res) => {
 // Permanently delete folder (Admin only)
 app.delete("/trash/folders/:id", async (req, res) => {
   try {
-    const { role } = req.query;
-    if (role !== "admin" && role !== "superadmin") {
-      return res.status(403).json({ error: "Only admins can permanently delete folders" });
+    const { role, userId } = req.query;
+    const actorRole = await resolveActorRole(userId, role);
+    if (!canDeleteDocuments(actorRole)) {
+      return res.status(403).json({ error: "Only super admin or QA admin can permanently delete folders" });
     }
 
-    const folder = await Folder.findByIdAndDelete(req.params.id);
+    const folder = await Folder.findById(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+    const ids = await getDescendantFolderIds(folder._id, { includeDeleted: true });
+    await File.deleteMany({ parentFolder: { $in: ids } });
+    await Folder.deleteMany({ _id: { $in: ids } });
 
     // NEW: log permanent delete folder
     createLog("PERMANENT_DELETE_FOLDER", folder.owner, `Permanently deleted folder ${folder.name}`);
 
-    res.json({ status: "permanently-deleted", folder });
+    res.json({ status: "permanently-deleted", folder, deletedCount: ids.length });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -3678,7 +6245,10 @@ app.delete("/trash/folders/:id", async (req, res) => {
 // Get all users
 app.get("/users", async (req, res) => {
   try {
-    const users = await UserModel.find().sort({ createdAt: -1 }).lean();
+    const users = await UserModel.find()
+      .select("_id name email role active createdAt")
+      .sort({ createdAt: -1 })
+      .lean();
     res.json(users);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch users" });
@@ -3688,6 +6258,10 @@ app.get("/users", async (req, res) => {
 // Delete user
 app.delete("/users/:id", async (req, res) => {
   try {
+    const actorRole = await resolveActorRole(req.query?.userId, req.query?.role);
+    if (!canManageUsers(actorRole)) {
+      return res.status(403).json({ error: "Only super admin can manage users" });
+    }
     const user = await UserModel.findByIdAndDelete(req.params.id);
     if (!user) return res.status(404).json({ error: "User not found" });
 
@@ -3703,16 +6277,25 @@ app.delete("/users/:id", async (req, res) => {
 // Update user role (admin, superadmin, user, etc.)
 app.patch("/users/:id/role", async (req, res) => {
   try {
+    const actorRole = await resolveActorRole(req.query?.userId, req.query?.role);
+    if (!canManageUsers(actorRole)) {
+      return res.status(403).json({ error: "Only super admin can manage users" });
+    }
     const { role } = req.body;
+    const allowedRoles = ["superadmin", "qa_admin", "dept_chair", "faculty", "evaluator"];
+    const normalizedRole = normalizeRole(role);
+    if (!allowedRoles.includes(normalizedRole)) {
+      return res.status(400).json({ error: `Invalid role. Must be one of: ${allowedRoles.join(", ")}` });
+    }
     const user = await UserModel.findByIdAndUpdate(
       req.params.id,
-      { role },
+      { role: normalizedRole },
       { new: true }
     );
     if (!user) return res.status(404).json({ error: "User not found" });
 
     // NEW: log role update
-    createLog("UPDATE_ROLE", user._id, `Role changed to ${role}`);
+    createLog("UPDATE_ROLE", user._id, `Role changed to ${normalizedRole}`);
 
     res.json({ status: "updated", user });
   } catch (err) {
@@ -3736,6 +6319,10 @@ app.get("/logs", async (req, res) => {
 // Toggle user active/inactive
 app.patch("/users/:id/status", async (req, res) => {
   try {
+    const actorRole = await resolveActorRole(req.query?.userId, req.query?.role);
+    if (!canManageUsers(actorRole)) {
+      return res.status(403).json({ error: "Only super admin can manage users" });
+    }
     const { active } = req.body;
     const user = await UserModel.findByIdAndUpdate(
       req.params.id,
@@ -3756,7 +6343,12 @@ app.patch("/users/:id/status", async (req, res) => {
 // Admin: Create single user
 app.post("/admin/users", async (req, res) => {
   try {
+    const actorRole = await resolveActorRole(req.query?.userId, req.query?.role);
+    if (!canManageUsers(actorRole)) {
+      return res.status(403).json({ error: "Only super admin can manage users" });
+    }
     const { email, password, name, role } = req.body;
+    const allowedRoles = ["superadmin", "qa_admin", "dept_chair", "faculty", "evaluator"];
 
     // Validate required fields
     if (!email || !password) {
@@ -3770,8 +6362,9 @@ app.post("/admin/users", async (req, res) => {
     }
 
     // Validate role
-    if (role && !["user", "admin"].includes(role)) {
-      return res.status(400).json({ error: "Invalid role. Must be 'user' or 'admin'" });
+    const normalizedRole = normalizeRole(role);
+    if (role && !allowedRoles.includes(normalizedRole)) {
+      return res.status(400).json({ error: `Invalid role. Must be one of: ${allowedRoles.join(", ")}` });
     }
 
     // Create new user
@@ -3779,7 +6372,7 @@ app.post("/admin/users", async (req, res) => {
       email,
       password, // Will be hashed by the model
       name: name || "",
-      role: role || "user",
+      role: normalizedRole || "faculty",
       active: true
     });
 
@@ -3800,7 +6393,12 @@ app.post("/admin/users", async (req, res) => {
 // Admin: Bulk import users
 app.post("/admin/users/bulk", async (req, res) => {
   try {
+    const actorRole = await resolveActorRole(req.query?.userId, req.query?.role);
+    if (!canManageUsers(actorRole)) {
+      return res.status(403).json({ error: "Only super admin can manage users" });
+    }
     const { users } = req.body;
+    const allowedRoles = ["superadmin", "qa_admin", "dept_chair", "faculty", "evaluator"];
 
     if (!users || !Array.isArray(users) || users.length === 0) {
       return res.status(400).json({ error: "Users array is required" });
@@ -3834,9 +6432,9 @@ app.post("/admin/users/bulk", async (req, res) => {
         }
 
         // Validate role
-        const userRole = user.role || "user";
-        if (!["user", "admin"].includes(userRole)) {
-          errors.push(`Row ${i + 1}: Invalid role '${userRole}'. Must be 'user' or 'admin'`);
+        const userRole = normalizeRole(user.role || "faculty");
+        if (!allowedRoles.includes(userRole)) {
+          errors.push(`Row ${i + 1}: Invalid role '${userRole}'. Allowed roles: ${allowedRoles.join(", ")}`);
           failed++;
           continue;
         }
@@ -3879,6 +6477,10 @@ app.post("/admin/users/bulk", async (req, res) => {
 // Get user statistics
 app.get("/users/stats", async (req, res) => {
   try {
+    const actorRole = await resolveActorRole(req.query?.userId, req.query?.role);
+    if (!canManageUsers(actorRole)) {
+      return res.status(403).json({ error: "Only super admin can manage users" });
+    }
     // Basic counts - simple and accurate
     const totalUsers = await UserModel.countDocuments();
 
@@ -3893,16 +6495,13 @@ app.get("/users/stats", async (req, res) => {
     // Calculate inactive as total minus active
     const inactiveUsers = totalUsers - activeUsers;
 
-    // Simple role counts - avoid aggregation issues
-    const userRole = await UserModel.countDocuments({ role: "user" });
-    const adminRole = await UserModel.countDocuments({ role: "admin" });
-    const superAdminRole = await UserModel.countDocuments({ role: "superadmin" });
-
-    const rolesCount = {
-      user: userRole,
-      admin: adminRole,
-      superadmin: superAdminRole
-    };
+    const allowedRoles = ["superadmin", "qa_admin", "dept_chair", "faculty", "evaluator"];
+    const rolesCount = {};
+    await Promise.all(
+      allowedRoles.map(async (roleKey) => {
+        rolesCount[roleKey] = await UserModel.countDocuments({ role: roleKey });
+      })
+    );
 
     // Recent registrations (last 30 days) - simplified
     const thirtyDaysAgo = new Date();
@@ -4127,17 +6726,28 @@ app.get("/stats", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch stats" });
   }
 });
-// ✅ RENAME FOLDER
+// ? RENAME FOLDER
 app.put("/folders/:id/rename", async (req, res) => {
   try {
     const { id } = req.params;
-    const { newName, userId } = req.body;
+    const { newName, userId, role } = req.body;
+    const actorRole = await resolveActorRole(userId, role);
 
     if (!newName || !newName.trim())
       return res.status(400).json({ error: "Invalid name" });
 
     const folder = await Folder.findById(id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
+
+    const ownerId = folder.owner?.toString?.() || folder.owner;
+    const isOwner = !!userId && ownerId?.toString() === userId.toString();
+    const isAdmin = canEditAnyDocuments(actorRole);
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ error: "Not authorized to rename this folder" });
+    }
 
     const oldName = folder.name;
     folder.name = newName.trim();
@@ -4164,7 +6774,7 @@ app.put("/folders/:id/rename", async (req, res) => {
     });
     await folderVersion.save();
 
-    // ✅ Log rename action
+    // ? Log rename action
     createLog("RENAME_FOLDER", userId || folder.owner, `Renamed folder to "${newName}"`);
 
     res.json(folder);
@@ -4175,26 +6785,27 @@ app.put("/folders/:id/rename", async (req, res) => {
 });
 
 
-// ✅ RENAME FILE
+// ? RENAME FILE
 app.put("/files/:id/rename", async (req, res) => {
   try {
     const { id } = req.params;
-    const { newName, userId } = req.body;
+    const { newName, userId, role } = req.body;
+    const actorRole = await resolveActorRole(userId, role);
 
     if (!newName || !newName.trim())
       return res.status(400).json({ error: "Invalid name" });
 
     const file = await File.findById(id);
     if (!file) return res.status(404).json({ error: "File not found" });
+    if (file.parentFolder && await isFolderWithinLockedCopc(file.parentFolder)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
 
     const isOwner =
       file.owner?.toString?.() === userId ||
       file.userId?.toString?.() === userId;
-    const isSharedWithWrite =
-      file.sharedWith?.some(id => id.toString() === userId) &&
-      file.permissions === "write";
-    const isLeader = await isGroupLeaderForFile(userId, file._id);
-    if (!isOwner && !isSharedWithWrite && !isLeader) {
+    const isAdmin = canEditAnyDocuments(actorRole);
+    if (!isOwner && !isAdmin) {
       return res.status(403).json({ error: "Not authorized to rename this file" });
     }
 
@@ -4598,7 +7209,7 @@ app.patch("/groups/:groupId/share", async (req, res) => {
 
     const sharedItem = {
       [type === "file" ? "fileId" : "folderId"]: itemId,
-      permission: permission || "read",
+      permission: normalizePermissionRole(permission, "viewer"),
       sharedBy: sharedBy,
       sharedAt: new Date()
     };
@@ -4724,10 +7335,11 @@ app.post("/user/password-request", async (req, res) => {
 // Get all password requests (Admin only)
 app.get("/admin/password-requests", async (req, res) => {
   try {
-    const { role } = req.query;
+    const { role, userId } = req.query;
+    const actorRole = await resolveActorRole(userId, role);
 
-    if (role !== "admin" && role !== "superadmin") {
-      return res.status(403).json({ error: "Admin access required" });
+    if (!canManageUsers(actorRole)) {
+      return res.status(403).json({ error: "Super admin access required" });
     }
 
     // First get the requests without populate to avoid issues with null values
@@ -4783,8 +7395,8 @@ app.patch("/admin/password-requests/:id/approve", async (req, res) => {
 
     // Verify admin role
     const admin = await UserModel.findById(adminId);
-    if (!admin || (admin.role !== "admin" && admin.role !== "superadmin")) {
-      return res.status(403).json({ error: "Admin access required" });
+    if (!admin || !canManageUsers(admin.role)) {
+      return res.status(403).json({ error: "Super admin access required" });
     }
 
     const request = await PasswordRequest.findById(id);
@@ -4837,8 +7449,8 @@ app.patch("/admin/password-requests/:id/reject", async (req, res) => {
 
     // Verify admin role
     const admin = await UserModel.findById(adminId);
-    if (!admin || (admin.role !== "admin" && admin.role !== "superadmin")) {
-      return res.status(403).json({ error: "Admin access required" });
+    if (!admin || !canManageUsers(admin.role)) {
+      return res.status(403).json({ error: "Super admin access required" });
     }
 
     const request = await PasswordRequest.findById(id);
@@ -4927,7 +7539,7 @@ app.post("/notifications/smart/:userId", async (req, res) => {
     const writableSharedFiles = await File.find({
       sharedWith: userId,
       deletedAt: null,
-      permissions: "write",
+      permissions: { $in: ["editor", "write"] },
     })
       .select("_id originalName")
       .limit(5);
@@ -4939,7 +7551,7 @@ app.post("/notifications/smart/:userId", async (req, res) => {
           userId,
           "REVIEW_REQUIRED",
           "Document Requires Your Action",
-          `You have write access to "${file.originalName}". Review or update if needed.`,
+          `You have editor access to "${file.originalName}". Review or update if needed.`,
           details,
           file._id,
           "File"
@@ -5186,8 +7798,9 @@ app.get("/admin/search", async (req, res) => {
     } = req.query;
     const searchTerm = String(query || "").trim();
 
-    if (role !== "admin" && role !== "superadmin") {
-      return res.status(403).json({ error: "Admin access required" });
+    const actorRole = await resolveActorRole(userId, role);
+    if (!canManageUsers(actorRole)) {
+      return res.status(403).json({ error: "Super admin access required" });
     }
 
     const hasSearchTerm = searchTerm.length > 0;
@@ -5541,3 +8154,5 @@ app.listen(PORT, HOST, () => {
   console.log(`ðŸš€ Server running on http://${HOST}:${PORT}`);
   createLog("SYSTEM", null, `Server started on ${HOST}:${PORT}`);
 });
+
+

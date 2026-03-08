@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
+﻿import React, { useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -27,7 +27,7 @@ import { BACKEND_URL } from "../../config";
 
 export default function AdminTrash() {
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "admin";
+  const role = localStorage.getItem("role") || "superadmin";
 
   const [files, setFiles] = useState([]);
   const [folders, setFolders] = useState([]);
@@ -400,7 +400,7 @@ export default function AdminTrash() {
                     </td>
                     <td>{folder.owner?.email || 'Unknown'}</td>
                     <td>Folder</td>
-                    <td>—</td>
+                    <td>â€”</td>
                     <td>{new Date(folder.deletedAt).toLocaleDateString()}</td>
                     <td className="text-center">
                       <button
@@ -473,3 +473,4 @@ export default function AdminTrash() {
     </div>
   );
 }
+

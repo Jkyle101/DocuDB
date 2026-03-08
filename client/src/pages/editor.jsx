@@ -1,9 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+﻿import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { useNavigate, useParams } from "react-router-dom";
 import { BACKEND_URL } from "../config";
 import {
   FaSave,
+  FaFileExport,
+  FaFolderOpen,
   FaArrowLeft,
   FaUndo,
   FaRedo,
@@ -16,10 +18,18 @@ import {
   FaTable,
   FaColumns,
   FaCalendarAlt,
+  FaImage,
   FaPlus,
   FaThLarge,
   FaCompressArrowsAlt,
   FaExpandArrowsAlt,
+  FaBook,
+  FaListOl,
+  FaCommentDots,
+  FaEye,
+  FaPaintBrush,
+  FaEnvelope,
+  FaCog,
 } from "react-icons/fa";
 import "./editor.css";
 
@@ -58,7 +68,7 @@ export default function EditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "user";
+  const role = localStorage.getItem("role") || "faculty";
 
   const [file, setFile] = useState(null);
   const [kind, setKind] = useState("text");
@@ -73,6 +83,9 @@ export default function EditorPage() {
   const [wrapText, setWrapText] = useState(true);
   const [sheetGrid, setSheetGrid] = useState(true);
   const [slideCompact, setSlideCompact] = useState(false);
+  const [viewMode, setViewMode] = useState("normal");
+  const [designTheme, setDesignTheme] = useState("default");
+  const [pagePreset, setPagePreset] = useState("A4");
   const docEditorRef = useRef(null);
 
   const previewUrl = useMemo(() => {
@@ -213,6 +226,42 @@ export default function EditorPage() {
     setContent((prev) => `${prev || ""}\n${block}`.trim());
   };
 
+  const appendContent = (value) => {
+    if (!value) return;
+    if (kind === "docx" && docEditorRef.current) {
+      applyDocCommand("insertText", value);
+      return;
+    }
+    if (kind === "xlsx") {
+      setSheetRows((prev) => {
+        const next = prev.map((r) => [...r]);
+        if (!next[0]) next[0] = [""];
+        next[0][0] = `${next[0][0] || ""} ${value}`.trim();
+        return next;
+      });
+      return;
+    }
+    if (kind === "pptx") {
+      setSlides((prev) =>
+        prev.map((s, i) => (i === 0 ? { ...s, body: `${s.body || ""}\n${value}`.trim() } : s))
+      );
+      return;
+    }
+    setContent((prev) => `${prev || ""}\n${value}`.trim());
+  };
+
+  const insertCitation = () => appendContent("[Citation: Source, 2026]");
+  const insertToc = () => appendContent("Table of Contents\n1. Overview\n2. Details\n3. Conclusion");
+  const insertCommentMarker = () => appendContent("[Comment: Review this section]");
+  const insertMailMergeField = (field) => appendContent(`{{${field}}}`);
+
+  const applyDesign = (theme) => {
+    setDesignTheme(theme);
+    if (kind === "docx" && theme === "formal") setFontSize(15);
+    if (theme === "compact") setFontSize(13);
+    if (theme === "reading") setFontSize(16);
+  };
+
   if (loading) {
     return <div className="text-muted">Loading editor...</div>;
   }
@@ -273,6 +322,36 @@ export default function EditorPage() {
                 onClick={() => setRibbonTab("layout")}
               >
                 Layout
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link ${ribbonTab === "references" ? "active" : ""}`} onClick={() => setRibbonTab("references")}>
+                References
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link ${ribbonTab === "review" ? "active" : ""}`} onClick={() => setRibbonTab("review")}>
+                Review
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link ${ribbonTab === "view" ? "active" : ""}`} onClick={() => setRibbonTab("view")}>
+                View
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link ${ribbonTab === "design" ? "active" : ""}`} onClick={() => setRibbonTab("design")}>
+                Design
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link ${ribbonTab === "mailings" ? "active" : ""}`} onClick={() => setRibbonTab("mailings")}>
+                Mailings
+              </button>
+            </li>
+            <li className="nav-item">
+              <button className={`nav-link ${ribbonTab === "file" ? "active" : ""}`} onClick={() => setRibbonTab("file")}>
+                File
               </button>
             </li>
           </ul>
@@ -349,6 +428,12 @@ export default function EditorPage() {
                     <button className="btn ribbon-icon-btn" title="Template Block" onClick={insertTemplateBlock}>
                       <FaPlus />
                     </button>
+                    <button className="btn ribbon-icon-btn" title="Insert Table Placeholder" onClick={() => appendContent("[Table: 3x3]")}>
+                      <FaTable />
+                    </button>
+                    <button className="btn ribbon-icon-btn" title="Insert Image Placeholder" onClick={() => appendContent("[Image: description]")}>
+                      <FaImage />
+                    </button>
                   </div>
                   <div className="ribbon-group-label">Insert</div>
                 </div>
@@ -395,6 +480,17 @@ export default function EditorPage() {
                   </div>
                   <div className="ribbon-group-label">Text</div>
                 </div>
+                <div className="ribbon-sep" />
+                <div className="ribbon-group">
+                  <div className="ribbon-group-body">
+                    <select className="form-select form-select-sm" value={pagePreset} onChange={(e) => setPagePreset(e.target.value)}>
+                      <option value="A4">A4</option>
+                      <option value="Letter">Letter</option>
+                      <option value="Legal">Legal</option>
+                    </select>
+                  </div>
+                  <div className="ribbon-group-label">Page Setup</div>
+                </div>
                 {(kind === "xlsx" || kind === "pptx") && <div className="ribbon-sep" />}
                 {kind === "xlsx" && (
                   <div className="ribbon-group">
@@ -416,6 +512,114 @@ export default function EditorPage() {
                     <div className="ribbon-group-label">Slides</div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {ribbonTab === "references" && (
+              <div className="office-ribbon-row">
+                <div className="ribbon-group">
+                  <div className="ribbon-group-body">
+                    <button className="btn ribbon-icon-btn" title="Insert Citation" onClick={insertCitation}>
+                      <FaBook />
+                    </button>
+                    <button className="btn ribbon-icon-btn" title="Insert TOC" onClick={insertToc}>
+                      <FaListOl />
+                    </button>
+                  </div>
+                  <div className="ribbon-group-label">Citations & TOC</div>
+                </div>
+              </div>
+            )}
+
+            {ribbonTab === "review" && (
+              <div className="office-ribbon-row">
+                <div className="ribbon-group">
+                  <div className="ribbon-group-body">
+                    <button className="btn ribbon-icon-btn" title="Track Change Marker" onClick={() => appendContent("[Tracked Change]")}>
+                      <FaCog />
+                    </button>
+                    <button className="btn ribbon-icon-btn" title="Add Comment" onClick={insertCommentMarker}>
+                      <FaCommentDots />
+                    </button>
+                  </div>
+                  <div className="ribbon-group-label">Tracking & Comments</div>
+                </div>
+              </div>
+            )}
+
+            {ribbonTab === "view" && (
+              <div className="office-ribbon-row">
+                <div className="ribbon-group">
+                  <div className="ribbon-group-body">
+                    <button className={`btn ribbon-icon-btn ${viewMode === "normal" ? "active" : ""}`} title="Normal View" onClick={() => setViewMode("normal")}>
+                      <FaEye />
+                    </button>
+                    <button className={`btn ribbon-icon-btn ${viewMode === "focus" ? "active" : ""}`} title="Focus View" onClick={() => setViewMode("focus")}>
+                      <FaExpandArrowsAlt />
+                    </button>
+                    <button className={`btn ribbon-icon-btn ${viewMode === "compact" ? "active" : ""}`} title="Compact View" onClick={() => setViewMode("compact")}>
+                      <FaCompressArrowsAlt />
+                    </button>
+                  </div>
+                  <div className="ribbon-group-label">Display Modes</div>
+                </div>
+              </div>
+            )}
+
+            {ribbonTab === "design" && (
+              <div className="office-ribbon-row">
+                <div className="ribbon-group">
+                  <div className="ribbon-group-body">
+                    <button className="btn ribbon-icon-btn" title="Default Design" onClick={() => applyDesign("default")}>
+                      <FaPaintBrush />
+                    </button>
+                    <button className="btn ribbon-icon-btn" title="Formal Design" onClick={() => applyDesign("formal")}>
+                      <FaAlignLeft />
+                    </button>
+                    <button className="btn ribbon-icon-btn" title="Reading Design" onClick={() => applyDesign("reading")}>
+                      <FaBook />
+                    </button>
+                  </div>
+                  <div className="ribbon-group-label">Themes</div>
+                </div>
+              </div>
+            )}
+
+            {ribbonTab === "mailings" && (
+              <div className="office-ribbon-row">
+                <div className="ribbon-group">
+                  <div className="ribbon-group-body">
+                    <button className="btn ribbon-icon-btn" title="Recipient Name" onClick={() => insertMailMergeField("recipient_name")}>
+                      <FaEnvelope />
+                    </button>
+                    <button className="btn ribbon-icon-btn" title="Recipient Email" onClick={() => insertMailMergeField("recipient_email")}>
+                      <FaEnvelope />
+                    </button>
+                    <button className="btn ribbon-icon-btn" title="Insert Image Placeholder" onClick={() => appendContent("[Image Placeholder]")}>
+                      <FaImage />
+                    </button>
+                  </div>
+                  <div className="ribbon-group-label">Mail Merge</div>
+                </div>
+              </div>
+            )}
+
+            {ribbonTab === "file" && (
+              <div className="office-ribbon-row">
+                <div className="ribbon-group">
+                  <div className="ribbon-group-body">
+                    <button className="btn ribbon-icon-btn" title="Save" onClick={handleSave} disabled={saving}>
+                      <FaSave />
+                    </button>
+                    <button className="btn ribbon-icon-btn" title="Back to Files" onClick={() => navigate(-1)}>
+                      <FaFolderOpen />
+                    </button>
+                    <button className="btn ribbon-icon-btn" title="Export" onClick={() => window.open(previewUrl, "_blank")} disabled={!previewUrl}>
+                      <FaFileExport />
+                    </button>
+                  </div>
+                  <div className="ribbon-group-label">File</div>
+                </div>
               </div>
             )}
           </div>
@@ -452,17 +656,25 @@ export default function EditorPage() {
           )}
 
           {kind === "docx" && (
-            <div className="border rounded p-3" style={{ minHeight: "72vh", background: "#fff" }}>
+            <div
+              className="border rounded p-3"
+              style={{
+                minHeight: "72vh",
+                background: designTheme === "default" ? "#fff" : designTheme === "formal" ? "#fdfcf8" : "#f7fbff",
+              }}
+            >
               <div className="small text-muted mb-2">Word-style editing surface</div>
               <div
                 ref={docEditorRef}
                 contentEditable
                 suppressContentEditableWarning
                 style={{
-                  minHeight: "64vh",
+                  minHeight: viewMode === "focus" ? "70vh" : "64vh",
                   outline: "none",
                   whiteSpace: wrapText ? "pre-wrap" : "pre",
                   fontSize: `${fontSize}px`,
+                  maxWidth: viewMode === "compact" ? "820px" : "none",
+                  margin: viewMode === "compact" ? "0 auto" : "0",
                 }}
                 onInput={(e) => setContent(e.currentTarget.innerText || "")}
               />
@@ -569,3 +781,4 @@ export default function EditorPage() {
     </div>
   );
 }
+

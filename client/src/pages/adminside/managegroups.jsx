@@ -30,6 +30,7 @@ export default function ManageGroups() {
   const [loading, _setLoading] = useState(false);
 
   const userId = localStorage.getItem("userId");
+  const role = localStorage.getItem("role") || "superadmin";
 
   useEffect(() => {
     fetchGroups();
@@ -82,7 +83,7 @@ export default function ManageGroups() {
 
   const fetchUsers = async () => {
     try {
-      const res = await axios.get(`${BACKEND_URL}/users`);
+      const res = await axios.get(`${BACKEND_URL}/users?role=${encodeURIComponent(role)}`);
       setUsers(res.data || []);
     } catch (err) {
       console.error("Failed to fetch users:", err);
@@ -92,8 +93,8 @@ export default function ManageGroups() {
   const fetchFilesAndFolders = async () => {
     try {
       const [filesRes, foldersRes] = await Promise.all([
-        axios.get(`${BACKEND_URL}/files`, { params: { role: "admin" } }),
-        axios.get(`${BACKEND_URL}/folders`, { params: { role: "admin" } }),
+        axios.get(`${BACKEND_URL}/files`, { params: { role: "superadmin" } }),
+        axios.get(`${BACKEND_URL}/folders`, { params: { role: "superadmin" } }),
       ]);
       setFiles(filesRes.data || []);
       setFolders(foldersRes.data || []);
@@ -678,8 +679,8 @@ export default function ManageGroups() {
                                         {sharedFile.fileId?.originalName || 'Unknown File'}
                                       </h6>
                                       <p className="card-text small text-muted mb-2">
-                                        Permission: <span className={`badge ${sharedFile.permission === 'write' ? 'bg-success' : 'bg-info'}`}>
-                                          {sharedFile.permission === 'write' ? 'Read & Write' : 'Read Only'}
+                                        Permission: <span className={`badge ${(sharedFile.permission === 'editor' || sharedFile.permission === 'write') ? 'bg-success' : 'bg-info'}`}>
+                                          {(sharedFile.permission === 'editor' || sharedFile.permission === 'write') ? 'Editor' : 'Viewer'}
                                         </span>
                                       </p>
                                       <small className="text-muted">
@@ -721,8 +722,8 @@ export default function ManageGroups() {
                                         {sharedFolder.folderId?.name || 'Unknown Folder'}
                                       </h6>
                                       <p className="card-text small text-muted mb-2">
-                                        Permission: <span className={`badge ${sharedFolder.permission === 'write' ? 'bg-success' : 'bg-info'}`}>
-                                          {sharedFolder.permission === 'write' ? 'Read & Write' : 'Read Only'}
+                                        Permission: <span className={`badge ${(sharedFolder.permission === 'editor' || sharedFolder.permission === 'write') ? 'bg-success' : 'bg-info'}`}>
+                                          {(sharedFolder.permission === 'editor' || sharedFolder.permission === 'write') ? 'Editor' : 'Viewer'}
                                         </span>
                                       </p>
                                       <small className="text-muted">
@@ -814,7 +815,7 @@ export default function ManageGroups() {
                       timestamp: sharedFile.sharedAt,
                       group: group.name,
                       icon: <FaFileAlt className="text-info" />,
-                      details: `Permission: ${sharedFile.permission === 'write' ? 'Read & Write' : 'Read Only'}`
+                      details: `Permission: ${(sharedFile.permission === 'editor' || sharedFile.permission === 'write') ? 'Editor' : 'Viewer'}`
                     })) || []),
                     // Shared folder activities
                     ...(group.sharedFolders?.map((sharedFolder, index) => ({
@@ -825,7 +826,7 @@ export default function ManageGroups() {
                       timestamp: sharedFolder.sharedAt,
                       group: group.name,
                       icon: <FaFolder className="text-warning" />,
-                      details: `Permission: ${sharedFolder.permission === 'write' ? 'Read & Write' : 'Read Only'}`
+                      details: `Permission: ${(sharedFolder.permission === 'editor' || sharedFolder.permission === 'write') ? 'Editor' : 'Viewer'}`
                     })) || []),
                     // Notification activities
                     ...(group.notifications?.map((notification, index) => ({
@@ -1091,7 +1092,6 @@ function ManageMembersModal({ group, users, onClose, onAddMembers, onRemoveMembe
     (user) =>
       !group.members?.some((m) => m._id?.toString() === user._id.toString()) &&
       user.email.toLowerCase().includes(searchTerm.toLowerCase()) &&
-      user.role !== "admin" &&
       user.role !== "superadmin"
   );
 
@@ -1227,7 +1227,7 @@ function ManageMembersModal({ group, users, onClose, onAddMembers, onRemoveMembe
 function ShareToGroupModal({ group, files, folders, onClose, onSubmit }) {
   const [type, setType] = useState("file");
   const [selectedItem, setSelectedItem] = useState("");
-  const [permission, setPermission] = useState("read");
+  const [permission, setPermission] = useState("viewer");
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -1298,8 +1298,8 @@ function ShareToGroupModal({ group, files, folders, onClose, onSubmit }) {
                   value={permission}
                   onChange={(e) => setPermission(e.target.value)}
                 >
-                  <option value="read">Read</option>
-                  <option value="write">Write</option>
+                  <option value="editor">Editor (edit, view, download, comment)</option>
+                  <option value="viewer">Viewer (view, download, comment)</option>
                 </select>
               </div>
             </div>

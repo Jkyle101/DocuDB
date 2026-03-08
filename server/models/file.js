@@ -15,7 +15,7 @@ const FileSchema = new mongoose.Schema({
   parentFolder: { type: mongoose.Schema.Types.ObjectId, ref: "Folder", default: null },
 
   sharedWith: [{ type: mongoose.Schema.Types.ObjectId, ref: "users" }],
-  permissions: { type: String, enum: ["read", "write", "owner"], default: "owner" },
+  permissions: { type: String, enum: ["viewer", "editor", "owner", "read", "write"], default: "owner" },
   deletedAt: { type: Date, default: null },
   favoritedBy: [{ type: String }],
   pinnedBy: [{ type: String }],
@@ -27,6 +27,48 @@ const FileSchema = new mongoose.Schema({
     tags: [{ type: String }],
     classifiedAt: { type: Date, default: Date.now },
     classifierVersion: { type: String, default: "v1" },
+  },
+  reviewWorkflow: {
+    requiresReview: { type: Boolean, default: false },
+    status: {
+      type: String,
+      enum: [
+        "approved",
+        "pending_program_chair",
+        "pending_qa",
+        "rejected_program_chair",
+        "rejected_qa",
+      ],
+      default: "approved",
+    },
+    assignedProgramChairs: [{ type: mongoose.Schema.Types.ObjectId, ref: "users" }],
+    assignedQaOfficers: [{ type: mongoose.Schema.Types.ObjectId, ref: "users" }],
+    programChair: {
+      status: {
+        type: String,
+        enum: ["pending", "approved", "rejected", "not_required"],
+        default: "not_required",
+      },
+      reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "users", default: null },
+      reviewedAt: { type: Date, default: null },
+      notes: { type: String, default: "" },
+    },
+    qaOfficer: {
+      status: {
+        type: String,
+        enum: ["pending", "approved", "rejected", "not_required"],
+        default: "not_required",
+      },
+      reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "users", default: null },
+      reviewedAt: { type: Date, default: null },
+      notes: { type: String, default: "" },
+    },
+    verificationBadge: {
+      verified: { type: Boolean, default: false },
+      verifiedBy: { type: mongoose.Schema.Types.ObjectId, ref: "users", default: null },
+      verifiedAt: { type: Date, default: null },
+      label: { type: String, default: "Pending Verification" },
+    },
   },
 
 });

@@ -277,7 +277,7 @@ export default function MyGroups() {
                                   Type: {sharedFile.fileId.mimetype} •
                                   Size: {(sharedFile.fileId.size / 1024).toFixed(1)} KB •
                                   Uploaded: {new Date(sharedFile.fileId.uploadDate).toLocaleDateString()} •
-                                  Permission: {sharedFile.permission === "read" ? "Read Only" : "Read & Write"} •
+                                  Permission: {(sharedFile.permission === "editor" || sharedFile.permission === "write") ? "Editor" : "Viewer"} •
                                   Shared by: {sharedFile.sharedBy.email} •
                                   {new Date(sharedFile.sharedAt).toLocaleDateString()}
                                 </small>
@@ -309,7 +309,7 @@ export default function MyGroups() {
                                 <br />
                                 <small className="text-muted">
                                   Created: {new Date(sharedFolder.folderId.createdAt).toLocaleDateString()} •
-                                  Permission: {sharedFolder.permission === "read" ? "Read Only" : "Read & Write"} •
+                                  Permission: {(sharedFolder.permission === "editor" || sharedFolder.permission === "write") ? "Editor" : "Viewer"} •
                                   Shared by: {sharedFolder.sharedBy.email} •
                                   {new Date(sharedFolder.sharedAt).toLocaleDateString()}
                                 </small>

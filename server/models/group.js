@@ -21,13 +21,13 @@ const groupSchema = new mongoose.Schema({
   }],
   sharedFiles: [{
     fileId: { type: mongoose.Schema.Types.ObjectId, ref: "File", required: true },
-    permission: { type: String, enum: ["read", "write"], default: "read" },
+    permission: { type: String, enum: ["viewer", "editor", "read", "write"], default: "viewer" },
     sharedBy: { type: mongoose.Schema.Types.ObjectId, ref: "users", required: true },
     sharedAt: { type: Date, default: Date.now }
   }],
   sharedFolders: [{
     folderId: { type: mongoose.Schema.Types.ObjectId, ref: "Folder", required: true },
-    permission: { type: String, enum: ["read", "write"], default: "read" },
+    permission: { type: String, enum: ["viewer", "editor", "read", "write"], default: "viewer" },
     sharedBy: { type: mongoose.Schema.Types.ObjectId, ref: "users", required: true },
     sharedAt: { type: Date, default: Date.now }
   }]

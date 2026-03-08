@@ -23,7 +23,7 @@ function Login() {
         localStorage.setItem("userId", result.data.userId);
         localStorage.setItem("email", email);
 
-        if (result.data.role === "admin") navigate("/admin");
+        if (result.data.role === "superadmin") navigate("/admin");
         else navigate("/");
       })
       .catch((err) => {
@@ -53,7 +53,7 @@ function Login() {
               <input
                 type="email"
                 className="form-control"
-                placeholder="name@company.com"
+                placeholder="Doe.John@llcc.edu.ph"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required

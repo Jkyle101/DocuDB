@@ -13,6 +13,13 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import { BACKEND_URL } from "../../config";
 
 export default function ManageUsers() {
+  const roleOptions = [
+    { value: "faculty", label: "Faculty" },
+    { value: "dept_chair", label: "Dept Chair" },
+    { value: "qa_admin", label: "QA Admin" },
+    { value: "evaluator", label: "Evaluator" },
+    { value: "superadmin", label: "Super Admin" },
+  ];
   const [users, setUsers] = useState([]);
   const [userStats, setUserStats] = useState({});
   const [passwordRequests, setPasswordRequests] = useState([]);
@@ -25,7 +32,7 @@ export default function ManageUsers() {
   // User creation states
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [showBulkImportModal, setShowBulkImportModal] = useState(false);
-  const [newUser, setNewUser] = useState({ email: "", password: "", name: "", role: "user" });
+  const [newUser, setNewUser] = useState({ email: "", password: "", name: "", role: "faculty" });
   const [bulkUsers, setBulkUsers] = useState([]);
   const [bulkImportResults, setBulkImportResults] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -33,17 +40,26 @@ export default function ManageUsers() {
   const fileInputRef = useRef(null);
 
   // Get user role and search results
-  const role = localStorage.getItem("role") || "user";
+  const role = localStorage.getItem("role") || "superadmin";
   const userId = localStorage.getItem("userId");
   const { searchResults } = useOutletContext();
+  const normalizeRole = (value) => {
+    const raw = String(value || "").toLowerCase();
+    if (raw === "admin") return "superadmin";
+    if (raw === "user") return "faculty";
+    if (["program_chair", "department_chair", "program_head"].includes(raw)) return "dept_chair";
+    if (["qa_officer", "quality_assurance_admin", "copc_reviewer"].includes(raw)) return "qa_admin";
+    if (raw === "reviewer") return "evaluator";
+    return raw;
+  };
 
   // Fetch users from backend
   const fetchUsers = async () => {
     try {
       setLoading(true);
       const [usersRes, statsRes] = await Promise.all([
-        axios.get(`${BACKEND_URL}/users`),
-        axios.get(`${BACKEND_URL}/users/stats`)
+        axios.get(`${BACKEND_URL}/users?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`),
+        axios.get(`${BACKEND_URL}/users/stats?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`)
       ]);
       setUsers(usersRes.data || []);
       setUserStats(statsRes.data || {});
@@ -57,7 +73,7 @@ export default function ManageUsers() {
   // Fetch password requests from backend
   const fetchPasswordRequests = async () => {
     try {
-      const response = await axios.get(`${BACKEND_URL}/admin/password-requests?role=${encodeURIComponent(role)}`);
+      const response = await axios.get(`${BACKEND_URL}/admin/password-requests?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`);
       setPasswordRequests(response.data || []);
     } catch (err) {
       console.error("Failed to fetch password requests:", err);
@@ -90,8 +106,10 @@ export default function ManageUsers() {
     switch (role) {
       case 'superadmin':
         return <FaCrown className="text-warning" />;
-      case 'admin':
-        return <FaShieldAlt className="text-danger" />;
+      case 'dept_chair':
+        return <FaUserCog className="text-primary" />;
+      case 'qa_admin':
+        return <FaCheck className="text-success" />;
       default:
         return <FaUser className="text-info" />;
     }
@@ -102,8 +120,10 @@ export default function ManageUsers() {
     switch (role) {
       case 'superadmin':
         return 'warning';
-      case 'admin':
-        return 'danger';
+      case 'dept_chair':
+        return 'primary';
+      case 'qa_admin':
+        return 'success';
       default:
         return 'info';
     }
@@ -116,7 +136,7 @@ export default function ManageUsers() {
         user.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         user.email?.toLowerCase().includes(searchTerm.toLowerCase());
 
-      const matchesRole = !roleFilter || user.role === roleFilter;
+      const matchesRole = !roleFilter || normalizeRole(user.role) === roleFilter;
       const matchesStatus = !statusFilter ||
         (statusFilter === 'active' && user.active !== false) ||
         (statusFilter === 'inactive' && user.active === false);
@@ -129,12 +149,19 @@ export default function ManageUsers() {
   const roleChartData = useMemo(() => {
     const roles = {};
     users.forEach(user => {
-      roles[user.role] = (roles[user.role] || 0) + 1;
+      const normalized = normalizeRole(user.role);
+      roles[normalized] = (roles[normalized] || 0) + 1;
     });
     return Object.entries(roles).map(([role, count]) => ({
       name: role.charAt(0).toUpperCase() + role.slice(1),
       value: count,
-      color: role === 'superadmin' ? '#ffc107' : role === 'admin' ? '#dc3545' : '#17a2b8'
+      color: role === 'superadmin'
+        ? '#ffc107'
+        : role === 'dept_chair'
+            ? '#0d6efd'
+            : role === 'qa_admin'
+              ? '#198754'
+              : '#17a2b8'
     }));
   }, [users]);
 
@@ -149,7 +176,7 @@ export default function ManageUsers() {
     if (!window.confirm(confirmMsg)) return;
 
     try {
-      await axios.patch(`${BACKEND_URL}/users/${user._id}/status`, {
+      await axios.patch(`${BACKEND_URL}/users/${user._id}/status?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`, {
         active: newActive,
       });
 
@@ -162,11 +189,11 @@ export default function ManageUsers() {
   };
 
   // Update user role
-  const updateUserRole = async (userId, newRole) => {
+  const updateUserRole = async (targetUserId, newRole) => {
     if (!window.confirm(`Change user role to ${newRole}?`)) return;
 
     try {
-      await axios.patch(`${BACKEND_URL}/users/${userId}/role`, {
+      await axios.patch(`${BACKEND_URL}/users/${targetUserId}/role?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`, {
         role: newRole,
       });
 
@@ -218,9 +245,9 @@ export default function ManageUsers() {
     }
 
     try {
-      await axios.post(`${BACKEND_URL}/admin/users`, newUser);
+      await axios.post(`${BACKEND_URL}/admin/users?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`, newUser);
       alert("User added successfully!");
-      setNewUser({ email: "", password: "", name: "", role: "user" });
+      setNewUser({ email: "", password: "", name: "", role: "faculty" });
       setShowAddUserModal(false);
       fetchUsers();
     } catch (err) {
@@ -292,7 +319,7 @@ export default function ManageUsers() {
             email: values[emailIndex],
             password: values[passwordIndex],
             name: nameIndex >= 0 ? values[nameIndex] : '',
-            role: 'user',
+            role: 'faculty',
             lineNumber: index + 2
           };
         });
@@ -309,7 +336,7 @@ export default function ManageUsers() {
 
     setImporting(true);
     try {
-      const response = await axios.post(`${BACKEND_URL}/admin/users/bulk`, {
+      const response = await axios.post(`${BACKEND_URL}/admin/users/bulk?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`, {
         users: bulkUsers
       });
 
@@ -408,8 +435,8 @@ export default function ManageUsers() {
               <div className="card shadow-sm border-warning">
                 <div className="card-body text-center">
                   <FaShieldAlt className="text-warning mb-2" size={32} />
-                  <h5 className="card-title mb-1">{userStats.rolesCount?.admin || 0}</h5>
-                  <small className="text-muted">Admins</small>
+                  <h5 className="card-title mb-1">{userStats.rolesCount?.superadmin || 0}</h5>
+                  <small className="text-muted">Super Admins</small>
                 </div>
               </div>
             </div>
@@ -417,8 +444,13 @@ export default function ManageUsers() {
               <div className="card shadow-sm border-info">
                 <div className="card-body text-center">
                   <FaUser className="text-info mb-2" size={32} />
-                  <h5 className="card-title mb-1">{userStats.rolesCount?.user || 0}</h5>
-                  <small className="text-muted">Regular Users</small>
+                  <h5 className="card-title mb-1">{userStats.rolesCount?.faculty || 0}</h5>
+                  <small className="text-muted">Faculty</small>
+                  <div className="mt-2">
+                    <span className="badge bg-primary me-1">Dept Chair: {userStats.rolesCount?.dept_chair || 0}</span>
+                    <span className="badge bg-success me-1">QA Admin: {userStats.rolesCount?.qa_admin || 0}</span>
+                    <span className="badge bg-secondary">Evaluator: {userStats.rolesCount?.evaluator || 0}</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -526,8 +558,9 @@ export default function ManageUsers() {
                     onChange={(e) => setRoleFilter(e.target.value)}
                   >
                     <option value="">All Roles</option>
-                    <option value="admin">Admin</option>
-                    <option value="user">User</option>
+                    {roleOptions.map((opt) => (
+                      <option key={opt.value} value={opt.value}>{opt.label}</option>
+                    ))}
                   </select>
                 </div>
                 <div className="col-md-4">
@@ -632,15 +665,16 @@ export default function ManageUsers() {
                           </td>
                           <td>
                             <div className="d-flex align-items-center">
-                              {getRoleIcon(user.role)}
+                              {getRoleIcon(normalizeRole(user.role))}
                               <select
-                                className={`form-select form-select-sm ms-2 border-0 bg-transparent text-${getRoleColor(user.role)}`}
+                                className={`form-select form-select-sm ms-2 border-0 bg-transparent text-${getRoleColor(normalizeRole(user.role))}`}
                                 style={{width: 'auto'}}
-                                value={user.role}
+                                value={normalizeRole(user.role)}
                                 onChange={(e) => updateUserRole(user._id, e.target.value)}
                               >
-                                <option value="user">User</option>
-                                <option value="admin">Admin</option>
+                                {roleOptions.map((opt) => (
+                                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
                               </select>
                             </div>
                           </td>
@@ -860,8 +894,9 @@ export default function ManageUsers() {
                       value={newUser.role}
                       onChange={(e) => setNewUser({ ...newUser, role: e.target.value })}
                     >
-                      <option value="user">User</option>
-                      <option value="admin">Admin</option>
+                      {roleOptions.map((opt) => (
+                        <option key={opt.value} value={opt.value}>{opt.label}</option>
+                      ))}
                     </select>
                   </div>
                 </form>
@@ -911,7 +946,7 @@ export default function ManageUsers() {
                   <br />
                   <strong>Optional Columns:</strong> name
                   <br />
-                  <strong>Default Role:</strong> user
+                  <strong>Default Role:</strong> faculty
                 </div>
 
                 <div className="mb-3">

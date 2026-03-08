@@ -29,10 +29,12 @@ import {
   FaRegStar,
   FaThumbtack,
   FaEdit,
+  FaChevronDown,
+  FaChevronUp,
 } from "react-icons/fa";
 
-import { FaFileSignature } from "react-icons/fa"; // ✅ new icon for Rename
-import RenameModal from "../components/RenameModal.jsx"; // ✅ new modal component
+import { FaFileSignature } from "react-icons/fa"; // âœ… new icon for Rename
+import RenameModal from "../components/RenameModal.jsx"; // âœ… new modal component
 
 import CreateFolderModal from "../components/CreateFolderModal.jsx";
 import MoveModal from "../components/MoveModal";
@@ -46,9 +48,34 @@ import { BACKEND_URL } from "../config.js";
 
 export default function Home() {
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "user";
+  const role = localStorage.getItem("role") || "faculty";
+  const normalizeRole = (value) => {
+    const raw = String(value || "").toLowerCase();
+    if (raw === "admin") return "superadmin";
+    if (raw === "user") return "faculty";
+    if (["program_chair", "department_chair", "program_head"].includes(raw)) return "dept_chair";
+    if (["qa_officer", "quality_assurance_admin", "copc_reviewer"].includes(raw)) return "qa_admin";
+    if (raw === "reviewer") return "evaluator";
+    return raw;
+  };
+  const isAdmin = normalizeRole(role) === "superadmin";
+  const isProgramChair = normalizeRole(role) === "dept_chair";
+  const isQaReviewer = normalizeRole(role) === "qa_admin";
+  const canUploadByRole = ["superadmin", "qa_admin", "dept_chair", "faculty"].includes(normalizeRole(role));
+  const canDeleteByRole = ["superadmin", "qa_admin"].includes(normalizeRole(role));
+  const canCheckTasks = isAdmin || isProgramChair || isQaReviewer;
+  const isAssignedReviewer = (file, stage) => {
+    if (isAdmin) return true;
+    const workflow = file?.reviewWorkflow || {};
+    const list =
+      stage === "program_chair"
+        ? workflow.assignedProgramChairs || []
+        : workflow.assignedQaOfficers || [];
+    if (!Array.isArray(list) || list.length === 0) return false;
+    return list.some((entry) => String(entry?._id || entry) === String(userId));
+  };
 
-  const [renameTarget, setRenameTarget] = useState(null); // ✅ for rename modal
+  const [renameTarget, setRenameTarget] = useState(null); // âœ… for rename modal
 
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
@@ -64,16 +91,34 @@ export default function Home() {
   const [versionTarget, setVersionTarget] = useState(null);
   const [commentsTarget, setCommentsTarget] = useState(null);
   const [selectedItem, setSelectedItem] = useState(null);
+  const [dragPayload, setDragPayload] = useState(null);
+  const [activeDropFolderId, setActiveDropFolderId] = useState("");
+  const [movingByDrop, setMovingByDrop] = useState(false);
   const [contextMenu, setContextMenu] = useState({
     visible: false,
     item: null,
   });
   const [showFavoritesOnly, setShowFavoritesOnly] = useState(false);
   const [showPinnedOnly, setShowPinnedOnly] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [folderTasks, setFolderTasks] = useState([]);
+  const [taskProgress, setTaskProgress] = useState(0);
+  const [folderAssignments, setFolderAssignments] = useState({
+    uploaders: [],
+    programChairs: [],
+    qaOfficers: [],
+  });
+  const [folderReviews, setFolderReviews] = useState({ programChair: [], qa: [] });
+  const [isChecklistCollapsed, setIsChecklistCollapsed] = useState(false);
+  const [dashboardRows, setDashboardRows] = useState([]);
+  const [newTaskTitle, setNewTaskTitle] = useState("");
+  const [canUploadCurrentFolder, setCanUploadCurrentFolder] = useState(true);
+  const [documentRequests, setDocumentRequests] = useState([]);
+  const [facultyCompleteness, setFacultyCompleteness] = useState({ percent: 0, requirements: [] });
   const { searchResults } = useOutletContext();
   const navigate = useNavigate();
 
-  // ✅ Pagination state
+  // âœ… Pagination state
   const [itemsToShow, setItemsToShow] = useState(12);
 
   // Reset pagination when folder or search changes
@@ -105,6 +150,88 @@ export default function Home() {
   useEffect(() => {
     axios.post(`${BACKEND_URL}/notifications/smart/${userId}`).catch(() => {});
   }, [userId]);
+
+  useEffect(() => {
+    if (!canCheckTasks && !isAdmin) return;
+    axios.get(`${BACKEND_URL}/users`, { params: { role } })
+      .then((res) => setUsers(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setUsers([]));
+  }, [canCheckTasks, isAdmin, role]);
+
+  const collectAssignedUploaders = useCallback((tasks = [], output = new Set()) => {
+    for (const task of tasks || []) {
+      (task.assignedUploaders || []).forEach((u) => {
+        const id = u?._id || u;
+        if (id) output.add(String(id));
+      });
+      collectAssignedUploaders(task.children || [], output);
+    }
+    return output;
+  }, []);
+
+  const fetchFolderTasks = useCallback(async (folderId) => {
+    if (!folderId) {
+      setFolderTasks([]);
+      setTaskProgress(0);
+      setFolderAssignments({ uploaders: [], programChairs: [], qaOfficers: [] });
+      setCanUploadCurrentFolder(canUploadByRole);
+      return;
+    }
+    try {
+      const { data } = await axios.get(`${BACKEND_URL}/folders/${folderId}/tasks`, {
+        params: { userId, role },
+      });
+      const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
+      const assignments = data?.assignments || { uploaders: [], programChairs: [], qaOfficers: [] };
+      setFolderTasks(tasks);
+      setTaskProgress(Number(data?.progress || 0));
+      setFolderAssignments(assignments);
+      setFolderReviews(data?.reviews || { programChair: [], qa: [] });
+
+      const assignedUploaders = new Set(
+        (assignments.uploaders || []).map((u) => String(u?._id || u))
+      );
+      collectAssignedUploaders(tasks).forEach((id) => assignedUploaders.add(id));
+      const hasComplianceScope = tasks.length > 0 || !!data?.profileKey;
+      const restricted = assignedUploaders.size > 0 || hasComplianceScope;
+      setCanUploadCurrentFolder(
+        canUploadByRole && (!restricted || isAdmin || assignedUploaders.has(String(userId)))
+      );
+    } catch {
+      setFolderTasks([]);
+      setTaskProgress(0);
+      setFolderAssignments({ uploaders: [], programChairs: [], qaOfficers: [] });
+      setCanUploadCurrentFolder(canUploadByRole);
+    }
+  }, [collectAssignedUploaders, isAdmin, canUploadByRole, role, userId]);
+
+  useEffect(() => {
+    fetchFolderTasks(currentFolder);
+  }, [currentFolder, fetchFolderTasks]);
+
+  useEffect(() => {
+    if (!canCheckTasks) return;
+    axios.get(`${BACKEND_URL}/compliance/dashboard`, {
+      params: { userId, role, profile: "COPC_BSIT" },
+    })
+      .then((res) => setDashboardRows(Array.isArray(res.data?.summary) ? res.data.summary : []))
+      .catch(() => setDashboardRows([]));
+  }, [canCheckTasks, role, userId, currentFolder]);
+
+  useEffect(() => {
+    axios.get(`${BACKEND_URL}/document-requests`, { params: { userId } })
+      .then((res) => setDocumentRequests(Array.isArray(res.data) ? res.data : []))
+      .catch(() => setDocumentRequests([]));
+  }, [userId]);
+
+  useEffect(() => {
+    if (!currentFolder) return;
+    axios.post(`${BACKEND_URL}/folders/${currentFolder}/completeness`, {
+      requiredDocuments: ["TOR", "Diploma", "PRC License", "Curriculum Vitae"],
+    })
+      .then((res) => setFacultyCompleteness(res.data || { percent: 0, requirements: [] }))
+      .catch(() => setFacultyCompleteness({ percent: 0, requirements: [] }));
+  }, [currentFolder, files]);
 
   // File icons
   const iconByMime = useMemo(
@@ -254,6 +381,87 @@ export default function Home() {
     );
   };
 
+  const normalizePermission = (permission) => {
+    if (permission === "owner") return "owner";
+    if (permission === "editor" || permission === "write") return "editor";
+    return "viewer";
+  };
+
+  const getItemPermission = (item) => {
+    if (!item?.isShared) return "owner";
+    return normalizePermission(item.permission || item.permissions);
+  };
+
+  const isSharedEditor = (item) => item?.isShared && getItemPermission(item) === "editor";
+  const canEditItem = (item) => !item?.isShared || isSharedEditor(item);
+  const isSearchMode = Array.isArray(searchResults);
+  const canDragItem = (item) => {
+    if (isSearchMode) return false;
+    if (isAdmin) return true;
+    return !item?.isShared;
+  };
+
+  const moveDraggedItem = useCallback(async (payload, destinationFolderId) => {
+    if (!payload?.id || !destinationFolderId) return;
+    const sourceFolderId = payload.fromFolderId || "";
+    if (String(sourceFolderId) === String(destinationFolderId)) return;
+
+    const endpoint = payload.type === "file"
+      ? `${BACKEND_URL}/files/${payload.id}/move`
+      : `${BACKEND_URL}/folders/${payload.id}/move`;
+
+    await axios.patch(endpoint, {
+      newFolderId: destinationFolderId,
+      userId,
+      role,
+    });
+
+    await fetchFolderContents(currentFolder);
+    if (currentFolder) {
+      fetchFolderTasks(currentFolder).catch(() => {});
+    }
+  }, [currentFolder, fetchFolderContents, fetchFolderTasks, role, userId]);
+
+  const handleDragStart = (event, payload) => {
+    if (!payload || !canDragItem({ isShared: payload.isShared })) return;
+    setDragPayload(payload);
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", `${payload.type}:${payload.id}`);
+  };
+
+  const handleDragEnd = () => {
+    setDragPayload(null);
+    setActiveDropFolderId("");
+  };
+
+  const handleFolderDragOver = (event, folderId) => {
+    if (!dragPayload || !folderId) return;
+    if (dragPayload.type === "folder" && String(dragPayload.id) === String(folderId)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setActiveDropFolderId(String(folderId));
+  };
+
+  const handleFolderDrop = async (event, folderId) => {
+    event.preventDefault();
+    if (!dragPayload || !folderId) return;
+    if (dragPayload.type === "folder" && String(dragPayload.id) === String(folderId)) {
+      setActiveDropFolderId("");
+      return;
+    }
+
+    setMovingByDrop(true);
+    try {
+      await moveDraggedItem(dragPayload, folderId);
+    } catch (err) {
+      alert(err?.response?.data?.error || "Failed to move item");
+    } finally {
+      setMovingByDrop(false);
+      setDragPayload(null);
+      setActiveDropFolderId("");
+    }
+  };
+
   const trackAccess = async (file, action = "OPEN") => {
     if (!file?._id) return;
     try {
@@ -267,7 +475,7 @@ export default function Home() {
     }
   };
 
-  // ✅ Use search results if available, otherwise normal data
+  // âœ… Use search results if available, otherwise normal data
   const searchFiles = useMemo(
     () =>
       (searchResults || []).filter((item) => {
@@ -299,7 +507,7 @@ export default function Home() {
   }, [searchResults, searchFiles, files, showFavoritesOnly, showPinnedOnly]);
   const visibleFolders = searchResults ? searchFolders : folders;
 
-  // ✅ Paginated arrays
+  // âœ… Paginated arrays
   const paginatedFolders = visibleFolders.slice(0, itemsToShow);
   const paginatedFiles = visibleFiles.slice(0, itemsToShow);
 
@@ -307,9 +515,206 @@ export default function Home() {
     setItemsToShow((prev) => prev + 15);
   };
 
+  const upsertTaskTree = async (nextTasks, nextAssignments = folderAssignments) => {
+    if (!currentFolder) return;
+    const { data } = await axios.put(`${BACKEND_URL}/folders/${currentFolder}/tasks`, {
+      userId,
+      role,
+      tasks: nextTasks,
+      assignments: nextAssignments,
+      profileKey: "COPC_BSIT",
+    });
+    setFolderTasks(Array.isArray(data?.tasks) ? data.tasks : []);
+    setTaskProgress(Number(data?.progress || 0));
+    setFolderAssignments(data?.assignments || nextAssignments);
+  };
+
+  const createRootTask = async () => {
+    if (!isAdmin || !currentFolder || !newTaskTitle.trim()) return;
+    try {
+      const { data } = await axios.post(`${BACKEND_URL}/folders/${currentFolder}/tasks`, {
+        userId,
+        role,
+        task: {
+          title: newTaskTitle.trim(),
+          checks: ["complete", "updated", "aligned with CHED standards"],
+          scope: "General",
+          percentage: 0,
+          status: "not_started",
+        },
+      });
+      setFolderTasks(Array.isArray(data?.tasks) ? data.tasks : []);
+      setTaskProgress(Number(data?.progress || 0));
+      setNewTaskTitle("");
+    } catch (err) {
+      alert(err?.response?.data?.error || "Failed to create task");
+    }
+  };
+
+  const updateTask = async (taskId, updates) => {
+    if (!currentFolder || !taskId) return;
+    const endpoint = isAdmin
+      ? `${BACKEND_URL}/folders/${currentFolder}/tasks/${taskId}`
+      : `${BACKEND_URL}/folders/${currentFolder}/tasks/${taskId}/check`;
+    const payload = isAdmin ? { userId, role, updates } : { userId, role, ...updates };
+    try {
+      const { data } = await axios.patch(endpoint, payload);
+      setFolderTasks(Array.isArray(data?.tasks) ? data.tasks : []);
+      setTaskProgress(Number(data?.progress || 0));
+    } catch (err) {
+      alert(err?.response?.data?.error || "Failed to update task");
+    }
+  };
+
+  const submitFolderReview = async (scope, checks) => {
+    if (!currentFolder || !canCheckTasks) return;
+    try {
+      await axios.post(`${BACKEND_URL}/folders/${currentFolder}/reviews`, {
+        userId,
+        role,
+        scope,
+        checks,
+        notes: "",
+      });
+      fetchFolderTasks(currentFolder);
+    } catch (err) {
+      alert(err?.response?.data?.error || "Failed to submit review");
+    }
+  };
+
+  const handleFileStageReview = async (file, stage, action) => {
+    if (!file?._id) return;
+    try {
+      const endpoint = stage === "program_chair"
+        ? `${BACKEND_URL}/files/${file._id}/review/program-chair`
+        : `${BACKEND_URL}/files/${file._id}/review/qa`;
+      await axios.patch(endpoint, { userId, role, action, notes: "" });
+      fetchFolderContents(currentFolder).catch(console.error);
+    } catch (err) {
+      alert(err?.response?.data?.error || "Failed to review file");
+    }
+  };
+
+  const sendDocumentRequest = async () => {
+    if (!isAdmin || !currentFolder) return;
+    const target = window.prompt("Enter faculty user ID to request document from:");
+    if (!target) return;
+    const docName = window.prompt("Document name (e.g., PRC License):", "PRC License");
+    if (!docName) return;
+    const deadline = window.prompt("Deadline (YYYY-MM-DD):", "");
+    try {
+      await axios.post(`${BACKEND_URL}/folders/${currentFolder}/document-requests`, {
+        userId,
+        role,
+        targetUserId: target,
+        documentName: docName,
+        deadline: deadline || undefined,
+        message: `Upload your ${docName}`,
+      });
+      alert("Document request sent.");
+    } catch (err) {
+      alert(err?.response?.data?.error || "Failed to send request");
+    }
+  };
+
+  const renderTaskTree = (tasks = []) => (
+    <ul className="list-group list-group-flush">
+      {tasks.map((task) => (
+        <li key={task._id} className="list-group-item px-0 border-0">
+          <div className="d-flex align-items-center justify-content-between gap-2">
+            <div>
+              <div className="fw-semibold small">{task.title}</div>
+              <div className="text-muted" style={{ fontSize: "12px" }}>
+                {task.scope || "General"} â€¢ {Number(task.percentage || 0)}%
+              </div>
+            </div>
+            {canCheckTasks && (
+              <select
+                className="form-select form-select-sm"
+                style={{ width: "130px" }}
+                value={task.status}
+                onChange={(e) => updateTask(task._id, {
+                  status: e.target.value,
+                  percentage: e.target.value === "complete" ? 100 : task.percentage,
+                })}
+              >
+                <option value="not_started">Not Started</option>
+                <option value="in_progress">In Progress</option>
+                <option value="complete">Complete</option>
+              </select>
+            )}
+          </div>
+          {isAdmin && (
+            <div className="d-flex gap-1 mt-1">
+              <button
+                className="btn btn-sm btn-outline-secondary py-0"
+                onClick={() => {
+                  const nextTitle = window.prompt("Rename task", task.title);
+                  if (nextTitle && nextTitle.trim()) updateTask(task._id, { title: nextTitle.trim() });
+                }}
+              >
+                Rename
+              </button>
+              <button
+                className="btn btn-sm btn-outline-secondary py-0"
+                onClick={() => {
+                  const nextScope = window.prompt("Scope", task.scope || "");
+                  if (nextScope !== null) updateTask(task._id, { scope: nextScope });
+                }}
+              >
+                Scope
+              </button>
+            </div>
+          )}
+          {(task.children || []).length > 0 && (
+            <div className="ms-3 mt-1">{renderTaskTree(task.children)}</div>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+
+  const renderRequiredTaskList = (tasks = []) => (
+    <ul className="list-group list-group-flush">
+      {tasks.map((task) => (
+        <li key={task._id} className="list-group-item px-0 border-0 py-2">
+          <div className="d-flex align-items-center gap-2">
+            <div
+              style={{
+                width: "18px",
+                height: "18px",
+                borderRadius: "50%",
+                border: Number(task.percentage || 0) >= 100 || task.status === "complete" ? "none" : "2px solid #c7c7c7",
+                background: Number(task.percentage || 0) >= 100 || task.status === "complete" ? "#45be57" : "transparent",
+                color: "#fff",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: "12px",
+                fontWeight: 700,
+                flexShrink: 0,
+              }}
+            >
+              {(Number(task.percentage || 0) >= 100 || task.status === "complete") ? "✓" : ""}
+            </div>
+            <div className="small" style={{ color: "#555" }}>
+              {task.title}
+            </div>
+          </div>
+          {(task.children || []).length > 0 && (
+            <div className="ms-3 mt-1">{renderRequiredTaskList(task.children)}</div>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+
   return (
     <>
-      <div className="page-container">
+      <div
+        className="page-container"
+        style={currentFolder && canCheckTasks && window.innerWidth >= 1200 ? { paddingRight: "390px" } : undefined}
+      >
         {/* Page Header */}
         <div className="page-header">
           <div className="d-flex justify-content-between align-items-start flex-wrap gap-3">
@@ -379,18 +784,34 @@ export default function Home() {
               <button
                 className="btn btn-primary"
                 onClick={() => setShowCreate(true)}
+                disabled={!canUploadByRole}
               >
                 <FaPlus className="me-1" /> New Folder
               </button>
               <button
                 className="btn btn-success"
                 onClick={() => setShowUpload(true)}
+                disabled={!canUploadCurrentFolder}
+                title={!canUploadCurrentFolder ? "You are not assigned to upload in this folder" : "Upload"}
               >
                 <FaUpload className="me-1" /> Upload
               </button>
             </div>
           </div>
         </div>
+
+        {documentRequests.length > 0 && (
+          <div className="alert alert-warning py-2 mb-3">
+            <strong>Pending Document Requests</strong>
+            <ul className="mb-0 mt-1">
+              {documentRequests.slice(0, 3).map((req) => (
+                <li key={req._id}>
+                  {req.message} {req.details ? `(${req.details})` : ""}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Stats Section */}
         <div className="stats-section">
@@ -411,8 +832,11 @@ export default function Home() {
             </div>
           </div>
         </div>
+        {movingByDrop && (
+          <div className="alert alert-info py-2">Moving item...</div>
+        )}
 
-        {/* ✅ Grid & List Views (use paginated arrays) */}
+        {/* âœ… Grid & List Views (use paginated arrays) */}
         {view === "grid" ? (
           <div className="row g-3 documents-spotlight-grid">
             {/* Folders */}
@@ -420,6 +844,14 @@ export default function Home() {
               <div
                 key={folder._id}
                 className="col-6 col-sm-4 col-md-3 col-xl-2"
+                draggable={canDragItem(folder)}
+                onDragStart={(e) => handleDragStart(e, {
+                  type: "folder",
+                  id: folder._id,
+                  fromFolderId: currentFolder || "",
+                  isShared: !!folder.isShared,
+                })}
+                onDragEnd={handleDragEnd}
                 onContextMenu={(e) =>
                   handleContextMenu(e, { type: "folder", data: folder })
                 }
@@ -431,6 +863,14 @@ export default function Home() {
                   className={`card folder-card h-100 ${
                     selectedItem?.data?._id === folder._id ? "selected" : ""
                   }`}
+                  onDragOver={(e) => handleFolderDragOver(e, folder._id)}
+                  onDrop={(e) => handleFolderDrop(e, folder._id)}
+                  onDragLeave={() => {
+                    if (activeDropFolderId === String(folder._id)) setActiveDropFolderId("");
+                  }}
+                  style={activeDropFolderId === String(folder._id)
+                    ? { border: "2px dashed #0d6efd", background: "rgba(13,110,253,0.08)" }
+                    : undefined}
                 >
                   <div
                     className="card-body text-center"
@@ -471,16 +911,18 @@ export default function Home() {
                       >
                         <FaEye />
                       </button>
-                      <button
-                        className="btn btn-outline-secondary"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setVersionTarget({ type: "folder", item: folder });
-                        }}
-                        title="Version History"
-                      >
-                        <FaHistory />
-                      </button>
+                      {!folder.isShared && (
+                        <button
+                          className="btn btn-outline-secondary"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setVersionTarget({ type: "folder", item: folder });
+                          }}
+                          title="Version History"
+                        >
+                          <FaHistory />
+                        </button>
+                      )}
                       <button
                         className="btn btn-outline-secondary"
                         onClick={(e) => {
@@ -502,6 +944,14 @@ export default function Home() {
               <div
                 key={file._id}
                 className="col-6 col-sm-4 col-md-3 col-xl-2"
+                draggable={canDragItem(file)}
+                onDragStart={(e) => handleDragStart(e, {
+                  type: "file",
+                  id: file._id,
+                  fromFolderId: currentFolder || "",
+                  isShared: !!file.isShared,
+                })}
+                onDragEnd={handleDragEnd}
                 onContextMenu={(e) =>
                   handleContextMenu(e, { type: "file", data: file })
                 }
@@ -562,26 +1012,30 @@ export default function Home() {
                       </p>
                     )}
                     <div className="file-card-actions" role="group">
-                      <button
-                        className={`btn btn-sm file-card-action-btn ${file.isFavorite ? "btn-warning" : "btn-outline-warning"}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleFavorite(file);
-                        }}
-                        title={file.isFavorite ? "Remove from Favorites" : "Add to Favorites"}
-                      >
-                        {file.isFavorite ? <FaStar /> : <FaRegStar />}
-                      </button>
-                      <button
-                        className={`btn btn-sm file-card-action-btn ${file.isPinned ? "btn-dark" : "btn-outline-dark"}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          togglePinned(file);
-                        }}
-                        title={file.isPinned ? "Unpin" : "Pin Document"}
-                      >
-                        <FaThumbtack />
-                      </button>
+                      {!file.isShared && (
+                        <button
+                          className={`btn btn-sm file-card-action-btn ${file.isFavorite ? "btn-warning" : "btn-outline-warning"}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggleFavorite(file);
+                          }}
+                          title={file.isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+                        >
+                          {file.isFavorite ? <FaStar /> : <FaRegStar />}
+                        </button>
+                      )}
+                      {!file.isShared && (
+                        <button
+                          className={`btn btn-sm file-card-action-btn ${file.isPinned ? "btn-dark" : "btn-outline-dark"}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            togglePinned(file);
+                          }}
+                          title={file.isPinned ? "Unpin" : "Pin Document"}
+                        >
+                          <FaThumbtack />
+                        </button>
+                      )}
                       <a
                         className="btn btn-sm btn-outline-primary file-card-action-btn"
                         href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}`}
@@ -606,7 +1060,7 @@ export default function Home() {
                       >
                         <FaCloudDownloadAlt />
                       </a>
-                      {isEditableFile(file) && (
+                      {isEditableFile(file) && canEditItem(file) && (
                         <button
                           className="btn btn-sm btn-outline-dark file-card-action-btn"
                           onClick={(e) => {
@@ -619,16 +1073,18 @@ export default function Home() {
                           <FaEdit />
                         </button>
                       )}
-                      <button
-                        className="btn btn-sm btn-outline-secondary file-card-action-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setVersionTarget({ type: "file", item: file });
-                        }}
-                        title="Version History"
-                      >
-                        <FaHistory />
-                      </button>
+                      {!file.isShared && (
+                        <button
+                          className="btn btn-sm btn-outline-secondary file-card-action-btn"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setVersionTarget({ type: "file", item: file });
+                          }}
+                          title="Version History"
+                        >
+                          <FaHistory />
+                        </button>
+                      )}
                       <button
                         className="btn btn-sm btn-outline-secondary file-card-action-btn"
                         onClick={(e) => {
@@ -664,6 +1120,19 @@ export default function Home() {
                   {paginatedFolders.map((folder) => (
                     <tr
                       key={folder._id}
+                      draggable={canDragItem(folder)}
+                      onDragStart={(e) => handleDragStart(e, {
+                        type: "folder",
+                        id: folder._id,
+                        fromFolderId: currentFolder || "",
+                        isShared: !!folder.isShared,
+                      })}
+                      onDragEnd={handleDragEnd}
+                      onDragOver={(e) => handleFolderDragOver(e, folder._id)}
+                      onDrop={(e) => handleFolderDrop(e, folder._id)}
+                      onDragLeave={() => {
+                        if (activeDropFolderId === String(folder._id)) setActiveDropFolderId("");
+                      }}
                       onContextMenu={(e) =>
                         handleContextMenu(e, { type: "folder", data: folder })
                       }
@@ -675,6 +1144,7 @@ export default function Home() {
                           ? "table-active"
                           : ""
                       }
+                      style={activeDropFolderId === String(folder._id) ? { outline: "2px dashed #0d6efd", outlineOffset: "-2px" } : undefined}
                     >
                       <td
                         role="button"
@@ -695,7 +1165,7 @@ export default function Home() {
                           <span className="text-muted">You</span>
                         )}
                       </td>
-                      <td>—</td>
+                      <td>â€”</td>
                       <td>{new Date(folder.createdAt).toLocaleDateString()}</td>
                       <td className="text-center">
                         <div className="btn-group">
@@ -706,15 +1176,17 @@ export default function Home() {
                           >
                             <FaEye />
                           </button>
-                          <button
-                            className="btn btn-sm btn-outline-secondary"
-                            onClick={() =>
-                              setVersionTarget({ type: "folder", item: folder })
-                            }
-                            title="Version History"
-                          >
-                            <FaHistory />
-                          </button>
+                          {!folder.isShared && (
+                            <button
+                              className="btn btn-sm btn-outline-secondary"
+                              onClick={() =>
+                                setVersionTarget({ type: "folder", item: folder })
+                              }
+                              title="Version History"
+                            >
+                              <FaHistory />
+                            </button>
+                          )}
                           <button
                             className="btn btn-sm btn-outline-secondary"
                             onClick={() =>
@@ -724,40 +1196,48 @@ export default function Home() {
                           >
                             <FaComment />
                           </button>
-                          <button
-                            className="btn btn-sm btn-outline-secondary"
-                            onClick={() =>
-                              setMoveTarget({ type: "folder", item: folder })
-                            }
-                            title="Move"
-                          >
-                            <FaArrowsAlt />
-                          </button>
-                          <button
-                            className="btn btn-sm btn-outline-secondary"
-                            onClick={() =>
-                              setShareTarget({ type: "folder", item: folder })
-                            }
-                            title="Share"
-                          >
-                            <FaShareAlt />
-                          </button>
-                          <button
-                            className="btn btn-sm btn-outline-danger"
-                            onClick={() => deleteFolder(folder)}
-                            title="Delete"
-                          >
-                            <FaTrash />
-                          </button>
-                          <button
-                            className="btn btn-sm btn-outline-secondary"
-                            onClick={() =>
-                              setRenameTarget({ type: "folder", data: folder })
-                            }
-                            title="Rename"
-                          >
-                            <FaFileSignature />
-                          </button>
+                          {!folder.isShared && (
+                            <button
+                              className="btn btn-sm btn-outline-secondary"
+                              onClick={() =>
+                                setMoveTarget({ type: "folder", item: folder })
+                              }
+                              title="Move"
+                            >
+                              <FaArrowsAlt />
+                            </button>
+                          )}
+                          {!folder.isShared && (
+                            <button
+                              className="btn btn-sm btn-outline-secondary"
+                              onClick={() =>
+                                setShareTarget({ type: "folder", item: folder })
+                              }
+                              title="Share"
+                            >
+                              <FaShareAlt />
+                            </button>
+                          )}
+                          {!folder.isShared && canDeleteByRole && (
+                            <button
+                              className="btn btn-sm btn-outline-danger"
+                              onClick={() => deleteFolder(folder)}
+                              title="Delete"
+                            >
+                              <FaTrash />
+                            </button>
+                          )}
+                          {canEditItem(folder) && (
+                            <button
+                              className="btn btn-sm btn-outline-secondary"
+                              onClick={() =>
+                                setRenameTarget({ type: "folder", data: folder })
+                              }
+                              title="Rename"
+                            >
+                              <FaFileSignature />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -765,6 +1245,14 @@ export default function Home() {
                   {paginatedFiles.map((file) => (
                     <tr
                       key={file._id}
+                      draggable={canDragItem(file)}
+                      onDragStart={(e) => handleDragStart(e, {
+                        type: "file",
+                        id: file._id,
+                        fromFolderId: currentFolder || "",
+                        isShared: !!file.isShared,
+                      })}
+                      onDragEnd={handleDragEnd}
                       onContextMenu={(e) =>
                         handleContextMenu(e, { type: "file", data: file })
                       }
@@ -822,20 +1310,24 @@ export default function Home() {
                       <td>{new Date(file.uploadDate).toLocaleDateString()}</td>
                       <td className="text-center">
                         <div className="btn-group flex-wrap gap-1 justify-content-center">
-                          <button
-                            className={`btn btn-sm ${file.isFavorite ? "btn-warning" : "btn-outline-warning"}`}
-                            onClick={() => toggleFavorite(file)}
-                            title={file.isFavorite ? "Remove from Favorites" : "Add to Favorites"}
-                          >
-                            {file.isFavorite ? <FaStar /> : <FaRegStar />}
-                          </button>
-                          <button
-                            className={`btn btn-sm ${file.isPinned ? "btn-dark" : "btn-outline-dark"}`}
-                            onClick={() => togglePinned(file)}
-                            title={file.isPinned ? "Unpin" : "Pin Document"}
-                          >
-                            <FaThumbtack />
-                          </button>
+                          {!file.isShared && (
+                            <button
+                              className={`btn btn-sm ${file.isFavorite ? "btn-warning" : "btn-outline-warning"}`}
+                              onClick={() => toggleFavorite(file)}
+                              title={file.isFavorite ? "Remove from Favorites" : "Add to Favorites"}
+                            >
+                              {file.isFavorite ? <FaStar /> : <FaRegStar />}
+                            </button>
+                          )}
+                          {!file.isShared && (
+                            <button
+                              className={`btn btn-sm ${file.isPinned ? "btn-dark" : "btn-outline-dark"}`}
+                              onClick={() => togglePinned(file)}
+                              title={file.isPinned ? "Unpin" : "Pin Document"}
+                            >
+                              <FaThumbtack />
+                            </button>
+                          )}
                           <a
                             className="btn btn-sm btn-outline-primary"
                             href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}`}
@@ -854,7 +1346,7 @@ export default function Home() {
                           >
                             <FaCloudDownloadAlt />
                           </a>
-                          {isEditableFile(file) && (
+                          {isEditableFile(file) && canEditItem(file) && (
                             <button
                               className="btn btn-sm btn-outline-dark"
                               onClick={() => {
@@ -866,15 +1358,17 @@ export default function Home() {
                               <FaEdit />
                             </button>
                           )}
-                          <button
-                            className="btn btn-sm btn-outline-secondary"
-                            onClick={() =>
-                              setVersionTarget({ type: "file", item: file })
-                            }
-                            title="Version History"
-                          >
-                            <FaHistory />
-                          </button>
+                          {!file.isShared && (
+                            <button
+                              className="btn btn-sm btn-outline-secondary"
+                              onClick={() =>
+                                setVersionTarget({ type: "file", item: file })
+                              }
+                              title="Version History"
+                            >
+                              <FaHistory />
+                            </button>
+                          )}
                           <button
                             className="btn btn-sm btn-outline-secondary"
                             onClick={() =>
@@ -884,40 +1378,37 @@ export default function Home() {
                           >
                             <FaComment />
                           </button>
-                          <button
-                            className="btn btn-sm btn-outline-secondary"
-                            onClick={() =>
-                              setMoveTarget({ type: "file", item: file })
-                            }
-                            title="Move"
-                          >
-                            <FaArrowsAlt />
-                          </button>
-                          <button
-                            className="btn btn-sm btn-outline-secondary"
-                            onClick={() =>
-                              setShareTarget({ type: "file", item: file })
-                            }
-                            title="Share"
-                          >
-                            <FaShareAlt />
-                          </button>
-                          <button
-                            className="btn btn-sm btn-outline-danger"
-                            onClick={() => deleteFile(file)}
-                            title="Delete"
-                          >
-                            <FaTrash />
-                          </button>
-                          <button
-                            className="btn btn-sm btn-outline-secondary"
-                            onClick={() =>
-                              setRenameTarget({ type: "file", data: file })
-                            }
-                            title="Rename"
-                          >
-                            <FaFileSignature />
-                          </button>
+                          {!file.isShared && (
+                            <button
+                              className="btn btn-sm btn-outline-secondary"
+                              onClick={() =>
+                                setMoveTarget({ type: "file", item: file })
+                              }
+                              title="Move"
+                            >
+                              <FaArrowsAlt />
+                            </button>
+                          )}
+                          {!file.isShared && (
+                            <button
+                              className="btn btn-sm btn-outline-secondary"
+                              onClick={() =>
+                                setShareTarget({ type: "file", item: file })
+                              }
+                              title="Share"
+                            >
+                              <FaShareAlt />
+                            </button>
+                          )}
+                          {!file.isShared && canDeleteByRole && (
+                            <button
+                              className="btn btn-sm btn-outline-danger"
+                              onClick={() => deleteFile(file)}
+                              title="Delete"
+                            >
+                              <FaTrash />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -928,7 +1419,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* ✅ Load More */}
+        {/* âœ… Load More */}
         {(visibleFolders.length > itemsToShow ||
           visibleFiles.length > itemsToShow) && (
           <div className="text-center mt-4">
@@ -952,15 +1443,69 @@ export default function Home() {
             <button
               className="btn btn-primary me-2"
               onClick={() => setShowUpload(true)}
+              disabled={!canUploadCurrentFolder}
             >
               <FaUpload className="me-1" /> Upload Files
             </button>
             <button
               className="btn btn-outline-primary"
               onClick={() => setShowCreate(true)}
+              disabled={!canUploadByRole}
             >
               <FaPlus className="me-1" /> New Folder
             </button>
+          </div>
+        )}
+
+        {currentFolder && canCheckTasks && (
+          <div
+            className="card shadow-sm"
+            style={window.innerWidth >= 1200
+              ? {
+                  position: "fixed",
+                  right: "18px",
+                  top: "92px",
+                  width: "360px",
+                  maxHeight: "82vh",
+                  overflowY: "auto",
+                  zIndex: 9,
+                }
+              : { marginTop: "12px" }}
+          >
+            <div className="card-header bg-light">
+              <div className="d-flex justify-content-between align-items-center">
+                <div className="fw-semibold" style={{ color: "#555" }}>Task Checklist</div>
+                <div className="d-flex align-items-center gap-2">
+                  <div style={{ fontWeight: 600, color: "#555" }}>{Math.round(taskProgress)}%</div>
+                  <button
+                    className="btn btn-sm btn-outline-secondary"
+                    onClick={() => setIsChecklistCollapsed((v) => !v)}
+                    title={isChecklistCollapsed ? "Expand checklist" : "Collapse checklist"}
+                  >
+                    {isChecklistCollapsed ? <FaChevronDown /> : <FaChevronUp />}
+                  </button>
+                </div>
+              </div>
+              <div className="progress mt-2" style={{ height: "10px", background: "#d9dce0" }}>
+                <div className="progress-bar" style={{ width: `${Math.max(0, Math.min(100, taskProgress))}%`, background: "#45be57" }} />
+              </div>
+            </div>
+            {!isChecklistCollapsed && (
+              <div className="card-body">
+                <div className="small fw-semibold mb-2">Required Tasks In This Folder</div>
+                {folderTasks.length ? renderRequiredTaskList(folderTasks) : (
+                  <div className="small text-muted">No required tasks yet.</div>
+                )}
+                {isAdmin && (
+                  <button
+                    className="btn btn-sm btn-outline-primary mt-2"
+                    onClick={() => navigate(`/admin/tasks?folderId=${encodeURIComponent(currentFolder)}`)}
+                  >
+                    Open Task Management Page
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
 
@@ -1006,58 +1551,6 @@ export default function Home() {
                         <button
                           className="btn btn-outline-secondary d-flex align-items-center"
                           onClick={() => {
-                            setMoveTarget({
-                              type: "folder",
-                              item: contextMenu.item.data,
-                            });
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaArrowsAlt className="me-2" />
-                          Move
-                        </button>
-                        <button
-                          className="btn btn-outline-info d-flex align-items-center"
-                          onClick={() => {
-                            setShareTarget({
-                              type: "folder",
-                              item: contextMenu.item.data,
-                            });
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaShareAlt className="me-2" />
-                          Share
-                        </button>
-                        <button
-                          className="btn btn-outline-warning d-flex align-items-center"
-                          onClick={() => {
-                            setManageSharesTarget({
-                              type: "folder",
-                              item: contextMenu.item.data,
-                            });
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaUsers className="me-2" />
-                          Manage Shares
-                        </button>
-                        <button
-                          className="btn btn-outline-secondary d-flex align-items-center"
-                          onClick={() => {
-                            setVersionTarget({
-                              type: "folder",
-                              item: contextMenu.item.data,
-                            });
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaHistory className="me-2" />
-                          Version History
-                        </button>
-                        <button
-                          className="btn btn-outline-secondary d-flex align-items-center"
-                          onClick={() => {
                             setCommentsTarget({
                               type: "folder",
                               item: contextMenu.item.data,
@@ -1068,27 +1561,93 @@ export default function Home() {
                           <FaComment className="me-2" />
                           Comments
                         </button>
-                        <hr />
-                        <button
-                          className="btn btn-outline-success d-flex align-items-center"
-                          onClick={() => {
-                            setRenameTarget(contextMenu.item);
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaFileSignature className="me-2" />
-                          Rename
-                        </button>
-                        <button
-                          className="btn btn-outline-danger d-flex align-items-center"
-                          onClick={() => {
-                            deleteFolder(contextMenu.item.data);
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaTrash className="me-2" />
-                          Delete
-                        </button>
+                        {!contextMenu.item.data.isShared && (
+                          <button
+                            className="btn btn-outline-secondary d-flex align-items-center"
+                            onClick={() => {
+                              setMoveTarget({
+                                type: "folder",
+                                item: contextMenu.item.data,
+                              });
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            <FaArrowsAlt className="me-2" />
+                            Move
+                          </button>
+                        )}
+                        {!contextMenu.item.data.isShared && (
+                          <button
+                            className="btn btn-outline-info d-flex align-items-center"
+                            onClick={() => {
+                              setShareTarget({
+                                type: "folder",
+                                item: contextMenu.item.data,
+                              });
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            <FaShareAlt className="me-2" />
+                            Share
+                          </button>
+                        )}
+                        {!contextMenu.item.data.isShared && (
+                          <button
+                            className="btn btn-outline-warning d-flex align-items-center"
+                            onClick={() => {
+                              setManageSharesTarget({
+                                type: "folder",
+                                item: contextMenu.item.data,
+                              });
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            <FaUsers className="me-2" />
+                            Manage Shares
+                          </button>
+                        )}
+                        {!contextMenu.item.data.isShared && (
+                          <button
+                            className="btn btn-outline-secondary d-flex align-items-center"
+                            onClick={() => {
+                              setVersionTarget({
+                                type: "folder",
+                                item: contextMenu.item.data,
+                              });
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            <FaHistory className="me-2" />
+                            Version History
+                          </button>
+                        )}
+                        {canEditItem(contextMenu.item.data) && (
+                          <>
+                            <hr />
+                            <button
+                              className="btn btn-outline-success d-flex align-items-center"
+                              onClick={() => {
+                                setRenameTarget(contextMenu.item);
+                                setContextMenu({ visible: false, item: null });
+                              }}
+                            >
+                              <FaFileSignature className="me-2" />
+                              Rename
+                            </button>
+                          </>
+                        )}
+                        {!contextMenu.item.data.isShared && canDeleteByRole && (
+                          <button
+                            className="btn btn-outline-danger d-flex align-items-center"
+                            onClick={() => {
+                              deleteFolder(contextMenu.item.data);
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            <FaTrash className="me-2" />
+                            Delete
+                          </button>
+                        )}
                       </>
                     ) : (
                       <>
@@ -1119,55 +1678,6 @@ export default function Home() {
                         <button
                           className="btn btn-outline-secondary d-flex align-items-center"
                           onClick={() => {
-                            setMoveTarget({ type: "file", item: contextMenu.item.data });
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaArrowsAlt className="me-2" />
-                          Move
-                        </button>
-                        <button
-                          className="btn btn-outline-info d-flex align-items-center"
-                          onClick={() => {
-                            setShareTarget({
-                              type: "file",
-                              item: contextMenu.item.data,
-                            });
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaShareAlt className="me-2" />
-                          Share
-                        </button>
-                        <button
-                          className="btn btn-outline-warning d-flex align-items-center"
-                          onClick={() => {
-                            setManageSharesTarget({
-                              type: "file",
-                              item: contextMenu.item.data,
-                            });
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaUsers className="me-2" />
-                          Manage Shares
-                        </button>
-                        <button
-                          className="btn btn-outline-secondary d-flex align-items-center"
-                          onClick={() => {
-                            setVersionTarget({
-                              type: "file",
-                              item: contextMenu.item.data,
-                            });
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaHistory className="me-2" />
-                          Version History
-                        </button>
-                        <button
-                          className="btn btn-outline-secondary d-flex align-items-center"
-                          onClick={() => {
                             setCommentsTarget({
                               type: "file",
                               item: contextMenu.item.data,
@@ -1178,7 +1688,7 @@ export default function Home() {
                           <FaComment className="me-2" />
                           Comments
                         </button>
-                        {isEditableFile(contextMenu.item.data) && (
+                        {isEditableFile(contextMenu.item.data) && canEditItem(contextMenu.item.data) && (
                           <button
                             className="btn btn-outline-dark d-flex align-items-center"
                             onClick={() => {
@@ -1191,47 +1701,114 @@ export default function Home() {
                             Edit Document
                           </button>
                         )}
-                        <button
-                          className={`btn d-flex align-items-center ${contextMenu.item.data.isFavorite ? "btn-warning" : "btn-outline-warning"}`}
-                          onClick={() => {
-                            toggleFavorite(contextMenu.item.data);
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          {contextMenu.item.data.isFavorite ? <FaStar className="me-2" /> : <FaRegStar className="me-2" />}
-                          {contextMenu.item.data.isFavorite ? "Remove Favorite" : "Add to Favorites"}
-                        </button>
-                        <button
-                          className={`btn d-flex align-items-center ${contextMenu.item.data.isPinned ? "btn-dark" : "btn-outline-dark"}`}
-                          onClick={() => {
-                            togglePinned(contextMenu.item.data);
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaThumbtack className="me-2" />
-                          {contextMenu.item.data.isPinned ? "Unpin Document" : "Pin Document"}
-                        </button>
-                        <hr />
-                        <button
-                          className="btn btn-outline-success d-flex align-items-center"
-                          onClick={() => {
-                            setRenameTarget(contextMenu.item);
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaFileSignature className="me-2" />
-                          Rename
-                        </button>
-                        <button
-                          className="btn btn-outline-danger d-flex align-items-center"
-                          onClick={() => {
-                            deleteFile(contextMenu.item.data);
-                            setContextMenu({ visible: false, item: null });
-                          }}
-                        >
-                          <FaTrash className="me-2" />
-                          Delete
-                        </button>
+                        {!contextMenu.item.data.isShared && (
+                          <button
+                            className="btn btn-outline-secondary d-flex align-items-center"
+                            onClick={() => {
+                              setMoveTarget({ type: "file", item: contextMenu.item.data });
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            <FaArrowsAlt className="me-2" />
+                            Move
+                          </button>
+                        )}
+                        {!contextMenu.item.data.isShared && (
+                          <button
+                            className="btn btn-outline-info d-flex align-items-center"
+                            onClick={() => {
+                              setShareTarget({
+                                type: "file",
+                                item: contextMenu.item.data,
+                              });
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            <FaShareAlt className="me-2" />
+                            Share
+                          </button>
+                        )}
+                        {!contextMenu.item.data.isShared && (
+                          <button
+                            className="btn btn-outline-warning d-flex align-items-center"
+                            onClick={() => {
+                              setManageSharesTarget({
+                                type: "file",
+                                item: contextMenu.item.data,
+                              });
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            <FaUsers className="me-2" />
+                            Manage Shares
+                          </button>
+                        )}
+                        {!contextMenu.item.data.isShared && (
+                          <button
+                            className="btn btn-outline-secondary d-flex align-items-center"
+                            onClick={() => {
+                              setVersionTarget({
+                                type: "file",
+                                item: contextMenu.item.data,
+                              });
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            <FaHistory className="me-2" />
+                            Version History
+                          </button>
+                        )}
+                        {!contextMenu.item.data.isShared && (
+                          <button
+                            className={`btn d-flex align-items-center ${contextMenu.item.data.isFavorite ? "btn-warning" : "btn-outline-warning"}`}
+                            onClick={() => {
+                              toggleFavorite(contextMenu.item.data);
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            {contextMenu.item.data.isFavorite ? <FaStar className="me-2" /> : <FaRegStar className="me-2" />}
+                            {contextMenu.item.data.isFavorite ? "Remove Favorite" : "Add to Favorites"}
+                          </button>
+                        )}
+                        {!contextMenu.item.data.isShared && (
+                          <button
+                            className={`btn d-flex align-items-center ${contextMenu.item.data.isPinned ? "btn-dark" : "btn-outline-dark"}`}
+                            onClick={() => {
+                              togglePinned(contextMenu.item.data);
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            <FaThumbtack className="me-2" />
+                            {contextMenu.item.data.isPinned ? "Unpin Document" : "Pin Document"}
+                          </button>
+                        )}
+                        {!contextMenu.item.data.isShared && (
+                          <>
+                            <hr />
+                            <button
+                              className="btn btn-outline-success d-flex align-items-center"
+                              onClick={() => {
+                                setRenameTarget(contextMenu.item);
+                                setContextMenu({ visible: false, item: null });
+                              }}
+                            >
+                              <FaFileSignature className="me-2" />
+                              Rename
+                            </button>
+                          </>
+                        )}
+                        {!contextMenu.item.data.isShared && canDeleteByRole && (
+                          <button
+                            className="btn btn-outline-danger d-flex align-items-center"
+                            onClick={() => {
+                              deleteFile(contextMenu.item.data);
+                              setContextMenu({ visible: false, item: null });
+                            }}
+                          >
+                            <FaTrash className="me-2" />
+                            Delete
+                          </button>
+                        )}
                       </>
                     )}
                   </div>
@@ -1265,7 +1842,7 @@ export default function Home() {
             <div className="modal-backdrop fade show"></div>
             <UploadModal
               onClose={() => setShowUpload(false)}
-              onUploaded={(created) => setFiles((s) => [created, ...s])}
+              onUploaded={() => fetchFolderContents(currentFolder).catch(console.error)}
               parentFolder={currentFolder}
             />
           </>
@@ -1303,7 +1880,7 @@ export default function Home() {
             />
           </>
         )}
-        {/* ✅ Rename Modal */}
+        {/* âœ… Rename Modal */}
         {renameTarget && (
           <>
             <div className="modal-backdrop fade show"></div>
@@ -1348,3 +1925,4 @@ export default function Home() {
     </>
   );
 }
+

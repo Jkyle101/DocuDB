@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+﻿import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { FaTimes } from "react-icons/fa";
 import { BACKEND_URL } from "../config";
@@ -6,6 +6,8 @@ import { BACKEND_URL } from "../config";
 export default function ManageSharesModal({ onClose, target, onUpdated }) {
   const [sharedWith, setSharedWith] = useState([]);
   const [loading, setLoading] = useState(true);
+  const actorId = localStorage.getItem("userId");
+  const role = localStorage.getItem("role") || "faculty";
 
   const fetchSharedUsers = useCallback(async () => {
     if (!target?.item?._id || !target?.type) return;
@@ -47,7 +49,7 @@ export default function ManageSharesModal({ onClose, target, onUpdated }) {
         ? `${BACKEND_URL}/files/${target.item._id}/unshare`
         : `${BACKEND_URL}/folders/${target.item._id}/unshare`;
       
-      await axios.patch(endpoint, { userId });
+      await axios.patch(endpoint, { userId, actorId, role });
       setSharedWith(prev => prev.filter(user => user._id.toString() !== userId.toString()));
       if (onUpdated) onUpdated();
     } catch (err) {
@@ -96,3 +98,4 @@ export default function ManageSharesModal({ onClose, target, onUpdated }) {
     </div>
   );
 }
+

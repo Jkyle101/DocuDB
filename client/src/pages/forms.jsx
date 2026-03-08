@@ -1,16 +1,26 @@
-import React, { useEffect, useMemo, useState } from "react";
+﻿import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
   FaChartBar,
+  FaBook,
   FaClipboardCheck,
+  FaCommentDots,
+  FaEnvelope,
   FaFileAlt,
   FaFileContract,
+  FaFileExport,
   FaFileInvoiceDollar,
   FaFileSignature,
+  FaFolderOpen,
+  FaListOl,
   FaMagic,
+  FaPaintBrush,
   FaPlus,
   FaSave,
   FaTrash,
+  FaEye,
+  FaExpandArrowsAlt,
+  FaCompressArrowsAlt,
 } from "react-icons/fa";
 import { BACKEND_URL } from "../config";
 import "./editor.css";
@@ -87,7 +97,7 @@ const SMART_TEMPLATES = [
 
 export default function FormsPage() {
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "user";
+  const role = localStorage.getItem("role") || "faculty";
 
   const [ribbonTab, setRibbonTab] = useState("home");
   const [mode, setMode] = useState("create");
@@ -125,6 +135,8 @@ export default function FormsPage() {
     () => templates.find((t) => t._id === selectedTemplateId) || null,
     [templates, selectedTemplateId]
   );
+  const [viewMode, setViewMode] = useState("normal");
+  const [designPreset, setDesignPreset] = useState("default");
 
   const loadTemplates = async () => {
     try {
@@ -259,6 +271,34 @@ export default function FormsPage() {
     }
   };
 
+  const appendTemplateSnippet = (snippet) => {
+    if (!snippet) return;
+    setMode("create");
+    setForm((prev) => ({
+      ...prev,
+      templateBody: prev.templateBody ? `${prev.templateBody}\n${snippet}` : snippet,
+    }));
+  };
+
+  const addMailMergeToken = (token) => appendTemplateSnippet(`{{${token}}}`);
+
+  const runTemplateReview = () => {
+    const fields = form.fields || [];
+    const keys = fields.map((f) => (f.key || "").trim()).filter(Boolean);
+    const duplicates = keys.filter((k, i) => keys.indexOf(k) !== i);
+    if (!form.name.trim()) return alert("Review: Template name is required.");
+    if (!form.templateBody.trim()) return alert("Review: Template body is required.");
+    if (duplicates.length) return alert(`Review: Duplicate field keys found (${[...new Set(duplicates)].join(", ")})`);
+    alert("Review passed: template structure looks valid.");
+  };
+
+  const applyDesignPreset = (preset) => {
+    setDesignPreset(preset);
+    if (preset === "formal") appendTemplateSnippet("=== Document Header ===");
+    if (preset === "compact") appendTemplateSnippet("[Compact Style Enabled]");
+    if (preset === "newsletter") appendTemplateSnippet("[Newsletter Layout]");
+  };
+
   return (
     <div className="container-fluid office-editor-page office-forms-page">
       <div className="card office-editor-card">
@@ -274,8 +314,14 @@ export default function FormsPage() {
         <div className="card-body">
           <ul className="nav office-ribbon-tabs mb-0">
             <li className="nav-item"><button className={`nav-link ${ribbonTab === "home" ? "active" : ""}`} onClick={() => setRibbonTab("home")}>Home</button></li>
-            <li className="nav-item"><button className={`nav-link ${ribbonTab === "insert" ? "active" : ""}`} onClick={() => setRibbonTab("insert")}>Smart Templates</button></li>
-            <li className="nav-item"><button className={`nav-link ${ribbonTab === "layout" ? "active" : ""}`} onClick={() => setRibbonTab("layout")}>Reports</button></li>
+            <li className="nav-item"><button className={`nav-link ${ribbonTab === "insert" ? "active" : ""}`} onClick={() => setRibbonTab("insert")}>Insert</button></li>
+            <li className="nav-item"><button className={`nav-link ${ribbonTab === "layout" ? "active" : ""}`} onClick={() => setRibbonTab("layout")}>Layout</button></li>
+            <li className="nav-item"><button className={`nav-link ${ribbonTab === "references" ? "active" : ""}`} onClick={() => setRibbonTab("references")}>References</button></li>
+            <li className="nav-item"><button className={`nav-link ${ribbonTab === "review" ? "active" : ""}`} onClick={() => setRibbonTab("review")}>Review</button></li>
+            <li className="nav-item"><button className={`nav-link ${ribbonTab === "view" ? "active" : ""}`} onClick={() => setRibbonTab("view")}>View</button></li>
+            <li className="nav-item"><button className={`nav-link ${ribbonTab === "design" ? "active" : ""}`} onClick={() => setRibbonTab("design")}>Design</button></li>
+            <li className="nav-item"><button className={`nav-link ${ribbonTab === "mailings" ? "active" : ""}`} onClick={() => setRibbonTab("mailings")}>Mailings</button></li>
+            <li className="nav-item"><button className={`nav-link ${ribbonTab === "file" ? "active" : ""}`} onClick={() => setRibbonTab("file")}>File</button></li>
           </ul>
 
           <div className="office-ribbon mb-3">
@@ -295,6 +341,15 @@ export default function FormsPage() {
             )}
             {ribbonTab === "insert" && (
               <div className="office-ribbon-row">
+                <div className="ribbon-group">
+                  <div className="ribbon-group-body">
+                    <button className="btn ribbon-icon-btn" onClick={addField} title="Insert Field" disabled={mode !== "create"}><FaPlus /></button>
+                    <button className="btn ribbon-icon-btn" onClick={() => appendTemplateSnippet("[Table: 4 columns]")} title="Insert Table"><FaListOl /></button>
+                    <button className="btn ribbon-icon-btn" onClick={() => appendTemplateSnippet("[Image Placeholder]")} title="Insert Image"><FaFileAlt /></button>
+                  </div>
+                  <div className="ribbon-group-label">Insert Elements</div>
+                </div>
+                <div className="ribbon-sep" />
                 {SMART_TEMPLATES.map((tpl) => {
                   const Icon = tpl.icon;
                   return (
@@ -315,9 +370,61 @@ export default function FormsPage() {
                 </div><div className="ribbon-group-label">Auto-Generated Reports</div></div>
               </div>
             )}
+            {ribbonTab === "references" && (
+              <div className="office-ribbon-row">
+                <div className="ribbon-group"><div className="ribbon-group-body">
+                  <button className="btn ribbon-icon-btn" onClick={() => appendTemplateSnippet("[Citation: source]")} title="Insert Citation"><FaBook /></button>
+                  <button className="btn ribbon-icon-btn" onClick={() => appendTemplateSnippet("Table of Contents\n1. Section A\n2. Section B")} title="Insert TOC"><FaListOl /></button>
+                </div><div className="ribbon-group-label">Citations & TOC</div></div>
+              </div>
+            )}
+            {ribbonTab === "review" && (
+              <div className="office-ribbon-row">
+                <div className="ribbon-group"><div className="ribbon-group-body">
+                  <button className="btn ribbon-icon-btn" onClick={runTemplateReview} title="Validate Template"><FaClipboardCheck /></button>
+                  <button className="btn ribbon-icon-btn" onClick={() => appendTemplateSnippet("[Comment: pending review]")} title="Add Comment"><FaCommentDots /></button>
+                </div><div className="ribbon-group-label">Tracking & Comments</div></div>
+              </div>
+            )}
+            {ribbonTab === "view" && (
+              <div className="office-ribbon-row">
+                <div className="ribbon-group"><div className="ribbon-group-body">
+                  <button className={`btn ribbon-icon-btn ${viewMode === "normal" ? "active" : ""}`} onClick={() => setViewMode("normal")} title="Normal View"><FaEye /></button>
+                  <button className={`btn ribbon-icon-btn ${viewMode === "focused" ? "active" : ""}`} onClick={() => setViewMode("focused")} title="Focused View"><FaExpandArrowsAlt /></button>
+                  <button className={`btn ribbon-icon-btn ${viewMode === "compact" ? "active" : ""}`} onClick={() => setViewMode("compact")} title="Compact View"><FaCompressArrowsAlt /></button>
+                </div><div className="ribbon-group-label">Display Modes</div></div>
+              </div>
+            )}
+            {ribbonTab === "design" && (
+              <div className="office-ribbon-row">
+                <div className="ribbon-group"><div className="ribbon-group-body">
+                  <button className="btn ribbon-icon-btn" onClick={() => applyDesignPreset("default")} title="Default"><FaPaintBrush /></button>
+                  <button className="btn ribbon-icon-btn" onClick={() => applyDesignPreset("formal")} title="Formal"><FaFileContract /></button>
+                  <button className="btn ribbon-icon-btn" onClick={() => applyDesignPreset("newsletter")} title="Newsletter"><FaFileAlt /></button>
+                </div><div className="ribbon-group-label">Styles</div></div>
+              </div>
+            )}
+            {ribbonTab === "mailings" && (
+              <div className="office-ribbon-row">
+                <div className="ribbon-group"><div className="ribbon-group-body">
+                  <button className="btn ribbon-icon-btn" onClick={() => addMailMergeToken("recipient_name")} title="Recipient Name"><FaEnvelope /></button>
+                  <button className="btn ribbon-icon-btn" onClick={() => addMailMergeToken("recipient_email")} title="Recipient Email"><FaEnvelope /></button>
+                  <button className="btn ribbon-icon-btn" onClick={() => addMailMergeToken("recipient_address")} title="Recipient Address"><FaEnvelope /></button>
+                </div><div className="ribbon-group-label">Merge Fields</div></div>
+              </div>
+            )}
+            {ribbonTab === "file" && (
+              <div className="office-ribbon-row">
+                <div className="ribbon-group"><div className="ribbon-group-body">
+                  <button className="btn ribbon-icon-btn" onClick={loadTemplates} title="Refresh Templates"><FaSave /></button>
+                  <button className="btn ribbon-icon-btn" onClick={() => setMode("generate")} title="Open Templates"><FaFolderOpen /></button>
+                  <button className="btn ribbon-icon-btn" onClick={() => alert("Use Generate or Auto Report to export files.")} title="Export"><FaFileExport /></button>
+                </div><div className="ribbon-group-label">File</div></div>
+              </div>
+            )}
           </div>
 
-          <div className="forms-workspace">
+          <div className={`forms-workspace ${viewMode === "compact" ? "forms-workspace-compact" : ""}`}>
             <div className="forms-sidebar border rounded p-3 bg-white">
               <div className="fw-semibold mb-2">Smart Templates</div>
               <div className="small text-muted mb-3">Reports, Invoices, Memos, Legal Forms</div>
@@ -333,7 +440,14 @@ export default function FormsPage() {
               </div>
             </div>
 
-            <div className="forms-main border rounded p-3 bg-white">
+            <div
+              className="forms-main border rounded p-3 bg-white"
+              style={{
+                maxWidth: viewMode === "focused" ? "980px" : "none",
+                margin: viewMode === "focused" ? "0 auto" : "0",
+                background: designPreset === "formal" ? "#fcfaf5" : designPreset === "newsletter" ? "#f6fbff" : "#fff",
+              }}
+            >
               {mode === "create" && (
                 <form onSubmit={createTemplate}>
                   <div className="d-flex justify-content-between align-items-center mb-2">
@@ -446,3 +560,4 @@ export default function FormsPage() {
     </div>
   );
 }
+

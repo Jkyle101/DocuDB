@@ -1,7 +1,7 @@
-import React, { useEffect, useState } from "react";
+﻿import React, { useEffect, useState } from "react";
 import {
   FaFolder, FaUser, FaTimes, FaShareAlt, FaClock,
-  FaUsers, FaTrash, FaHome, FaFileSignature
+  FaUsers, FaTrash, FaHome, FaFileSignature, FaUpload, FaCheckSquare
 } from "react-icons/fa";
 import { NavLink, useNavigate } from "react-router-dom";
 import "bootstrap/dist/css/bootstrap.min.css";
@@ -11,6 +11,20 @@ import { BACKEND_URL } from "../config";
 function Sidebar({ onClose }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
   const email = localStorage.getItem("email");
+  const role = localStorage.getItem("role") || "faculty";
+  const normalizedRole = (() => {
+    const raw = String(role || "").toLowerCase();
+    if (raw === "admin") return "superadmin";
+    if (raw === "user") return "faculty";
+    if (["program_chair", "department_chair", "program_head"].includes(raw)) return "dept_chair";
+    if (["qa_officer", "quality_assurance_admin", "copc_reviewer"].includes(raw)) return "qa_admin";
+    if (raw === "reviewer") return "evaluator";
+    return raw;
+  })();
+  const canOpenDepartmentReview = normalizedRole === "dept_chair" || normalizedRole === "superadmin";
+  const canOpenQaReview = normalizedRole === "qa_admin" || normalizedRole === "superadmin";
+  const canOpenEvaluationStage = normalizedRole === "evaluator" || normalizedRole === "superadmin";
+  const canOpenCopcUpload = normalizedRole !== "evaluator";
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -79,7 +93,7 @@ function Sidebar({ onClose }) {
               <div className="fw-medium small text-truncate" style={{maxWidth: '160px'}}>
                 {email}
               </div>
-              <div className="small text-muted">User</div>
+              <div className="small text-muted">{role.replace(/_/g, " ")}</div>
             </div>
           </div>
         </div>
@@ -163,6 +177,74 @@ function Sidebar({ onClose }) {
                   Smart Forms
                 </NavLink>
               </li>
+              <li className="nav-item">
+                <NavLink
+                  to="/copc-workflow"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaFileSignature className="me-2" size={16} />
+                  COPC Workflow
+                </NavLink>
+              </li>
+              {canOpenCopcUpload && (
+                <li className="nav-item">
+                  <NavLink
+                    to="/copc-workflow/upload"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaUpload className="me-2" size={16} />
+                    COPC Upload
+                  </NavLink>
+                </li>
+              )}
+              {canOpenDepartmentReview && (
+                <li className="nav-item">
+                  <NavLink
+                    to="/copc-workflow/department-review"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaCheckSquare className="me-2" size={16} />
+                    COPC Review
+                  </NavLink>
+                </li>
+              )}
+              {canOpenQaReview && (
+                <li className="nav-item">
+                  <NavLink
+                    to="/copc-workflow/qa-review"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaCheckSquare className="me-2" size={16} />
+                    QA Compliance Review
+                  </NavLink>
+                </li>
+              )}
+              {canOpenEvaluationStage && (
+                <li className="nav-item">
+                  <NavLink
+                    to="/copc-workflow/evaluation"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaCheckSquare className="me-2" size={16} />
+                    Evaluation Stage
+                  </NavLink>
+                </li>
+              )}
             </ul>
           </div>
 
@@ -182,3 +264,4 @@ function Sidebar({ onClose }) {
 }
 
 export default Sidebar;
+

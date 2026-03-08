@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from "react";
+﻿import React, { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
 import { FaDownload, FaRegStickyNote } from "react-icons/fa";
@@ -11,7 +11,7 @@ export default function FilePreview({ file, onClose }) {
   const [activePdfPage, setActivePdfPage] = useState(1);
 
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "user";
+  const role = localStorage.getItem("role") || "faculty";
 
   const fileUrl = `${BACKEND_URL}/view/${file.filename}?userId=${userId}&role=${role}`;
   const previewUrl = `${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${role}`;
@@ -87,15 +87,13 @@ export default function FilePreview({ file, onClose }) {
           <div className="modal-header bg-dark border-secondary">
             <h5 className="modal-title text-white">{file.originalName}</h5>
             <div className="d-flex gap-2">
-              {file.permissions === "write" && (
-                <a
-                  href={downloadUrl}
-                  className="btn btn-sm btn-outline-light"
-                  download
-                >
-                  <FaDownload className="me-1" /> Download
-                </a>
-              )}
+              <a
+                href={downloadUrl}
+                className="btn btn-sm btn-outline-light"
+                download
+              >
+                <FaDownload className="me-1" /> Download
+              </a>
               <button
                 type="button"
                 className="btn-close btn-close-white"
@@ -117,11 +115,9 @@ export default function FilePreview({ file, onClose }) {
             {error && (
               <div className="text-white text-center p-4">
                 <p>{error}</p>
-                {file.permissions === "write" && (
-                  <a href={downloadUrl} className="btn btn-primary" download>
-                    <FaDownload className="me-2" /> Download File
-                  </a>
-                )}
+                <a href={downloadUrl} className="btn btn-primary" download>
+                  <FaDownload className="me-2" /> Download File
+                </a>
               </div>
             )}
 
@@ -253,11 +249,9 @@ export default function FilePreview({ file, onClose }) {
             {!canPreview && !error && (
               <div className="text-white text-center p-4">
                 <p>This file type cannot be previewed in the browser.</p>
-                {file.permissions === "write" && (
-                  <a href={downloadUrl} className="btn btn-primary" download>
-                    <FaDownload className="me-2" /> Download File
-                  </a>
-                )}
+                <a href={downloadUrl} className="btn btn-primary" download>
+                  <FaDownload className="me-2" /> Download File
+                </a>
               </div>
             )}
           </div>
@@ -266,3 +260,4 @@ export default function FilePreview({ file, onClose }) {
     </div>
   );
 }
+
