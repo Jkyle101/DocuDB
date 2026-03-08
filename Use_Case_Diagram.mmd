@@ -1,0 +1,101 @@
+flowchart LR
+    faculty[Faculty]
+    chair[Department Chair]
+    qa[QA Admin / QA Officer]
+    evaluator[Evaluator]
+    admin[Superadmin]
+
+    subgraph system[DocuDB System]
+        UC1([Log in])
+        UC2([Manage profile and settings])
+        UC3([Upload documents])
+        UC4([Organize files and folders])
+        UC5([Preview and download files])
+        UC6([Search documents])
+        UC7([Share files and folders])
+        UC8([Comment on documents])
+        UC9([Manage groups])
+        UC10([View notifications])
+        UC11([Manage trash and restore items])
+        UC12([Use document editor and forms])
+        UC13([Submit COPC requirements])
+        UC14([Review faculty submissions])
+        UC15([Perform QA review and tagging])
+        UC16([Evaluate approved COPC packages])
+        UC17([Generate compliance and evaluation reports])
+        UC18([Manage users and roles])
+        UC19([Monitor logs, stats, and dashboards])
+        UC20([Configure folder assignments and tasks])
+        UC21([Approve or reject password requests])
+        UC22([Administer COPC programs])
+    end
+
+    faculty --> UC1
+    faculty --> UC2
+    faculty --> UC3
+    faculty --> UC4
+    faculty --> UC5
+    faculty --> UC6
+    faculty --> UC7
+    faculty --> UC8
+    faculty --> UC9
+    faculty --> UC10
+    faculty --> UC11
+    faculty --> UC12
+    faculty --> UC13
+
+    chair --> UC1
+    chair --> UC3
+    chair --> UC4
+    chair --> UC5
+    chair --> UC6
+    chair --> UC7
+    chair --> UC8
+    chair --> UC9
+    chair --> UC10
+    chair --> UC11
+    chair --> UC13
+    chair --> UC14
+    chair --> UC20
+
+    qa --> UC1
+    qa --> UC3
+    qa --> UC4
+    qa --> UC5
+    qa --> UC6
+    qa --> UC7
+    qa --> UC8
+    qa --> UC10
+    qa --> UC11
+    qa --> UC15
+    qa --> UC17
+    qa --> UC20
+
+    evaluator --> UC1
+    evaluator --> UC5
+    evaluator --> UC6
+    evaluator --> UC10
+    evaluator --> UC16
+    evaluator --> UC17
+
+    admin --> UC1
+    admin --> UC2
+    admin --> UC3
+    admin --> UC4
+    admin --> UC5
+    admin --> UC6
+    admin --> UC7
+    admin --> UC8
+    admin --> UC9
+    admin --> UC10
+    admin --> UC11
+    admin --> UC12
+    admin --> UC14
+    admin --> UC15
+    admin --> UC16
+    admin --> UC17
+    admin --> UC18
+    admin --> UC19
+    admin --> UC20
+    admin --> UC21
+    admin --> UC22

@@ -1,0 +1,334 @@
+erDiagram
+    USERS {
+        ObjectId _id
+        string email
+        string password
+        string role
+        boolean active
+        string profilePicture
+    }
+
+    FILE {
+        ObjectId _id
+        string filename
+        string originalName
+        string mimetype
+        number size
+        date uploadDate
+        date lastAccessedAt
+        string userId
+        ObjectId owner
+        ObjectId parentFolder
+        ObjectId[] sharedWith
+        string permissions
+        date deletedAt
+        string[] favoritedBy
+        string[] pinnedBy
+        string contentHash
+        ObjectId duplicateOf
+    }
+
+    FILE_CLASSIFICATION {
+        string category
+        number confidence
+        string[] tags
+        date classifiedAt
+        string classifierVersion
+    }
+
+    FILE_REVIEW_WORKFLOW {
+        boolean requiresReview
+        string status
+        ObjectId[] assignedProgramChairs
+        ObjectId[] assignedQaOfficers
+    }
+
+    FILE_REVIEW_STEP {
+        string status
+        ObjectId reviewedBy
+        date reviewedAt
+        string notes
+    }
+
+    FILE_VERIFICATION_BADGE {
+        boolean verified
+        ObjectId verifiedBy
+        date verifiedAt
+        string label
+    }
+
+    FOLDER {
+        ObjectId _id
+        string name
+        ObjectId owner
+        ObjectId parentFolder
+        boolean isPredefinedRoot
+        string predefinedTemplateKey
+        ObjectId[] sharedWith
+        string permissions
+        string complianceProfileKey
+        date deletedAt
+        date createdAt
+    }
+
+    COMPLIANCE_TASK {
+        ObjectId _id
+        string title
+        string description
+        number percentage
+        string status
+        string scope
+        string[] checks
+        ObjectId[] assignedUploaders
+        ObjectId[] assignedProgramChairs
+        ObjectId[] assignedQaOfficers
+    }
+
+    FOLDER_ASSIGNMENTS {
+        ObjectId[] uploaders
+        ObjectId[] programChairs
+        ObjectId[] qaOfficers
+        ObjectId[] evaluators
+    }
+
+    COMPLIANCE_REVIEW {
+        ObjectId reviewer
+        string role
+        string scope
+        string[] checks
+        string notes
+        date createdAt
+    }
+
+    COPC_PROGRAM {
+        boolean isProgramRoot
+        string programCode
+        string programName
+        string departmentName
+        number year
+        string workflowStage
+        string workflowStatus
+    }
+
+    COPC_PACKAGE_META {
+        string fileName
+        date generatedAt
+        ObjectId generatedBy
+    }
+
+    COPC_SUBMISSION_META {
+        string method
+        string reference
+        date submittedAt
+        ObjectId submittedBy
+    }
+
+    COPC_ARCHIVE_META {
+        number archiveYear
+        date archivedAt
+    }
+
+    COPC_OBSERVATION {
+        ObjectId by
+        string role
+        string message
+        date createdAt
+    }
+
+    COPC_LOCK {
+        boolean isLocked
+        date lockedAt
+        ObjectId lockedBy
+    }
+
+    FILEVERSION {
+        ObjectId _id
+        ObjectId fileId
+        number versionNumber
+        string originalName
+        string filename
+        string mimetype
+        number size
+        ObjectId createdBy
+        date createdAt
+        string changeDescription
+        boolean isCurrent
+    }
+
+    FOLDERVERSION {
+        ObjectId _id
+        ObjectId folderId
+        number versionNumber
+        string name
+        ObjectId createdBy
+        date createdAt
+        string changeDescription
+        mixed changes
+        boolean isCurrent
+    }
+
+    COMMENT {
+        ObjectId _id
+        ObjectId itemId
+        string itemType
+        string content
+        ObjectId createdBy
+        date createdAt
+        ObjectId parentCommentId
+        ObjectId[] replies
+    }
+
+    FORMTEMPLATE {
+        ObjectId _id
+        string name
+        string description
+        ObjectId owner
+        string templateBody
+        string outputType
+        ObjectId destinationFolder
+        date createdAt
+        date updatedAt
+    }
+
+    FORM_FIELD {
+        string key
+        string label
+        string type
+        boolean required
+        string placeholder
+    }
+
+    GROUP {
+        ObjectId _id
+        string name
+        string description
+        ObjectId[] members
+        ObjectId[] leaders
+        ObjectId createdBy
+        date createdAt
+    }
+
+    GROUP_NOTIFICATION {
+        string title
+        string message
+        ObjectId createdBy
+        date createdAt
+    }
+
+    GROUP_ANNOUNCEMENT {
+        string title
+        string content
+        ObjectId createdBy
+        date createdAt
+    }
+
+    GROUP_SHARED_FILE {
+        ObjectId fileId
+        string permission
+        ObjectId sharedBy
+        date sharedAt
+    }
+
+    GROUP_SHARED_FOLDER {
+        ObjectId folderId
+        string permission
+        ObjectId sharedBy
+        date sharedAt
+    }
+
+    LOG {
+        ObjectId _id
+        ObjectId user
+        string action
+        string details
+        date date
+        date timeStamp
+    }
+
+    AUDITLOG {
+        ObjectId _id
+        ObjectId userId
+        string action
+        string resourceType
+        ObjectId resourceId
+        mixed details
+        string ipAddress
+        string userAgent
+        date createdAt
+        date updatedAt
+    }
+
+    NOTIFICATION {
+        ObjectId _id
+        ObjectId userId
+        string type
+        string title
+        string message
+        string details
+        boolean isRead
+        ObjectId relatedId
+        string relatedModel
+        date createdAt
+        date date
+    }
+
+    PASSWORDREQUEST {
+        ObjectId _id
+        ObjectId userId
+        string currentPassword
+        string newPassword
+        string status
+        date createdAt
+        date reviewedAt
+        ObjectId reviewedBy
+        string reviewNotes
+    }
+
+    USERS ||--o{ FILE : owns
+    FOLDER ||--o{ FILE : contains
+    USERS }o--o{ FILE : shared_with
+    FILE ||--o{ FILEVERSION : has_versions
+    FILE ||--o| FILE : duplicate_of
+    FILE ||--|| FILE_CLASSIFICATION : embeds
+    FILE ||--|| FILE_REVIEW_WORKFLOW : embeds
+    FILE_REVIEW_WORKFLOW ||--o| FILE_REVIEW_STEP : program_chair
+    FILE_REVIEW_WORKFLOW ||--o| FILE_REVIEW_STEP : qa_officer
+    FILE_REVIEW_WORKFLOW ||--o| FILE_VERIFICATION_BADGE : verification
+    USERS }o--o{ FILE_REVIEW_WORKFLOW : assigned_reviewers
+
+    USERS ||--o{ FOLDER : owns
+    FOLDER ||--o{ FOLDER : parent_of
+    USERS }o--o{ FOLDER : shared_with
+    FOLDER ||--o{ COMPLIANCE_TASK : embeds
+    FOLDER ||--|| FOLDER_ASSIGNMENTS : embeds
+    FOLDER ||--o{ COMPLIANCE_REVIEW : embeds
+    FOLDER ||--|| COPC_PROGRAM : embeds
+    COPC_PROGRAM ||--o| COPC_PACKAGE_META : package_meta
+    COPC_PROGRAM ||--o| COPC_SUBMISSION_META : submission_meta
+    COPC_PROGRAM ||--o| COPC_ARCHIVE_META : archive_meta
+    COPC_PROGRAM ||--o{ COPC_OBSERVATION : observations
+    COPC_PROGRAM ||--o| COPC_LOCK : lock_state
+    FOLDER ||--o{ FOLDERVERSION : has_versions
+
+    USERS ||--o{ COMMENT : creates
+    COMMENT ||--o{ COMMENT : replies_to
+
+    USERS ||--o{ FORMTEMPLATE : owns
+    FOLDER ||--o{ FORMTEMPLATE : destination
+    FORMTEMPLATE ||--o{ FORM_FIELD : defines
+
+    USERS }o--o{ GROUP : member_of
+    USERS }o--o{ GROUP : leads
+    USERS ||--o{ GROUP : creates
+    GROUP ||--o{ GROUP_NOTIFICATION : embeds
+    GROUP ||--o{ GROUP_ANNOUNCEMENT : embeds
+    GROUP ||--o{ GROUP_SHARED_FILE : embeds
+    GROUP ||--o{ GROUP_SHARED_FOLDER : embeds
+    FILE ||--o{ GROUP_SHARED_FILE : shared_item
+    FOLDER ||--o{ GROUP_SHARED_FOLDER : shared_item
+
+    USERS ||--o{ LOG : creates
+    USERS ||--o{ AUDITLOG : creates
+    USERS ||--o{ NOTIFICATION : receives
+    USERS ||--o{ PASSWORDREQUEST : submits
+    USERS ||--o{ PASSWORDREQUEST : reviews

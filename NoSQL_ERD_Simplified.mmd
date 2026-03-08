@@ -1,0 +1,138 @@
+erDiagram
+    USERS {
+        ObjectId _id
+        string email
+        string role
+        boolean active
+        string profilePicture
+    }
+
+    FILE {
+        ObjectId _id
+        string filename
+        string originalName
+        string mimetype
+        number size
+        date uploadDate
+        ObjectId owner
+        ObjectId parentFolder
+        ObjectId[] sharedWith
+        string permissions
+        string contentHash
+        ObjectId duplicateOf
+        date deletedAt
+    }
+
+    FOLDER {
+        ObjectId _id
+        string name
+        ObjectId owner
+        ObjectId parentFolder
+        ObjectId[] sharedWith
+        string permissions
+        date createdAt
+        date deletedAt
+    }
+
+    FILEVERSION {
+        ObjectId _id
+        ObjectId fileId
+        number versionNumber
+        ObjectId createdBy
+        date createdAt
+        string changeDescription
+        boolean isCurrent
+    }
+
+    FOLDERVERSION {
+        ObjectId _id
+        ObjectId folderId
+        number versionNumber
+        ObjectId createdBy
+        date createdAt
+        string changeDescription
+        boolean isCurrent
+    }
+
+    COMMENT {
+        ObjectId _id
+        ObjectId itemId
+        string itemType
+        string content
+        ObjectId createdBy
+        ObjectId parentCommentId
+        date createdAt
+    }
+
+    GROUP {
+        ObjectId _id
+        string name
+        string description
+        ObjectId[] members
+        ObjectId[] leaders
+        ObjectId createdBy
+        date createdAt
+    }
+
+    FORMTEMPLATE {
+        ObjectId _id
+        string name
+        string description
+        ObjectId owner
+        ObjectId destinationFolder
+        string outputType
+        date createdAt
+    }
+
+    NOTIFICATION {
+        ObjectId _id
+        ObjectId userId
+        string type
+        string title
+        string relatedModel
+        ObjectId relatedId
+        boolean isRead
+        date createdAt
+    }
+
+    PASSWORDREQUEST {
+        ObjectId _id
+        ObjectId userId
+        string status
+        ObjectId reviewedBy
+        date createdAt
+        date reviewedAt
+    }
+
+    LOG {
+        ObjectId _id
+        ObjectId user
+        string action
+        string details
+        date timeStamp
+    }
+
+    USERS ||--o{ FILE : owns
+    FOLDER ||--o{ FILE : contains
+    FILE ||--o{ FILEVERSION : has
+    USERS ||--o{ FILEVERSION : creates
+
+    USERS ||--o{ FOLDER : owns
+    FOLDER ||--o{ FOLDER : parent_of
+    FOLDER ||--o{ FOLDERVERSION : has
+    USERS ||--o{ FOLDERVERSION : creates
+
+    USERS ||--o{ COMMENT : writes
+    COMMENT ||--o{ COMMENT : replies_to
+
+    USERS }o--o{ GROUP : joins
+    USERS }o--o{ GROUP : leads
+    USERS ||--o{ GROUP : creates
+
+    USERS ||--o{ FORMTEMPLATE : owns
+    FOLDER ||--o{ FORMTEMPLATE : stores_output_in
+
+    USERS ||--o{ NOTIFICATION : receives
+    USERS ||--o{ PASSWORDREQUEST : submits
+    USERS ||--o{ PASSWORDREQUEST : reviews
+    USERS ||--o{ LOG : generates

@@ -32,6 +32,7 @@ import UploadModal from "../components/UploadModal";
 import ShareModal from "../components/ShareModal";
 import RenameModal from "../components/RenameModal";
 import { BACKEND_URL } from "../config";
+import { isExternalFileDrag, uploadDroppedEntries } from "../utils/dropUpload";
 
 const PREDEFINED_FOLDER_SETS = {
   copc_bsit: [
@@ -86,6 +87,9 @@ export default function AdminOwnedPage() {
   const [dragPayload, setDragPayload] = useState(null);
   const [activeDropFolderId, setActiveDropFolderId] = useState("");
   const [movingByDrop, setMovingByDrop] = useState(false);
+  const [externalDropActive, setExternalDropActive] = useState(false);
+  const [uploadingDroppedItems, setUploadingDroppedItems] = useState(false);
+  const [dropUploadMessage, setDropUploadMessage] = useState("");
   const [contextMenu, setContextMenu] = useState({ visible: false, item: null });
   const [users, setUsers] = useState([]);
   const [folderTasks, setFolderTasks] = useState([]);
@@ -461,6 +465,13 @@ export default function AdminOwnedPage() {
   };
 
   const handleFolderDragOver = (event, folderId) => {
+    if (isExternalFileDrag(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "copy";
+      setActiveDropFolderId(String(folderId));
+      return;
+    }
     if (!dragPayload || !folderId) return;
     if (dragPayload.type === "folder" && String(dragPayload.id) === String(folderId)) return;
     event.preventDefault();
@@ -468,8 +479,44 @@ export default function AdminOwnedPage() {
     setActiveDropFolderId(String(folderId));
   };
 
+  const uploadFromDropDataTransfer = async (dataTransfer, destinationFolderId = currentFolderId || null) => {
+    if (isSearchMode) {
+      alert("Exit search mode before dropping files or folders.");
+      return false;
+    }
+    setUploadingDroppedItems(true);
+    setDropUploadMessage("Preparing dropped files...");
+    try {
+      const result = await uploadDroppedEntries({
+        dataTransfer,
+        destinationFolderId,
+        userId,
+        role,
+        onStatus: setDropUploadMessage,
+      });
+      await fetchOwnedContents(currentFolderId);
+      setDropUploadMessage(
+        `Uploaded ${result.uploadedCount} file${result.uploadedCount === 1 ? "" : "s"} by drag and drop.`
+      );
+      return true;
+    } catch (err) {
+      alert(err?.response?.data?.error || err?.message || "Drag-and-drop upload failed");
+      setDropUploadMessage("");
+      return false;
+    } finally {
+      setUploadingDroppedItems(false);
+      setExternalDropActive(false);
+    }
+  };
+
   const handleFolderDrop = async (event, folderId) => {
     event.preventDefault();
+    if (isExternalFileDrag(event)) {
+      event.stopPropagation();
+      setActiveDropFolderId("");
+      await uploadFromDropDataTransfer(event.dataTransfer, folderId);
+      return;
+    }
     if (!dragPayload || !folderId) return;
     if (dragPayload.type === "folder" && String(dragPayload.id) === String(folderId)) {
       setActiveDropFolderId("");
@@ -487,8 +534,54 @@ export default function AdminOwnedPage() {
     }
   };
 
+  const handleWorkspaceDragEnter = (event) => {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    setExternalDropActive(true);
+  };
+
+  const handleWorkspaceDragOver = (event) => {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setExternalDropActive(true);
+  };
+
+  const handleWorkspaceDragLeave = (event) => {
+    if (!isExternalFileDrag(event)) return;
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    setExternalDropActive(false);
+  };
+
+  const handleWorkspaceDrop = async (event) => {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    await uploadFromDropDataTransfer(event.dataTransfer, currentFolderId || null);
+  };
+
+  useEffect(() => {
+    if (!dropUploadMessage || uploadingDroppedItems) return;
+    const timer = setTimeout(() => setDropUploadMessage(""), 3200);
+    return () => clearTimeout(timer);
+  }, [dropUploadMessage, uploadingDroppedItems]);
+
   return (
-    <div className="container-fluid py-3 file-manager-container">
+    <div
+      className="container-fluid py-3 file-manager-container"
+      onDragEnter={handleWorkspaceDragEnter}
+      onDragOver={handleWorkspaceDragOver}
+      onDragLeave={handleWorkspaceDragLeave}
+      onDrop={handleWorkspaceDrop}
+    >
+      {(externalDropActive || uploadingDroppedItems || dropUploadMessage) && (
+        <div className={`alert py-2 mb-3 ${externalDropActive ? "alert-primary" : "alert-info"}`}>
+          {uploadingDroppedItems
+            ? dropUploadMessage || "Uploading dropped files..."
+            : externalDropActive
+              ? "Drop files or folders to upload into this location."
+              : dropUploadMessage}
+        </div>
+      )}
       <div className="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
         <div className="d-flex align-items-center gap-2 flex-wrap">
           {currentFolderId && (

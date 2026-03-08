@@ -45,6 +45,7 @@ import VersionModal from "../components/VersionModal.jsx";
 import CommentsModal from "../components/CommentsModal.jsx";
 import { useOutletContext, useNavigate } from "react-router-dom";
 import { BACKEND_URL } from "../config.js";
+import { isExternalFileDrag, uploadDroppedEntries } from "../utils/dropUpload";
 
 export default function Home() {
   const userId = localStorage.getItem("userId");
@@ -94,6 +95,9 @@ export default function Home() {
   const [dragPayload, setDragPayload] = useState(null);
   const [activeDropFolderId, setActiveDropFolderId] = useState("");
   const [movingByDrop, setMovingByDrop] = useState(false);
+  const [externalDropActive, setExternalDropActive] = useState(false);
+  const [uploadingDroppedItems, setUploadingDroppedItems] = useState(false);
+  const [dropUploadMessage, setDropUploadMessage] = useState("");
   const [contextMenu, setContextMenu] = useState({
     visible: false,
     item: null,
@@ -435,6 +439,13 @@ export default function Home() {
   };
 
   const handleFolderDragOver = (event, folderId) => {
+    if (isExternalFileDrag(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = "copy";
+      setActiveDropFolderId(String(folderId));
+      return;
+    }
     if (!dragPayload || !folderId) return;
     if (dragPayload.type === "folder" && String(dragPayload.id) === String(folderId)) return;
     event.preventDefault();
@@ -442,8 +453,65 @@ export default function Home() {
     setActiveDropFolderId(String(folderId));
   };
 
+  const uploadFromDropDataTransfer = useCallback(async (dataTransfer, destinationFolderId = currentFolder || null) => {
+    if (!canUploadByRole) {
+      alert("Your role is not allowed to upload.");
+      return false;
+    }
+    if (isSearchMode) {
+      alert("Exit search mode before dropping files or folders.");
+      return false;
+    }
+    if (currentFolder && String(destinationFolderId || "") === String(currentFolder) && !canUploadCurrentFolder) {
+      alert("You are not assigned to upload in this folder.");
+      return false;
+    }
+
+    setUploadingDroppedItems(true);
+    setDropUploadMessage("Preparing dropped files...");
+    try {
+      const result = await uploadDroppedEntries({
+        dataTransfer,
+        destinationFolderId,
+        userId,
+        role,
+        onStatus: setDropUploadMessage,
+      });
+      await fetchFolderContents(currentFolder);
+      if (currentFolder) {
+        await fetchFolderTasks(currentFolder);
+      }
+      setDropUploadMessage(
+        `Uploaded ${result.uploadedCount} file${result.uploadedCount === 1 ? "" : "s"} by drag and drop.`
+      );
+      return true;
+    } catch (err) {
+      alert(err?.response?.data?.error || err?.message || "Drag-and-drop upload failed");
+      setDropUploadMessage("");
+      return false;
+    } finally {
+      setUploadingDroppedItems(false);
+      setExternalDropActive(false);
+    }
+  }, [
+    canUploadByRole,
+    isSearchMode,
+    currentFolder,
+    canUploadCurrentFolder,
+    userId,
+    role,
+    fetchFolderContents,
+    fetchFolderTasks,
+  ]);
+
   const handleFolderDrop = async (event, folderId) => {
     event.preventDefault();
+    if (isExternalFileDrag(event)) {
+      event.stopPropagation();
+      setActiveDropFolderId("");
+      await uploadFromDropDataTransfer(event.dataTransfer, folderId);
+      return;
+    }
     if (!dragPayload || !folderId) return;
     if (dragPayload.type === "folder" && String(dragPayload.id) === String(folderId)) {
       setActiveDropFolderId("");
@@ -461,6 +529,37 @@ export default function Home() {
       setActiveDropFolderId("");
     }
   };
+
+  const handleWorkspaceDragEnter = (event) => {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    setExternalDropActive(true);
+  };
+
+  const handleWorkspaceDragOver = (event) => {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setExternalDropActive(true);
+  };
+
+  const handleWorkspaceDragLeave = (event) => {
+    if (!isExternalFileDrag(event)) return;
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    setExternalDropActive(false);
+  };
+
+  const handleWorkspaceDrop = async (event) => {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    await uploadFromDropDataTransfer(event.dataTransfer, currentFolder || null);
+  };
+
+  useEffect(() => {
+    if (!dropUploadMessage || uploadingDroppedItems) return;
+    const timer = setTimeout(() => setDropUploadMessage(""), 3200);
+    return () => clearTimeout(timer);
+  }, [dropUploadMessage, uploadingDroppedItems]);
 
   const trackAccess = async (file, action = "OPEN") => {
     if (!file?._id) return;
@@ -714,7 +813,20 @@ export default function Home() {
       <div
         className="page-container"
         style={currentFolder && canCheckTasks && window.innerWidth >= 1200 ? { paddingRight: "390px" } : undefined}
+        onDragEnter={handleWorkspaceDragEnter}
+        onDragOver={handleWorkspaceDragOver}
+        onDragLeave={handleWorkspaceDragLeave}
+        onDrop={handleWorkspaceDrop}
       >
+        {(externalDropActive || uploadingDroppedItems || dropUploadMessage) && (
+          <div className={`alert py-2 mb-3 ${externalDropActive ? "alert-primary" : "alert-info"}`}>
+            {uploadingDroppedItems
+              ? dropUploadMessage || "Uploading dropped files..."
+              : externalDropActive
+                ? "Drop files or folders to upload into this location."
+                : dropUploadMessage}
+          </div>
+        )}
         {/* Page Header */}
         <div className="page-header">
           <div className="d-flex justify-content-between align-items-start flex-wrap gap-3">

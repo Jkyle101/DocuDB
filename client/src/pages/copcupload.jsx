@@ -8,6 +8,7 @@ import {
   FaChevronUp,
   FaCloudDownloadAlt,
   FaEye,
+  FaFileAlt,
   FaFolder,
   FaList,
   FaRegSquare,
@@ -16,6 +17,7 @@ import {
 } from "react-icons/fa";
 import { BACKEND_URL } from "../config";
 import UploadModal from "../components/UploadModal";
+import { isExternalFileDrag, uploadDroppedEntries } from "../utils/dropUpload";
 
 const workflowStatusMeta = (status) => {
   const key = String(status || "").toLowerCase();
@@ -71,6 +73,10 @@ export default function CopcUploadPage() {
   const [currentFolderId, setCurrentFolderId] = useState(null);
   const [folderQuery, setFolderQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [externalDropActive, setExternalDropActive] = useState(false);
+  const [activeDropFolderId, setActiveDropFolderId] = useState("");
+  const [uploadingDroppedItems, setUploadingDroppedItems] = useState(false);
+  const [dropUploadMessage, setDropUploadMessage] = useState("");
   const [loadingChecklist, setLoadingChecklist] = useState(false);
   const [checklistSections, setChecklistSections] = useState([]);
   const [isChecklistCollapsed, setIsChecklistCollapsed] = useState(true);
@@ -169,6 +175,19 @@ export default function CopcUploadPage() {
       return name.includes(query) || path.includes(query);
     });
   }, [visibleFolders, folderQuery]);
+
+  const filteredApprovedFiles = useMemo(() => {
+    if (!currentFolderId) return [];
+    const list = Array.isArray(approvedFilesInFolder) ? approvedFilesInFolder : [];
+    const query = String(folderQuery || "").trim().toLowerCase();
+    if (!query) return list;
+    return list.filter((file) => {
+      const name = String(file.originalName || "").toLowerCase();
+      return name.includes(query);
+    });
+  }, [approvedFilesInFolder, currentFolderId, folderQuery]);
+
+  const hasExplorerItems = filteredFolders.length > 0 || filteredApprovedFiles.length > 0;
 
   const statusScopedFolderId = useMemo(() => {
     if (!currentFolderId) return "";
@@ -344,6 +363,89 @@ export default function CopcUploadPage() {
     }
   };
 
+  const uploadFromDropDataTransfer = async (dataTransfer, destinationFolderId = currentFolderId || null) => {
+    if (!selectedProgramId) {
+      alert("Select a COPC program first.");
+      return false;
+    }
+    if (!destinationFolderId) {
+      alert("Open an assigned folder first, or drop directly on a folder card.");
+      return false;
+    }
+    const inUploadableScope = folders.some((folder) => String(folder._id) === String(destinationFolderId));
+    if (!inUploadableScope) {
+      alert("You can only upload into assigned COPC folders.");
+      return false;
+    }
+
+    setUploadingDroppedItems(true);
+    setDropUploadMessage("Preparing dropped files...");
+    try {
+      const result = await uploadDroppedEntries({
+        dataTransfer,
+        destinationFolderId,
+        userId,
+        role,
+        onStatus: setDropUploadMessage,
+      });
+      await loadProgramFolders(selectedProgramId, true);
+      await loadUploadStatuses(selectedProgramId, statusScopedFolderId, statusFilter);
+      await loadApprovedFilesInFolder(destinationFolderId);
+      setDropUploadMessage(
+        `Uploaded ${result.uploadedCount} file${result.uploadedCount === 1 ? "" : "s"} by drag and drop.`
+      );
+      return true;
+    } catch (err) {
+      alert(err?.response?.data?.error || err?.message || "Drag-and-drop upload failed");
+      setDropUploadMessage("");
+      return false;
+    } finally {
+      setUploadingDroppedItems(false);
+      setExternalDropActive(false);
+      setActiveDropFolderId("");
+    }
+  };
+
+  const handleFolderDragOver = (event, folderId) => {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    setActiveDropFolderId(String(folderId));
+  };
+
+  const handleFolderDrop = async (event, folderId) => {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    await uploadFromDropDataTransfer(event.dataTransfer, folderId);
+  };
+
+  const handleWorkspaceDragEnter = (event) => {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    setExternalDropActive(true);
+  };
+
+  const handleWorkspaceDragOver = (event) => {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setExternalDropActive(true);
+  };
+
+  const handleWorkspaceDragLeave = (event) => {
+    if (!isExternalFileDrag(event)) return;
+    if (event.currentTarget.contains(event.relatedTarget)) return;
+    setExternalDropActive(false);
+  };
+
+  const handleWorkspaceDrop = async (event) => {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    await uploadFromDropDataTransfer(event.dataTransfer, currentFolderId || null);
+  };
+
   useEffect(() => {
     loadPrograms().catch(() => setPrograms([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -393,8 +495,29 @@ export default function CopcUploadPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentFolderId, selectedProgramId]);
 
+  useEffect(() => {
+    if (!dropUploadMessage || uploadingDroppedItems) return;
+    const timer = setTimeout(() => setDropUploadMessage(""), 3200);
+    return () => clearTimeout(timer);
+  }, [dropUploadMessage, uploadingDroppedItems]);
+
   return (
-    <div className="container-fluid py-3 file-manager-container">
+    <div
+      className="container-fluid py-3 file-manager-container"
+      onDragEnter={handleWorkspaceDragEnter}
+      onDragOver={handleWorkspaceDragOver}
+      onDragLeave={handleWorkspaceDragLeave}
+      onDrop={handleWorkspaceDrop}
+    >
+      {(externalDropActive || uploadingDroppedItems || dropUploadMessage) && (
+        <div className={`alert py-2 mb-3 ${externalDropActive ? "alert-primary" : "alert-info"}`}>
+          {uploadingDroppedItems
+            ? dropUploadMessage || "Uploading dropped files..."
+            : externalDropActive
+              ? "Drop files or folders to upload into this COPC workspace."
+              : dropUploadMessage}
+        </div>
+      )}
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <div className="d-flex align-items-center gap-2 flex-wrap">
           {currentFolderId && (
@@ -720,20 +843,30 @@ export default function CopcUploadPage() {
         </div>
       )}
 
-      {!loading && selectedProgramId && filteredFolders.length === 0 && (
+      {!loading && selectedProgramId && !hasExplorerItems && (
         <div className="text-center py-5">
           <FaFolder className="text-muted mb-3" size={48} />
           <h5 className="text-muted">
-            {folderQuery ? "No folders match your search" : "No assigned upload folders in this scope"}
+            {folderQuery ? "No folders/files match your search" : "No folders or approved files in this scope"}
           </h5>
         </div>
       )}
 
-      {!loading && filteredFolders.length > 0 && view === "grid" && (
+      {!loading && hasExplorerItems && view === "grid" && (
         <div className="row g-4">
           {filteredFolders.map((folder) => (
             <div key={folder._id} className="col-6 col-sm-4 col-md-3 col-xl-2">
-              <div className="card folder-card h-100 text-center p-3 position-relative">
+              <div
+                className="card folder-card h-100 text-center p-3 position-relative"
+                onDragOver={(e) => handleFolderDragOver(e, folder._id)}
+                onDrop={(e) => handleFolderDrop(e, folder._id)}
+                onDragLeave={() => {
+                  if (activeDropFolderId === String(folder._id)) setActiveDropFolderId("");
+                }}
+                style={activeDropFolderId === String(folder._id)
+                  ? { border: "2px dashed #0d6efd", background: "rgba(13,110,253,0.08)" }
+                  : undefined}
+              >
                 <FaFolder size={42} className="text-warning mb-3" />
                 <h6 className="card-title text-truncate" title={folder.path || folder.name}>{folder.name}</h6>
                 <p className="text-muted small text-truncate" title={folder.path || folder.name}>{folder.path || folder.name}</p>
@@ -748,43 +881,134 @@ export default function CopcUploadPage() {
               </div>
             </div>
           ))}
+          {filteredApprovedFiles.map((file) => (
+            <div key={`approved-grid-${file._id}`} className="col-6 col-sm-4 col-md-3 col-xl-2">
+              <div className="card h-100 text-center p-3 position-relative border-success">
+                <FaFileAlt size={42} className="text-primary mb-3" />
+                <h6 className="card-title text-truncate" title={file.originalName}>{file.originalName}</h6>
+                <p className="text-muted small mb-1">{formatFileSize(file.size)}</p>
+                <p className="text-muted small text-truncate mb-2" title={file.uploadDate ? new Date(file.uploadDate).toLocaleString() : "N/A"}>
+                  {file.uploadDate ? new Date(file.uploadDate).toLocaleString() : "N/A"}
+                </p>
+                <span className="badge bg-success mb-2">Approved</span>
+                <div className="d-flex gap-1 justify-content-center mt-1">
+                  <a
+                    className="btn btn-sm btn-outline-primary"
+                    href={`${BACKEND_URL}/preview/${file.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Preview"
+                  >
+                    <FaEye />
+                  </a>
+                  <a
+                    className="btn btn-sm btn-outline-success"
+                    href={`${BACKEND_URL}/download/${file.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
+                    title="Download"
+                  >
+                    <FaCloudDownloadAlt />
+                  </a>
+                </div>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
-      {!loading && filteredFolders.length > 0 && view === "list" && (
-        <div className="table-responsive">
-          <table className="table table-hover align-middle">
-            <thead className="table-light">
-              <tr>
-                <th>Name</th>
-                <th>Path</th>
-                <th>Tasks</th>
-                <th className="text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredFolders.map((folder) => (
-                <tr key={folder._id}>
-                  <td className="d-flex align-items-center">
-                    <FaFolder className="text-warning me-2" />
-                    {folder.name}
-                  </td>
-                  <td className="small text-muted">{folder.path || folder.name}</td>
-                  <td>{folder.taskCount || 0}</td>
-                  <td className="text-center">
-                    <div className="btn-group">
-                      <button className="btn btn-sm btn-outline-primary" onClick={() => setCurrentFolderId(folder._id)}>
-                        <FaEye className="me-1" /> Open
-                      </button>
-                      <button className="btn btn-sm btn-outline-success" onClick={() => setUploadTarget(folder)}>
-                        <FaUpload className="me-1" /> Upload
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {!loading && hasExplorerItems && view === "list" && (
+        <div className="d-flex flex-column gap-3">
+          {filteredFolders.length > 0 && (
+            <div className="table-responsive">
+              <table className="table table-hover align-middle mb-0">
+                <thead className="table-light">
+                  <tr>
+                    <th>Name</th>
+                    <th>Path</th>
+                    <th>Tasks</th>
+                    <th className="text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredFolders.map((folder) => (
+                    <tr
+                      key={folder._id}
+                      onDragOver={(e) => handleFolderDragOver(e, folder._id)}
+                      onDrop={(e) => handleFolderDrop(e, folder._id)}
+                      onDragLeave={() => {
+                        if (activeDropFolderId === String(folder._id)) setActiveDropFolderId("");
+                      }}
+                      style={activeDropFolderId === String(folder._id)
+                        ? { outline: "2px dashed #0d6efd", outlineOffset: "-2px" }
+                        : undefined}
+                    >
+                      <td className="d-flex align-items-center">
+                        <FaFolder className="text-warning me-2" />
+                        {folder.name}
+                      </td>
+                      <td className="small text-muted">{folder.path || folder.name}</td>
+                      <td>{folder.taskCount || 0}</td>
+                      <td className="text-center">
+                        <div className="btn-group">
+                          <button className="btn btn-sm btn-outline-primary" onClick={() => setCurrentFolderId(folder._id)}>
+                            <FaEye className="me-1" /> Open
+                          </button>
+                          <button className="btn btn-sm btn-outline-success" onClick={() => setUploadTarget(folder)}>
+                            <FaUpload className="me-1" /> Upload
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {filteredApprovedFiles.length > 0 && (
+            <div className="table-responsive">
+              <table className="table table-hover align-middle mb-0">
+                <thead className="table-light">
+                  <tr>
+                    <th>Approved File</th>
+                    <th>Size</th>
+                    <th>Uploaded</th>
+                    <th className="text-center">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredApprovedFiles.map((file) => (
+                    <tr key={`approved-list-${file._id}`}>
+                      <td className="d-flex align-items-center">
+                        <FaFileAlt className="text-primary me-2" />
+                        {file.originalName}
+                      </td>
+                      <td className="small">{formatFileSize(file.size)}</td>
+                      <td className="small">{file.uploadDate ? new Date(file.uploadDate).toLocaleString() : "N/A"}</td>
+                      <td className="text-center">
+                        <div className="btn-group">
+                          <a
+                            className="btn btn-sm btn-outline-primary"
+                            href={`${BACKEND_URL}/preview/${file.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            title="Preview"
+                          >
+                            <FaEye />
+                          </a>
+                          <a
+                            className="btn btn-sm btn-outline-success"
+                            href={`${BACKEND_URL}/download/${file.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
+                            title="Download"
+                          >
+                            <FaCloudDownloadAlt />
+                          </a>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 

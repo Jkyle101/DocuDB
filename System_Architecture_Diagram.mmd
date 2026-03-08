@@ -1,0 +1,41 @@
+flowchart TB
+    user[End Users<br/>Faculty, Dept Chair, QA Admin, Evaluator, Superadmin]
+
+    subgraph presentation[Presentation Layer]
+        browser[Web Browser]
+        frontend[React + Vite Frontend<br/>Pages, Components, Routing, Charts]
+    end
+
+    subgraph app[Application Layer]
+        api[Node.js + Express API<br/>Authentication, File Services, Sharing,<br/>Groups, Workflow, Notifications, Admin]
+        auth[Access Control Logic<br/>Role and Permission Checks]
+        forms[Document Services<br/>Editor, Forms, Reports, Preview]
+    end
+
+    subgraph data[Data Layer]
+        mongo[(MongoDB<br/>Users, Files, Folders, Groups,<br/>Logs, Notifications, Versions)]
+        storage[(Local Upload Storage<br/>Uploaded Files, Previews, Generated Outputs)]
+    end
+
+    subgraph external[External / Infrastructure Layer]
+        smtp[SMTP Email Service]
+        pm2[PM2 Process Manager]
+        nginx[Nginx / Static Hosting<br/>Optional Production Frontend Serving]
+    end
+
+    user --> browser
+    browser --> frontend
+    frontend -->|HTTP / JSON API| api
+    frontend -->|served build assets| nginx
+
+    api --> auth
+    api --> forms
+    api --> mongo
+    api --> storage
+    api --> smtp
+    pm2 --> api
+    nginx --> frontend
+
+    forms --> storage
+    forms --> mongo
+    auth --> mongo
