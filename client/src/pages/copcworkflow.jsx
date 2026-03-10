@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import { FaCheckCircle, FaCog, FaDownload, FaFolderOpen, FaPaperPlane, FaTimes } from "react-icons/fa";
+import { FaCheckCircle, FaCog, FaDownload, FaFolderOpen, FaTimes } from "react-icons/fa";
 import { BACKEND_URL } from "../config";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
@@ -35,7 +35,6 @@ export default function CopcWorkflowPage() {
     evaluatorIds: [],
     uploaderIds: [],
   });
-  const [submitMeta, setSubmitMeta] = useState({ method: "Email", reference: "" });
   const [observationText, setObservationText] = useState("");
   const [programAssignments, setProgramAssignments] = useState({
     uploaders: [],
@@ -279,8 +278,6 @@ export default function CopcWorkflowPage() {
         userId,
         role,
         action,
-        method: submitMeta.method,
-        reference: submitMeta.reference,
       });
       await loadWorkflow(selectedProgramId);
       await loadPrograms();
@@ -617,17 +614,6 @@ export default function CopcWorkflowPage() {
                   <button className="btn btn-success" onClick={() => runAction("final_approval")} disabled={workflow.program.isLocked}>
                     <FaCheckCircle className="me-1" />Finalize COPC Ready (Lock + Generate)
                   </button>
-                )}
-                {workflow.actions.canSubmit && (
-                  <div className="d-flex gap-2 align-items-center flex-wrap" style={{ maxWidth: "100%" }}>
-                    <select className="form-select form-select-sm" style={{ minWidth: "150px", maxWidth: "210px" }} value={submitMeta.method} onChange={(e) => setSubmitMeta((p) => ({ ...p, method: e.target.value }))}>
-                      <option>Email</option>
-                      <option>Cloud Link</option>
-                      <option>Official Portal</option>
-                    </select>
-                    <input className="form-control form-control-sm" style={{ minWidth: "220px", maxWidth: "320px" }} placeholder="Submission reference" value={submitMeta.reference} onChange={(e) => setSubmitMeta((p) => ({ ...p, reference: e.target.value }))} />
-                    <button className="btn btn-warning" onClick={() => runAction("submit_ched")}><FaPaperPlane className="me-1" />Submit to CHED</button>
-                  </div>
                 )}
                 {workflow.actions.canArchive && (
                   <button className="btn btn-secondary" onClick={() => runAction("archive")}>Archive Documents</button>

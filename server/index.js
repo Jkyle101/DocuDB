@@ -40,15 +40,41 @@ function parseOriginList(value) {
     .filter(Boolean);
 }
 
-const allowedCorsOrigins = new Set(
-  [
-    ...parseOriginList(process.env.CORS_ORIGINS),
-    normalizeOrigin(process.env.CORS_ORIGIN),
-    normalizeOrigin(process.env.FRONTEND_URL),
-  ].filter(Boolean)
-);
+function isPrivateIpv4(hostname) {
+  const match = String(hostname || "").match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (!match) return false;
+  const a = Number(match[1]);
+  const b = Number(match[2]);
+  if (a === 10) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  return false;
+}
 
-if (allowedCorsOrigins.size === 0) {
+function isLanDevOrigin(origin) {
+  try {
+    const url = new URL(origin);
+    const hostname = String(url.hostname || "").toLowerCase();
+    if (hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1") return true;
+    if (hostname.endsWith(".local")) return true;
+    if (isPrivateIpv4(hostname)) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+const configuredCorsOrigins = [
+  ...parseOriginList(process.env.CORS_ORIGINS),
+  normalizeOrigin(process.env.CORS_ORIGIN),
+  normalizeOrigin(process.env.FRONTEND_URL),
+].filter(Boolean);
+
+const hasExplicitCorsOrigins = configuredCorsOrigins.length > 0;
+const allowLanCors = String(process.env.CORS_ALLOW_LAN || "true").toLowerCase() !== "false";
+const allowedCorsOrigins = new Set(configuredCorsOrigins);
+
+if (!hasExplicitCorsOrigins) {
   allowedCorsOrigins.add("http://localhost:5173");
   allowedCorsOrigins.add("http://127.0.0.1:5173");
 }
@@ -64,9 +90,13 @@ app.use(
       if (allowedCorsOrigins.has(normalizedOrigin)) {
         return callback(null, true);
       }
+      if (allowLanCors && isLanDevOrigin(normalizedOrigin)) {
+        return callback(null, true);
+      }
 
       return callback(new Error(`Origin not allowed by CORS: ${normalizedOrigin}`));
     },
+    optionsSuccessStatus: 200,
   })
 );
 app.use(express.json());
@@ -103,11 +133,11 @@ async function isGroupLeaderForFile(userId, fileId) {
 }
 
 async function isAdminContext(role, userId) {
-  if (String(role || "").toLowerCase() === "superadmin") return true;
+  if (normalizeRole(role) === "superadmin") return true;
   if (!userId) return false;
   try {
     const user = await UserModel.findById(userId).select("role");
-    return String(user?.role || "").toLowerCase() === "superadmin";
+    return normalizeRole(user?.role) === "superadmin";
   } catch {
     return false;
   }
@@ -4126,7 +4156,7 @@ app.patch("/folders/:id/tasks/:taskId", async (req, res) => {
   }
 });
 
-// Delete a task node (superadmin only, completed tasks only)
+// Delete a task node (superadmin only)
 app.delete("/folders/:id/tasks/:taskId", async (req, res) => {
   try {
     const { userId, role } = req.body || {};
@@ -4138,22 +4168,14 @@ app.delete("/folders/:id/tasks/:taskId", async (req, res) => {
     if (await isFolderWithinLockedCopc(folder._id)) {
       return res.status(423).json({ error: "This COPC scope is locked after final approval" });
     }
-    if (await isFolderWithinLockedCopc(folder._id)) {
-      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
-    }
 
     const task = findTaskById(folder.complianceTasks || [], req.params.taskId);
     if (!task) return res.status(404).json({ error: "Task not found" });
 
-    const isCompleted = task.status === "complete" || Number(task.percentage || 0) >= 100;
-    if (!isCompleted) {
-      return res.status(400).json({ error: "Only completed tasks can be removed" });
-    }
-
     removeTaskById(folder.complianceTasks || [], req.params.taskId);
     await folder.save();
 
-    createLog("DELETE_FOLDER_TASK", userId, `Removed completed task from folder ${folder.name}`);
+    createLog("DELETE_FOLDER_TASK", userId, `Removed task from folder ${folder.name}`);
     const { normalized, progress } = computeTaskProgress(folder.complianceTasks || []);
     res.json({ success: true, tasks: normalized, progress });
   } catch (err) {
@@ -4495,18 +4517,23 @@ app.get("/copc/programs", async (req, res) => {
     }
 
     res.json(
-      visible.map((folder) => ({
-        _id: folder._id,
-        name: folder.name,
-        profileKey: folder.complianceProfileKey || null,
-        programCode: folder?.copc?.programCode || "",
-        programName: folder?.copc?.programName || folder.name,
-        departmentName: folder?.copc?.departmentName || "",
-        year: folder?.copc?.year || null,
-        workflowStage: folder?.copc?.workflowStage || "initialized",
-        workflowStatus: folder?.copc?.workflowStatus || "In Progress",
-        isLocked: !!folder?.copc?.locked?.isLocked,
-      }))
+      visible.map((folder) => {
+        const rawStage = String(folder?.copc?.workflowStage || "initialized");
+        const workflowStage = rawStage === "submitted" ? "copc_ready" : rawStage;
+        const workflowStatus = rawStage === "submitted" ? "COPC Ready" : (folder?.copc?.workflowStatus || "In Progress");
+        return {
+          _id: folder._id,
+          name: folder.name,
+          profileKey: folder.complianceProfileKey || null,
+          programCode: folder?.copc?.programCode || "",
+          programName: folder?.copc?.programName || folder.name,
+          departmentName: folder?.copc?.departmentName || "",
+          year: folder?.copc?.year || null,
+          workflowStage,
+          workflowStatus,
+          isLocked: !!folder?.copc?.locked?.isLocked,
+        };
+      })
     );
   } catch (err) {
     res.status(500).json({ error: "Failed to list COPC programs" });
@@ -4586,6 +4613,10 @@ app.get("/copc/programs/:id/workflow", async (req, res) => {
       generateFinalCopcSubmissionFile: !!String(root?.copc?.packageMeta?.fileName || "").trim(),
     };
 
+    const rawStage = String(root?.copc?.workflowStage || "initialized");
+    const workflowStage = rawStage === "submitted" ? "copc_ready" : rawStage;
+    const workflowStatus = rawStage === "submitted" ? "COPC Ready" : (root?.copc?.workflowStatus || "In Progress");
+
     const workflowSteps = [
       { key: "initialized", label: "System Initialization" },
       { key: "collecting_documents", label: "Document Upload" },
@@ -4594,10 +4625,9 @@ app.get("/copc/programs/:id/workflow", async (req, res) => {
       { key: "internal_evaluation", label: "Internal Evaluation" },
       { key: "package_compiled", label: "COPC Package Compilation" },
       { key: "copc_ready", label: "Final Approval" },
-      { key: "submitted", label: "CHED Submission" },
       { key: "archived", label: "Archive" },
     ];
-    const currentIndex = workflowSteps.findIndex((step) => step.key === (root?.copc?.workflowStage || "initialized"));
+    const currentIndex = workflowSteps.findIndex((step) => step.key === workflowStage);
     const steps = workflowSteps.map((step, index) => ({
       ...step,
       complete: index <= currentIndex,
@@ -4611,8 +4641,8 @@ app.get("/copc/programs/:id/workflow", async (req, res) => {
         name: root?.copc?.programName || root.name,
         department: root?.copc?.departmentName || "",
         year: root?.copc?.year || null,
-        stage: root?.copc?.workflowStage || "initialized",
-        status: root?.copc?.workflowStatus || "In Progress",
+        stage: workflowStage,
+        status: workflowStatus,
         isLocked: !!root?.copc?.locked?.isLocked,
         packageMeta: root?.copc?.packageMeta || {},
         submissionMeta: root?.copc?.submissionMeta || {},
@@ -4633,7 +4663,6 @@ app.get("/copc/programs/:id/workflow", async (req, res) => {
       actions: {
         canCompile: ["superadmin", "qa_admin"].includes(actorRole),
         canFinalApprove: actorRole === "superadmin",
-        canSubmit: ["superadmin", "qa_admin"].includes(actorRole),
         canArchive: ["superadmin", "qa_admin"].includes(actorRole),
       },
     });
@@ -5371,10 +5400,10 @@ app.post("/copc/programs/:id/observations", async (req, res) => {
   }
 });
 
-// Workflow actions: compile package, final approval, submit, archive
+// Workflow actions: compile package, final approval, archive
 app.post("/copc/programs/:id/actions", async (req, res) => {
   try {
-    const { userId, role, action, method, reference } = req.body || {};
+    const { userId, role, action } = req.body || {};
     const actorRole = await resolveActorRole(userId, role);
     const root = await Folder.findById(req.params.id);
     if (!root || !root?.copc?.isProgramRoot) {
@@ -5458,18 +5487,6 @@ app.post("/copc/programs/:id/actions", async (req, res) => {
         isLocked: true,
         lockedAt: now,
         lockedBy: userId || null,
-      };
-    } else if (normalizedAction === "submit_ched") {
-      if (!["superadmin", "qa_admin"].includes(actorRole)) {
-        return res.status(403).json({ error: "Only super admin or QA admin can submit to CHED" });
-      }
-      root.copc.workflowStage = "submitted";
-      root.copc.workflowStatus = "Submitted to CHED";
-      root.copc.submissionMeta = {
-        method: String(method || ""),
-        reference: String(reference || ""),
-        submittedAt: now,
-        submittedBy: userId || null,
       };
     } else if (normalizedAction === "archive") {
       if (!["superadmin", "qa_admin"].includes(actorRole)) {
@@ -8774,6 +8791,7 @@ app.get("/admin/search", async (req, res) => {
 app.listen(PORT, HOST, () => {
   console.log(`ðŸš€ Server running on http://${HOST}:${PORT}`);
   console.log(`Allowed CORS origins: ${Array.from(allowedCorsOrigins).join(", ")}`);
+  console.log(`LAN CORS fallback: ${allowLanCors ? "enabled" : "disabled"}`);
   createLog("SYSTEM", null, `Server started on ${HOST}:${PORT}`);
 });
 

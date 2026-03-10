@@ -364,11 +364,16 @@ export default function AdminTasksPage() {
 
   const removeTask = async (taskId) => {
     if (!currentFolderId || !taskId) return;
-    const { data } = await axios.delete(`${BACKEND_URL}/folders/${currentFolderId}/tasks/${taskId}`, {
-      data: { userId, role },
-    });
-    setFolderTasks(Array.isArray(data?.tasks) ? data.tasks : []);
-    setTaskProgress(Number(data?.progress || 0));
+    if (!window.confirm("Remove this task from the folder?")) return;
+    try {
+      const { data } = await axios.delete(`${BACKEND_URL}/folders/${currentFolderId}/tasks/${taskId}`, {
+        data: { userId, role },
+      });
+      setFolderTasks(Array.isArray(data?.tasks) ? data.tasks : []);
+      setTaskProgress(Number(data?.progress || 0));
+    } catch (err) {
+      alert(err?.response?.data?.error || "Failed to remove task");
+    }
   };
 
   const submitTask = async () => {
@@ -492,11 +497,9 @@ export default function AdminTasksPage() {
                   <option value="in_progress">In progress</option>
                   <option value="complete">Complete</option>
                 </select>
-                {done && (
-                  <button className="btn btn-sm btn-outline-danger" onClick={() => removeTask(task._id)} title="Remove completed task">
-                    <FaTrashAlt />
-                  </button>
-                )}
+                <button className="btn btn-sm btn-outline-danger" onClick={() => removeTask(task._id)} title="Remove task">
+                  <FaTrashAlt />
+                </button>
               </div>
             </div>
             {(task.children || []).length > 0 && <div className="ms-3 mt-2">{renderTasks(task.children)}</div>}
