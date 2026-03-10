@@ -159,14 +159,30 @@ const emailTemplates = {
   })
 };
 
+const buildGenericNotificationTemplate = (data) => ({
+  subject: `${data.title || "DocuDB Notification"} - DocuDB`,
+  html: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #0d6efd;">${data.title || "DocuDB Notification"}</h2>
+        <p>Hello,</p>
+        <p>${data.message || "You have a new notification in DocuDB."}</p>
+        ${data.details ? `<div style="background: #f8f9fa; padding: 15px; border-left: 4px solid #0d6efd; margin: 20px 0;">${data.details}</div>` : ""}
+        <a href="${data.loginUrl || process.env.FRONTEND_URL || 'http://localhost:5173'}/notifications"
+           style="background: #0d6efd; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 20px 0;">
+          Open Notifications
+        </a>
+        <hr style="border: none; border-top: 1px solid #eee; margin: 30px 0;">
+        <p style="color: #666; font-size: 12px;">
+          This is an automated notification from DocuDB. Please do not reply to this email.
+        </p>
+      </div>
+    `
+});
+
 // Send notification email
 const sendNotificationEmail = async (userEmail, notificationType, data = {}) => {
   try {
-    const template = emailTemplates[notificationType];
-    if (!template) {
-      console.warn(`No email template found for notification type: ${notificationType}`);
-      return { success: false, error: 'Template not found' };
-    }
+    const template = emailTemplates[notificationType] || buildGenericNotificationTemplate;
 
     const emailContent = template(data);
     return await sendEmail(userEmail, emailContent.subject, emailContent.html);

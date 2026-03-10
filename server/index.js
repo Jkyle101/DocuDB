@@ -25,10 +25,50 @@ const Notification = require("./models/notification");
 const { timeStamp } = require("console");
 
 // Email service
-const { sendNotificationEmail } = require("./emailService");
+const { sendNotificationEmail, sendEmail } = require("./emailService");
 
 const app = express();
-app.use(cors());
+
+function normalizeOrigin(value) {
+  return String(value || "").trim().replace(/\/+$/, "");
+}
+
+function parseOriginList(value) {
+  return String(value || "")
+    .split(",")
+    .map((entry) => normalizeOrigin(entry))
+    .filter(Boolean);
+}
+
+const allowedCorsOrigins = new Set(
+  [
+    ...parseOriginList(process.env.CORS_ORIGINS),
+    normalizeOrigin(process.env.CORS_ORIGIN),
+    normalizeOrigin(process.env.FRONTEND_URL),
+  ].filter(Boolean)
+);
+
+if (allowedCorsOrigins.size === 0) {
+  allowedCorsOrigins.add("http://localhost:5173");
+  allowedCorsOrigins.add("http://127.0.0.1:5173");
+}
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedCorsOrigins.has("*")) {
+        return callback(null, true);
+      }
+
+      const normalizedOrigin = normalizeOrigin(origin);
+      if (allowedCorsOrigins.has(normalizedOrigin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error(`Origin not allowed by CORS: ${normalizedOrigin}`));
+    },
+  })
+);
 app.use(express.json());
 
 // Serve uploaded files
@@ -1181,10 +1221,13 @@ app.post("/login", async (req, res) => {
     if (existingNotifications === 0) {
       await createNotification(
         user._id,
-        "UPLOAD",
+        "WELCOME",
         "Welcome to DocuDB!",
         "Welcome to DocuDB! Start by uploading your first file or creating a folder.",
-        "Getting started guide"
+        "Getting started guide",
+        null,
+        null,
+        { actorId: user._id, allowSelf: true }
       );
     }
 
@@ -1251,6 +1294,33 @@ app.post("/comments", async (req, res) => {
       });
     }
     await comment.populate("createdBy", "email");
+
+    const itemContext = await getItemNotificationContext(itemId, itemType);
+    const parentComment = parentCommentId
+      ? await Comment.findById(parentCommentId).select("createdBy")
+      : null;
+    const recipients = uniqNotificationIds([
+      itemContext.ownerId,
+      parentComment?.createdBy,
+    ]);
+
+    await createNotificationsForUsers(
+      recipients,
+      "COMMENT",
+      parentCommentId ? "New reply received" : "New comment received",
+      `${comment.createdBy?.email || "Someone"} commented on "${itemContext.label}".`,
+      String(content || "").trim().slice(0, 180),
+      itemId,
+      itemContext.relatedModel,
+      {
+        actorId: createdBy,
+        metadata: {
+          itemType,
+          itemLabel: itemContext.label,
+        },
+      }
+    );
+
     res.json(comment);
   } catch (err) {
     console.error("Create comment error:", err);
@@ -1540,6 +1610,54 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     createLog("UPLOAD", userId, `Uploaded ${req.file.originalname}`);
     if (file?.parentFolder) {
       await updateCopcStage(file.parentFolder, "collecting_documents", "Collecting Documents");
+    }
+
+    if (isUpdate && normalizeNotificationId(file.owner) !== normalizeNotificationId(userId)) {
+      await createNotification(
+        file.owner,
+        "FILE_UPDATED",
+        "Shared file updated",
+        `${req.file.originalname} was updated by another user.`,
+        changeDescription || "The document content was updated.",
+        file._id,
+        "File",
+        {
+          actorId: userId,
+          metadata: {
+            fileName: req.file.originalname,
+          },
+        }
+      );
+    }
+
+    if (file.reviewWorkflow?.requiresReview) {
+      const pendingProgramChair = String(file.reviewWorkflow?.status || "") === "pending_program_chair";
+      const pendingQa = String(file.reviewWorkflow?.status || "") === "pending_qa";
+      const reviewTargets = pendingProgramChair
+        ? file.reviewWorkflow.assignedProgramChairs || []
+        : pendingQa
+          ? file.reviewWorkflow.assignedQaOfficers || []
+          : [];
+      const reviewStageLabel = pendingProgramChair ? "department chair" : pendingQa ? "QA" : "review";
+
+      if (reviewTargets.length > 0) {
+        await createNotificationsForUsers(
+          reviewTargets,
+          "REVIEW_REQUIRED",
+          "Document ready for review",
+          `"${req.file.originalname}" is now ready for ${reviewStageLabel} review.`,
+          isUpdate ? "An existing document was updated." : "A new document was uploaded.",
+          file._id,
+          "File",
+          {
+            actorId: userId,
+            metadata: {
+              fileName: req.file.originalname,
+              stage: reviewStageLabel,
+            },
+          }
+        );
+      }
     }
 
     const duplicateCount = await File.countDocuments({
@@ -3141,17 +3259,22 @@ app.patch("/files/:id/share", async (req, res) => {
     createLog("SHARE_FILE", file.owner, `Shared ${file.originalName} with ${emails.join(", ")}`);
 
     // Create notifications for shared users
-    for (const userId of userIds) {
-      await createNotification(
-        userId,
-        "SHARE_FILE",
-        "File Shared",
-        `A file has been shared with you`,
-        file.originalName,
-        file._id,
-        "File"
-      );
-    }
+    await createNotificationsForUsers(
+      userIds,
+      "SHARE_FILE",
+      "File shared with you",
+      `"${file.originalName}" has been shared with you.`,
+      `Permission: ${file.permissions}`,
+      file._id,
+      "File",
+      {
+        actorId: userId,
+        metadata: {
+          fileName: file.originalName,
+          permission: file.permissions,
+        },
+      }
+    );
 
     res.json({ status: "success", file });
   } catch (err) {
@@ -3545,6 +3668,46 @@ app.patch("/files/:id/review/program-chair", async (req, res) => {
       );
     }
     createLog("PROGRAM_CHAIR_REVIEW", userId, `${normalizedAction} file ${file.originalName}`);
+
+    await createNotification(
+      file.owner,
+      normalizedAction === "approve" ? "COPC_REVIEW_APPROVED" : "COPC_REVIEW_REJECTED",
+      normalizedAction === "approve" ? "Department review approved" : "Department review requires revision",
+      normalizedAction === "approve"
+        ? `"${file.originalName}" passed department chair review.`
+        : `"${file.originalName}" was returned for revision by the department chair.`,
+      String(notes || "").trim() || (normalizedAction === "approve" ? "Approved at department review stage." : "Please review the feedback and resubmit."),
+      file._id,
+      "File",
+      {
+        actorId: userId,
+        metadata: {
+          fileName: file.originalName,
+          stage: "program_chair",
+          action: normalizedAction,
+        },
+      }
+    );
+
+    if (normalizedAction === "approve" && Array.isArray(workflow.assignedQaOfficers) && workflow.assignedQaOfficers.length > 0) {
+      await createNotificationsForUsers(
+        workflow.assignedQaOfficers,
+        "REVIEW_REQUIRED",
+        "Document ready for QA review",
+        `"${file.originalName}" is ready for QA review.`,
+        "Department chair review has been completed.",
+        file._id,
+        "File",
+        {
+          actorId: userId,
+          metadata: {
+            fileName: file.originalName,
+            stage: "qa",
+          },
+        }
+      );
+    }
+
     res.json({ success: true, reviewWorkflow: file.reviewWorkflow });
   } catch (err) {
     res.status(500).json({ error: "Failed to process program chair review" });
@@ -3621,6 +3784,27 @@ app.patch("/files/:id/review/qa", async (req, res) => {
       );
     }
     createLog("QA_REVIEW", userId, `${normalizedAction} file ${file.originalName}`);
+
+    await createNotification(
+      file.owner,
+      effectiveAction === "approve" ? "COPC_REVIEW_APPROVED" : "COPC_REVIEW_REJECTED",
+      effectiveAction === "approve" ? "QA review approved" : "QA review requires action",
+      effectiveAction === "approve"
+        ? `"${file.originalName}" passed QA review.`
+        : `"${file.originalName}" requires action after QA review.`,
+      resolvedNotes || (effectiveAction === "approve" ? "Verified by QA Office." : "Please review the QA feedback and update the file."),
+      file._id,
+      "File",
+      {
+        actorId: userId,
+        metadata: {
+          fileName: file.originalName,
+          stage: "qa",
+          action: normalizedAction,
+        },
+      }
+    );
+
     res.json({ success: true, action: normalizedAction, reviewWorkflow: file.reviewWorkflow });
   } catch (err) {
     res.status(500).json({ error: "Failed to process QA review" });
@@ -3810,6 +3994,13 @@ app.patch("/folders/:id/assignments", async (req, res) => {
       return res.status(400).json({ error: "Assignments payload is required" });
     }
 
+    const previousAssignments = {
+      uploaders: [...(folder.folderAssignments?.uploaders || [])],
+      programChairs: [...(folder.folderAssignments?.programChairs || [])],
+      qaOfficers: [...(folder.folderAssignments?.qaOfficers || [])],
+      evaluators: [...(folder.folderAssignments?.evaluators || [])],
+    };
+
     const clean = (value) =>
       Array.from(
         new Set(
@@ -3827,6 +4018,48 @@ app.patch("/folders/:id/assignments", async (req, res) => {
     };
     await folder.save();
     createLog("UPDATE_FOLDER_ASSIGNMENTS", userId, `Updated assignments for folder ${folder.name}`);
+
+    await createNotificationsForUsers(
+      diffNotificationRecipients(folder.folderAssignments.uploaders, previousAssignments.uploaders),
+      "ACTION_REQUIRED",
+      "Assigned to folder uploads",
+      `You were assigned to upload documents in folder "${folder.name}".`,
+      folder.name,
+      folder._id,
+      "Folder",
+      { actorId: userId, metadata: { folderName: folder.name } }
+    );
+    await createNotificationsForUsers(
+      diffNotificationRecipients(folder.folderAssignments.programChairs, previousAssignments.programChairs),
+      "ACTION_REQUIRED",
+      "Assigned to folder review",
+      `You were assigned as a department chair reviewer for folder "${folder.name}".`,
+      folder.name,
+      folder._id,
+      "Folder",
+      { actorId: userId, metadata: { folderName: folder.name } }
+    );
+    await createNotificationsForUsers(
+      diffNotificationRecipients(folder.folderAssignments.qaOfficers, previousAssignments.qaOfficers),
+      "ACTION_REQUIRED",
+      "Assigned to QA review scope",
+      `You were assigned as a QA reviewer for folder "${folder.name}".`,
+      folder.name,
+      folder._id,
+      "Folder",
+      { actorId: userId, metadata: { folderName: folder.name } }
+    );
+    await createNotificationsForUsers(
+      diffNotificationRecipients(folder.folderAssignments.evaluators, previousAssignments.evaluators),
+      "ACTION_REQUIRED",
+      "Assigned to evaluation scope",
+      `You were assigned as an evaluator for folder "${folder.name}".`,
+      folder.name,
+      folder._id,
+      "Folder",
+      { actorId: userId, metadata: { folderName: folder.name } }
+    );
+
     res.json({ success: true, assignments: folder.folderAssignments });
   } catch (err) {
     res.status(500).json({ error: "Failed to update folder assignments" });
@@ -4966,6 +5199,13 @@ app.patch("/copc/programs/:id/assignments", async (req, res) => {
       return res.status(400).json({ error: "Assignments payload is required" });
     }
 
+    const previousAssignments = {
+      uploaders: [...(root.folderAssignments?.uploaders || [])],
+      programChairs: [...(root.folderAssignments?.programChairs || [])],
+      qaOfficers: [...(root.folderAssignments?.qaOfficers || [])],
+      evaluators: [...(root.folderAssignments?.evaluators || [])],
+    };
+
     const clean = (value) =>
       Array.from(
         new Set(
@@ -5000,6 +5240,53 @@ app.patch("/copc/programs/:id/assignments", async (req, res) => {
     );
 
     createLog("COPC_ASSIGNMENTS_UPDATE", userId, `Updated COPC assignments for ${root.name}`);
+
+    const newUploaders = diffNotificationRecipients(next.uploaders, previousAssignments.uploaders);
+    const newProgramChairs = diffNotificationRecipients(next.programChairs, previousAssignments.programChairs);
+    const newQaOfficers = diffNotificationRecipients(next.qaOfficers, previousAssignments.qaOfficers);
+    const newEvaluators = diffNotificationRecipients(next.evaluators, previousAssignments.evaluators);
+
+    await createNotificationsForUsers(
+      newUploaders,
+      "ACTION_REQUIRED",
+      "Assigned to COPC uploads",
+      `You were assigned as an uploader for COPC program "${root.copc?.programCode || root.name}".`,
+      root.copc?.programName || root.name,
+      root._id,
+      "Folder",
+      { actorId: userId, metadata: { groupName: root.copc?.programCode || root.name } }
+    );
+    await createNotificationsForUsers(
+      newProgramChairs,
+      "ACTION_REQUIRED",
+      "Assigned to COPC department review",
+      `You were assigned as a department chair reviewer for COPC program "${root.copc?.programCode || root.name}".`,
+      root.copc?.programName || root.name,
+      root._id,
+      "Folder",
+      { actorId: userId, metadata: { groupName: root.copc?.programCode || root.name } }
+    );
+    await createNotificationsForUsers(
+      newQaOfficers,
+      "ACTION_REQUIRED",
+      "Assigned to COPC QA review",
+      `You were assigned as a QA reviewer for COPC program "${root.copc?.programCode || root.name}".`,
+      root.copc?.programName || root.name,
+      root._id,
+      "Folder",
+      { actorId: userId, metadata: { groupName: root.copc?.programCode || root.name } }
+    );
+    await createNotificationsForUsers(
+      newEvaluators,
+      "ACTION_REQUIRED",
+      "Assigned to COPC evaluation",
+      `You were assigned as an evaluator for COPC program "${root.copc?.programCode || root.name}".`,
+      root.copc?.programName || root.name,
+      root._id,
+      "Folder",
+      { actorId: userId, metadata: { groupName: root.copc?.programCode || root.name } }
+    );
+
     res.json({ success: true, assignments: next });
   } catch (err) {
     res.status(500).json({ error: "Failed to update COPC assignments" });
@@ -5061,6 +5348,23 @@ app.post("/copc/programs/:id/observations", async (req, res) => {
     root.copc.workflowStatus = "Internal Evaluation";
     await root.save();
     createLog("COPC_OBSERVATION", userId, `Added evaluator observation for ${root.name}`);
+
+    await createNotificationsForUsers(
+      await getCopcStakeholderIds(root),
+      "COPC_OBSERVATION",
+      "New COPC observation",
+      `A new observation was added for COPC program "${root.copc?.programCode || root.name}".`,
+      String(message || "").trim(),
+      root._id,
+      "Folder",
+      {
+        actorId: userId,
+        metadata: {
+          groupName: root.copc?.programCode || root.name,
+        },
+      }
+    );
+
     res.json({ success: true, observations: root.copc.observations });
   } catch (err) {
     res.status(500).json({ error: "Failed to add observation" });
@@ -5183,6 +5487,25 @@ app.post("/copc/programs/:id/actions", async (req, res) => {
 
     await root.save();
     createLog("COPC_WORKFLOW_ACTION", userId, `${normalizedAction} for ${root?.copc?.programCode || root.name}`);
+
+    await createNotificationsForUsers(
+      await getCopcStakeholderIds(root),
+      "COPC_WORKFLOW_ACTION",
+      "COPC workflow updated",
+      `The COPC workflow for "${root?.copc?.programCode || root.name}" moved to "${root.copc.workflowStatus}".`,
+      normalizedAction,
+      root._id,
+      "Folder",
+      {
+        actorId: userId,
+        metadata: {
+          groupName: root?.copc?.programCode || root.name,
+          action: normalizedAction,
+          status: root.copc.workflowStatus,
+        },
+      }
+    );
+
     res.json({ success: true, stage: root.copc.workflowStage, status: root.copc.workflowStatus, copc: root.copc });
   } catch (err) {
     res.status(500).json({ error: "Failed to update COPC workflow action" });
@@ -5271,16 +5594,23 @@ app.post("/folders/:id/document-requests", async (req, res) => {
 
     const dueText = deadline ? `Deadline: ${new Date(deadline).toLocaleDateString()}` : "";
     const details = `${documentName}${dueText ? ` | ${dueText}` : ""}`;
-    await Notification.create({
-      userId: targetUserId,
-      type: "DOCUMENT_REQUEST",
-      title: "Admin Request",
-      message: message || `Upload your ${documentName}`,
+    await createNotification(
+      targetUserId,
+      "DOCUMENT_REQUEST",
+      "Document request",
+      message || `Please upload "${documentName}" for "${folder.name}".`,
       details,
-      relatedId: folder._id,
-      relatedModel: "Folder",
-      date: new Date(),
-    });
+      folder._id,
+      "Folder",
+      {
+        actorId: userId,
+        metadata: {
+          folderName: folder.name,
+          documentName,
+          deadline: deadline || null,
+        },
+      }
+    );
     await updateCopcStage(folder._id, "revision", "Revision Requested");
     createLog("DOCUMENT_REQUEST", userId, `Requested ${documentName} from ${targetUserId}`);
     res.json({ success: true });
@@ -5446,6 +5776,23 @@ app.patch("/folders/:id/share", async (req, res) => {
 
     // NEW: log folder share
     createLog("SHARE_FOLDER", folder.owner, `Shared folder ${folder.name} with ${emails.join(", ")}`);
+
+    await createNotificationsForUsers(
+      userIds,
+      "SHARE_FOLDER",
+      "Folder shared with you",
+      `"${folder.name}" has been shared with you.`,
+      `Permission: ${folder.permissions}`,
+      folder._id,
+      "Folder",
+      {
+        actorId: userId,
+        metadata: {
+          folderName: folder.name,
+          permission: folder.permissions,
+        },
+      }
+    );
 
     res.json({ status: "success", folder });
   } catch (err) {
@@ -6925,7 +7272,7 @@ app.delete("/groups/:id", async (req, res) => {
 app.patch("/groups/:groupId/members", async (req, res) => {
   try {
     const { groupId } = req.params;
-    const { userIds } = req.body;
+    const { userIds, actorId } = req.body;
 
     if (!userIds || !Array.isArray(userIds) || userIds.length === 0) {
       return res.status(400).json({ error: "userIds array is required" });
@@ -6946,6 +7293,22 @@ app.patch("/groups/:groupId/members", async (req, res) => {
     // Log member addition
     createLog("ADD_GROUP_MEMBERS", group.createdBy, `Added ${newMembers.length} members to group "${group.name}"`);
 
+    await createNotificationsForUsers(
+      newMembers,
+      "GROUP_INVITE",
+      "Added to a group",
+      `You were added to the group "${group.name}".`,
+      group.description || "",
+      group._id,
+      "Group",
+      {
+        actorId: actorId || group.createdBy,
+        metadata: {
+          groupName: group.name,
+        },
+      }
+    );
+
     res.json({ success: true, group });
   } catch (err) {
     console.error("Add members error:", err);
@@ -6957,6 +7320,7 @@ app.patch("/groups/:groupId/members", async (req, res) => {
 app.delete("/groups/:groupId/members/:userId", async (req, res) => {
   try {
     const { groupId, userId } = req.params;
+    const actorId = req.body?.actorId || null;
 
     const group = await Group.findById(groupId);
     if (!group) return res.status(404).json({ error: "Group not found" });
@@ -6975,6 +7339,22 @@ app.delete("/groups/:groupId/members/:userId", async (req, res) => {
     // Log member removal
     createLog("REMOVE_GROUP_MEMBER", group.createdBy, `Removed member from group "${group.name}"`);
 
+    await createNotification(
+      userId,
+      "GROUP_MEMBER_REMOVED",
+      "Removed from group",
+      `You were removed from the group "${group.name}".`,
+      group.description || "",
+      group._id,
+      "Group",
+      {
+        actorId: actorId || group.createdBy,
+        metadata: {
+          groupName: group.name,
+        },
+      }
+    );
+
     res.json({ success: true, group });
   } catch (err) {
     console.error("Remove member error:", err);
@@ -6986,7 +7366,7 @@ app.delete("/groups/:groupId/members/:userId", async (req, res) => {
 app.patch("/groups/:groupId/leaders", async (req, res) => {
   try {
     const { groupId } = req.params;
-    const { userId, action } = req.body; // action: "add" or "remove"
+    const { userId, action, actorId } = req.body; // action: "add" or "remove"
 
     const group = await Group.findById(groupId);
     if (!group) return res.status(404).json({ error: "Group not found" });
@@ -7011,6 +7391,24 @@ app.patch("/groups/:groupId/leaders", async (req, res) => {
 
     // Log leader change
     createLog("TOGGLE_GROUP_LEADER", group.createdBy, `${action === "add" ? "Promoted" : "Demoted"} leader in group "${group.name}"`);
+
+    await createNotification(
+      userId,
+      action === "add" ? "GROUP_LEADER_ASSIGNED" : "GROUP_LEADER_REMOVED",
+      action === "add" ? "Assigned as group leader" : "Removed as group leader",
+      action === "add"
+        ? `You were assigned as a leader for "${group.name}".`
+        : `Your leader role was removed from "${group.name}".`,
+      group.description || "",
+      group._id,
+      "Group",
+      {
+        actorId: actorId || group.createdBy,
+        metadata: {
+          groupName: group.name,
+        },
+      }
+    );
 
     res.json({ success: true, group });
   } catch (err) {
@@ -7047,6 +7445,22 @@ app.post("/groups/:groupId/notifications", async (req, res) => {
     // Log notification
     createLog("ADD_GROUP_NOTIFICATION", createdBy, `Added notification to group "${group.name}": ${title}`);
 
+    await createNotificationsForUsers(
+      group.members || [],
+      "GROUP_NOTIFICATION",
+      title,
+      message,
+      group.name,
+      group._id,
+      "Group",
+      {
+        actorId: createdBy,
+        metadata: {
+          groupName: group.name,
+        },
+      }
+    );
+
     res.json({ success: true, group });
   } catch (err) {
     console.error("Add notification error:", err);
@@ -7081,6 +7495,22 @@ app.post("/groups/:groupId/announcements", async (req, res) => {
 
     // Log announcement
     createLog("ADD_GROUP_ANNOUNCEMENT", createdBy, `Added announcement to group "${group.name}": ${title}`);
+
+    await createNotificationsForUsers(
+      group.members || [],
+      "GROUP_ANNOUNCEMENT",
+      title,
+      content,
+      group.name,
+      group._id,
+      "Group",
+      {
+        actorId: createdBy,
+        metadata: {
+          groupName: group.name,
+        },
+      }
+    );
 
     res.json({ success: true, group });
   } catch (err) {
@@ -7225,6 +7655,24 @@ app.patch("/groups/:groupId/share", async (req, res) => {
     // Log the action
     createLog("GROUP_SHARE", sharedBy, `Shared ${type} ${itemId} with group "${group.name}"`);
 
+    await createNotificationsForUsers(
+      group.members || [],
+      "GROUP_SHARE",
+      `New ${type} shared in group`,
+      `${type === "file" ? "A file" : "A folder"} was shared in "${group.name}".`,
+      `Permission: ${sharedItem.permission}`,
+      group._id,
+      "Group",
+      {
+        actorId: sharedBy,
+        metadata: {
+          groupName: group.name,
+          itemType: type,
+          permission: sharedItem.permission,
+        },
+      }
+    );
+
     res.json({ success: true, group });
   } catch (err) {
     console.error("Group share error:", err);
@@ -7272,6 +7720,23 @@ app.patch("/groups/:groupId/unshare", async (req, res) => {
 
     // Log the action
     createLog("GROUP_UNSHARE", userId, `Removed ${type} ${itemId} from group "${group.name}"`);
+
+    await createNotificationsForUsers(
+      group.members || [],
+      "GROUP_UNSHARE",
+      `${type === "file" ? "File" : "Folder"} removed from group`,
+      `${type === "file" ? "A file" : "A folder"} was removed from "${group.name}".`,
+      "",
+      group._id,
+      "Group",
+      {
+        actorId: userId,
+        metadata: {
+          groupName: group.name,
+          itemType: type,
+        },
+      }
+    );
 
     res.json({ success: true, group });
   } catch (err) {
@@ -7324,6 +7789,23 @@ app.post("/user/password-request", async (req, res) => {
 
     // Log the request
     createLog("PASSWORD_CHANGE_REQUEST", userId, `Submitted password change request`);
+
+    const admins = await UserModel.find({ role: "superadmin", active: { $ne: false } }).select("_id");
+    await createNotificationsForUsers(
+      admins.map((entry) => entry._id),
+      "PASSWORD_CHANGE_REQUEST",
+      "Password change request submitted",
+      `${user.email} submitted a password change request.`,
+      "Review the request in Manage Users.",
+      passwordRequest._id,
+      "User",
+      {
+        actorId: userId,
+        metadata: {
+          requesterEmail: user.email,
+        },
+      }
+    );
 
     res.json({ success: true, message: "Password change request submitted successfully" });
   } catch (err) {
@@ -7427,7 +7909,12 @@ app.patch("/admin/password-requests/:id/approve", async (req, res) => {
       "PASSWORD_CHANGE_APPROVED",
       "Password Change Approved",
       "Your password change request has been approved",
-      "You can now log in with your new password"
+      "You can now log in with your new password",
+      request._id,
+      "User",
+      {
+        actorId: adminId,
+      }
     );
 
     res.json({ success: true, message: "Password change request approved" });
@@ -7476,7 +7963,12 @@ app.patch("/admin/password-requests/:id/reject", async (req, res) => {
       "PASSWORD_CHANGE_REJECTED",
       "Password Change Rejected",
       "Your password change request has been rejected",
-      "Please contact your administrator for more information"
+      "Please contact your administrator for more information",
+      request._id,
+      "User",
+      {
+        actorId: adminId,
+      }
     );
 
     res.json({ success: true, message: "Password change request rejected" });
@@ -7602,6 +8094,7 @@ app.get("/notifications/:userId", async (req, res) => {
 
     const notifications = await Notification.find({ userId })
       .sort({ createdAt: -1 })
+      .populate("actorId", "email name role profilePicture")
       .limit(100); // Limit to prevent too many results
 
     res.json(notifications);
@@ -7699,43 +8192,166 @@ app.post("/notifications/test/:userId", async (req, res) => {
   }
 });
 
-// Helper function to create notifications and send emails
-async function createNotification(userId, type, title, message, details = "", relatedId = null, relatedModel = null) {
+function normalizeNotificationId(value) {
+  return value?._id?.toString?.() || value?.toString?.() || null;
+}
+
+function uniqNotificationIds(values = []) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => normalizeNotificationId(value))
+        .filter(Boolean)
+    )
+  );
+}
+
+async function getNotificationActorLabel(actorId) {
+  const normalized = normalizeNotificationId(actorId);
+  if (!normalized) return "Someone";
   try {
-    // Create the notification in database
-    const notification = new Notification({
-      userId,
+    const actor = await UserModel.findById(normalized).select("name email");
+    return actor?.name || actor?.email || "Someone";
+  } catch {
+    return "Someone";
+  }
+}
+
+async function getItemNotificationContext(itemId, itemType) {
+  if (!itemId || !itemType) {
+    return { ownerId: null, label: "item", relatedModel: null };
+  }
+
+  if (String(itemType).toLowerCase() === "file") {
+    const file = await File.findById(itemId).select("owner originalName");
+    return {
+      ownerId: normalizeNotificationId(file?.owner),
+      label: file?.originalName || "file",
+      relatedModel: "File",
+    };
+  }
+
+  const folder = await Folder.findById(itemId).select("owner name");
+  return {
+    ownerId: normalizeNotificationId(folder?.owner),
+    label: folder?.name || "folder",
+    relatedModel: "Folder",
+  };
+}
+
+async function getGroupMemberIds(groupId) {
+  const group = await Group.findById(groupId).select("members");
+  return uniqNotificationIds(group?.members || []);
+}
+
+async function getCopcStakeholderIds(folderOrId) {
+  const root =
+    typeof folderOrId === "object" && folderOrId?._id
+      ? folderOrId
+      : await findCopcRootFolderByFolderId(folderOrId);
+  if (!root) return [];
+
+  const assignments = root.folderAssignments || {};
+  return uniqNotificationIds([
+    root.owner,
+    ...(assignments.uploaders || []),
+    ...(assignments.programChairs || []),
+    ...(assignments.qaOfficers || []),
+    ...(assignments.evaluators || []),
+  ]);
+}
+
+function diffNotificationRecipients(next = [], previous = []) {
+  const prevSet = new Set(uniqNotificationIds(previous));
+  return uniqNotificationIds(next).filter((id) => !prevSet.has(id));
+}
+
+async function createNotificationsForUsers(
+  userIds,
+  type,
+  title,
+  message,
+  details = "",
+  relatedId = null,
+  relatedModel = null,
+  options = {}
+) {
+  const targets = uniqNotificationIds(userIds);
+  const created = [];
+  for (const targetId of targets) {
+    const notification = await createNotification(
+      targetId,
       type,
       title,
       message,
       details,
       relatedId,
-      relatedModel
+      relatedModel,
+      options
+    );
+    if (notification) created.push(notification);
+  }
+  return created;
+}
+
+async function createNotification(
+  userId,
+  type,
+  title,
+  message,
+  details = "",
+  relatedId = null,
+  relatedModel = null,
+  options = {}
+) {
+  try {
+    const recipientId = normalizeNotificationId(userId);
+    const actorId = normalizeNotificationId(options.actorId);
+    if (!recipientId) return null;
+    if (!options.allowSelf && actorId && actorId === recipientId) {
+      return null;
+    }
+
+    // Create the notification in database
+    const notification = new Notification({
+      userId: recipientId,
+      type,
+      actorId,
+      title,
+      message,
+      details,
+      relatedId,
+      relatedModel,
+      metadata: options.metadata || {},
+      createdAt: new Date(),
+      date: new Date(),
     });
 
     await notification.save();
 
     // Get user email for sending notification email
     try {
-      const user = await UserModel.findById(userId).select('email');
+      const user = await UserModel.findById(recipientId).select("email");
       if (user && user.email) {
+        const actorLabel = options.actorLabel || (await getNotificationActorLabel(actorId));
         // Send email notification asynchronously (don't block on email sending)
         sendNotificationEmail(user.email, type, {
-          userId,
+          userId: recipientId,
           title,
           message,
           details,
-          fileName: details,
-          groupName: relatedModel === 'Group' ? 'Group' : null,
-          sharerName: relatedModel === 'User' ? 'Administrator' : null,
-          loginUrl: process.env.FRONTEND_URL || 'http://localhost:5173'
+          fileName: options.metadata?.fileName || details,
+          groupName: options.metadata?.groupName || null,
+          sharerName: actorLabel,
+          actorName: actorLabel,
+          loginUrl: process.env.FRONTEND_URL || "http://localhost:5173",
         }).catch(emailErr => {
-          console.error('Failed to send notification email:', emailErr);
+          console.error("Failed to send notification email:", emailErr);
           // Don't throw - email failure shouldn't break notification creation
         });
       }
     } catch (userErr) {
-      console.error('Failed to get user email for notification:', userErr);
+      console.error("Failed to get user email for notification:", userErr);
     }
 
     return notification;
@@ -8152,6 +8768,7 @@ app.get("/admin/search", async (req, res) => {
 ======================== */
 app.listen(PORT, HOST, () => {
   console.log(`ðŸš€ Server running on http://${HOST}:${PORT}`);
+  console.log(`Allowed CORS origins: ${Array.from(allowedCorsOrigins).join(", ")}`);
   createLog("SYSTEM", null, `Server started on ${HOST}:${PORT}`);
 });
 

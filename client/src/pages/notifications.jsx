@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { FaBell, FaShareAlt, FaComment, FaKey, FaUser, FaFile, FaFolder, FaUsers, FaCheckCircle, FaTimesCircle, FaClock, FaEye, FaExclamationTriangle } from "react-icons/fa";
+import { FaBell, FaShareAlt, FaComment, FaKey, FaFile, FaFolder, FaUsers, FaCheckCircle, FaTimesCircle, FaClock, FaEye, FaExclamationTriangle } from "react-icons/fa";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
 
@@ -54,67 +54,60 @@ function Notifications() {
   };
 
   const getNotificationIcon = (type) => {
-    switch (type) {
-      case "SHARE_FILE":
-      case "SHARE_FOLDER":
-        return <FaShareAlt className="text-primary" />;
-      case "COMMENT":
-        return <FaComment className="text-info" />;
-      case "PASSWORD_CHANGE_REQUEST":
-        return <FaKey className="text-warning" />;
-      case "PASSWORD_CHANGE_APPROVED":
-        return <FaCheckCircle className="text-success" />;
-      case "PASSWORD_CHANGE_REJECTED":
-        return <FaTimesCircle className="text-danger" />;
-      case "GROUP_INVITE":
-        return <FaUsers className="text-success" />;
-      case "UPLOAD":
-        return <FaFile className="text-secondary" />;
-      case "CREATE_FOLDER":
-        return <FaFolder className="text-warning" />;
-      case "ACTION_REQUIRED":
-      case "REVIEW_REQUIRED":
-      case "DUPLICATE_ALERT":
-      case "DOCUMENT_REQUEST":
-        return <FaExclamationTriangle className="text-warning" />;
-      default:
-        return <FaBell className="text-muted" />;
+    const normalized = String(type || "").toUpperCase();
+    if (normalized.includes("SHARE")) return <FaShareAlt className="text-primary" />;
+    if (normalized.includes("COMMENT")) return <FaComment className="text-info" />;
+    if (normalized.includes("PASSWORD")) return <FaKey className="text-warning" />;
+    if (normalized.includes("GROUP")) return <FaUsers className="text-success" />;
+    if (normalized.includes("APPROVED")) return <FaCheckCircle className="text-success" />;
+    if (normalized.includes("REJECTED") || normalized.includes("REMOVED")) return <FaTimesCircle className="text-danger" />;
+    if (normalized.includes("UPLOAD") || normalized.includes("FILE")) return <FaFile className="text-secondary" />;
+    if (normalized.includes("FOLDER")) return <FaFolder className="text-warning" />;
+    if (
+      normalized.includes("ACTION") ||
+      normalized.includes("REVIEW") ||
+      normalized.includes("REQUEST") ||
+      normalized.includes("ALERT") ||
+      normalized.includes("COPC") ||
+      normalized.includes("WELCOME")
+    ) {
+      return <FaExclamationTriangle className="text-warning" />;
     }
+    return <FaBell className="text-muted" />;
   };
 
-  const getNotificationMessage = (notification) => {
-    const { type, details, user } = notification;
+  const getNotificationSummary = (notification) => {
+    const actor = notification?.actorId;
+    const actorLabel = actor?.name || actor?.email || "";
+    const title = notification?.title || "Notification";
+    const message = notification?.message || notification?.details || "You have a new notification.";
+    const details = notification?.details ? String(notification.details).trim() : "";
+    const actorPrefix = actorLabel && !message.includes(actorLabel) ? `${actorLabel}: ` : "";
+    return {
+      title,
+      message: `${actorPrefix}${message}`,
+      details,
+    };
+  };
 
-    switch (type) {
-      case "SHARE_FILE":
-        return `${user?.email || "Someone"} shared a file with you: ${details}`;
-      case "SHARE_FOLDER":
-        return `${user?.email || "Someone"} shared a folder with you: ${details}`;
-      case "COMMENT":
-        return `${user?.email || "Someone"} commented on your file: ${details}`;
-      case "PASSWORD_CHANGE_REQUEST":
-        return "Your password change request has been submitted for approval.";
-      case "PASSWORD_CHANGE_APPROVED":
-        return "Your password change request has been approved.";
-      case "PASSWORD_CHANGE_REJECTED":
-        return "Your password change request has been rejected.";
-      case "GROUP_INVITE":
-        return `${user?.email || "Someone"} invited you to join a group: ${details}`;
-      case "UPLOAD":
-        return `${user?.email || "Someone"} uploaded a new file: ${details}`;
-      case "CREATE_FOLDER":
-        return `${user?.email || "Someone"} created a new folder: ${details}`;
-      case "ACTION_REQUIRED":
-        return `Action required: ${details}`;
-      case "REVIEW_REQUIRED":
-        return `Review required: ${details}`;
-      case "DUPLICATE_ALERT":
-        return `Duplicate alert: ${details}`;
-      case "DOCUMENT_REQUEST":
-        return `Document request: ${details || notification.message}`;
-      default:
-        return details || "You have a new notification.";
+  const matchesFilter = (notification) => {
+    const normalized = String(notification?.type || "").toLowerCase();
+    if (activeFilter === "all") return true;
+    if (activeFilter === "unread") return !notification.isRead;
+    if (activeFilter === "share") return normalized.includes("share");
+    if (activeFilter === "comment") return normalized.includes("comment");
+    if (activeFilter === "password") return normalized.includes("password");
+    if (activeFilter === "group") return normalized.includes("group");
+    if (activeFilter === "action") {
+      return (
+        normalized.includes("action") ||
+        normalized.includes("review") ||
+        normalized.includes("request") ||
+        normalized.includes("alert") ||
+        normalized.includes("copc")
+      );
     }
+    return true;
   };
 
   const getTimeAgo = (dateString) => {
@@ -129,11 +122,7 @@ function Notifications() {
     return date.toLocaleDateString();
   };
 
-  const filteredNotifications = notifications.filter(notification => {
-    if (activeFilter === "all") return true;
-    if (activeFilter === "unread") return !notification.isRead;
-    return notification.type.toLowerCase().includes(activeFilter.toLowerCase());
-  });
+  const filteredNotifications = notifications.filter(matchesFilter);
 
   const unreadCount = notifications.filter(n => !n.isRead).length;
 
@@ -228,12 +217,16 @@ function Notifications() {
                       <div className="flex-grow-1">
                         <div className="d-flex justify-content-between align-items-start">
                           <div className="flex-grow-1">
+                            <div className="fw-semibold mb-1">{getNotificationSummary(notification).title}</div>
                             <p className="mb-1">
-                              {getNotificationMessage(notification)}
+                              {getNotificationSummary(notification).message}
                             </p>
+                            {getNotificationSummary(notification).details && (
+                              <div className="small text-muted mb-1">{getNotificationSummary(notification).details}</div>
+                            )}
                             <small className="text-muted d-flex align-items-center">
                               <FaClock className="me-1" size={10} />
-                              {getTimeAgo(notification.date)}
+                              {getTimeAgo(notification.createdAt || notification.date)}
                               {!notification.isRead && (
                                 <span className="badge bg-primary ms-2">New</span>
                               )}

@@ -3,27 +3,17 @@ const mongoose = require("mongoose");
 const notificationSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
+    ref: "users",
     required: true
   },
   type: {
     type: String,
-    enum: [
-      "SHARE_FILE",
-      "SHARE_FOLDER",
-      "COMMENT",
-      "PASSWORD_CHANGE_REQUEST",
-      "PASSWORD_CHANGE_APPROVED",
-      "PASSWORD_CHANGE_REJECTED",
-      "GROUP_INVITE",
-      "UPLOAD",
-      "CREATE_FOLDER",
-      "ACTION_REQUIRED",
-      "REVIEW_REQUIRED",
-      "DUPLICATE_ALERT",
-      "DOCUMENT_REQUEST"
-    ],
     required: true
+  },
+  actorId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "users",
+    default: null
   },
   title: {
     type: String,
@@ -45,8 +35,11 @@ const notificationSchema = new mongoose.Schema({
     // Can reference files, folders, groups, etc.
   },
   relatedModel: {
-    type: String,
-    enum: ["File", "Folder", "Group", "Comment", "User"]
+    type: String
+  },
+  metadata: {
+    type: mongoose.Schema.Types.Mixed,
+    default: {}
   },
   createdAt: {
     type: Date,

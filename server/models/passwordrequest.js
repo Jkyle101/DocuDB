@@ -3,7 +3,7 @@ const mongoose = require("mongoose");
 const passwordRequestSchema = new mongoose.Schema({
   userId: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User",
+    ref: "users",
     required: true
   },
   currentPassword: {
@@ -28,7 +28,7 @@ const passwordRequestSchema = new mongoose.Schema({
   },
   reviewedBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: "User"
+    ref: "users"
   },
   reviewNotes: {
     type: String

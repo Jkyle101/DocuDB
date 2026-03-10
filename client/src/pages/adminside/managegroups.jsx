@@ -133,7 +133,7 @@ export default function ManageGroups() {
   const handleAddMembers = async (groupId, userIds) => {
     try {
       // Add members to group
-      await axios.patch(`${BACKEND_URL}/groups/${groupId}/members`, { userIds });
+      await axios.patch(`${BACKEND_URL}/groups/${groupId}/members`, { userIds, actorId: userId });
       console.log("Successfully added members to group");
 
       // Refresh groups data (non-blocking)
@@ -158,7 +158,9 @@ export default function ManageGroups() {
     if (!window.confirm("Remove this member from the group?")) return;
     try {
       // Remove member from group
-      await axios.delete(`${BACKEND_URL}/groups/${groupId}/members/${userId}`);
+      await axios.delete(`${BACKEND_URL}/groups/${groupId}/members/${userId}`, {
+        data: { actorId: localStorage.getItem("userId") }
+      });
       console.log("Successfully removed member from group");
 
       // Refresh groups data (non-blocking)
@@ -181,7 +183,8 @@ export default function ManageGroups() {
     try {
       await axios.patch(`${BACKEND_URL}/groups/${groupId}/leaders`, {
         userId,
-        action
+        action,
+        actorId: localStorage.getItem("userId")
       });
       fetchGroups();
       
