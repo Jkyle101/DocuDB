@@ -60,3 +60,33 @@ body.dark-mode .office-forms-page .forms-sidebar .btn-outline-primary,
 body.dark-mode .office-forms-page .forms-main .btn-outline-danger {
   border-color: #4d6d98;
 }
+
+/* ===============================
+   Glass Theme Forms Overrides
+   =============================== */
+.office-forms-page .forms-workspace {
+  gap: 1.1rem;
+}
+
+.office-forms-page .forms-sidebar,
+.office-forms-page .forms-main {
+  background: color-mix(in srgb, var(--glass-bg, rgba(255, 255, 255, 0.58)) 88%, #ffffff) !important;
+  border-color: var(--glass-stroke, rgba(148, 163, 184, 0.34)) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.12) !important;
+}
+
+.office-forms-page .forms-sidebar {
+  top: 88px;
+}
+
+.office-forms-page .forms-main .border {
+  background: color-mix(in srgb, var(--glass-bg-soft, rgba(248, 252, 255, 0.52)) 74%, #ffffff);
+}
+
+body.dark-mode .office-forms-page .forms-sidebar,
+body.dark-mode .office-forms-page .forms-main {
+  background: color-mix(in srgb, var(--glass-bg, rgba(14, 26, 48, 0.58)) 92%, #08152d) !important;
+  border-color: var(--glass-stroke, rgba(116, 149, 194, 0.32)) !important;
+  box-shadow: 0 20px 40px rgba(2, 7, 20, 0.5) !important;
+}

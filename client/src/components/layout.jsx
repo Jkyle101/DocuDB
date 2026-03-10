@@ -52,7 +52,7 @@ function Layout({ role }) {
             <SidebarUser onClose={handleOverlayClick} />
           )}
         </div>
-        <main className="content-area flex-grow-1 p-4 overflow-auto">
+        <main className="content-area flex-grow-1 overflow-auto">
           <Outlet context={{ searchResults }} />
         </main>
       </div>
@@ -61,4 +61,3 @@ function Layout({ role }) {
 }
 
 export default Layout;
-

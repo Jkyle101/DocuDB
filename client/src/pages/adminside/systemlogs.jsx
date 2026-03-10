@@ -17,14 +17,18 @@ import {
 } from "recharts";
 
 import { BACKEND_URL } from "../../config";
+import "./admin-analytics.css";
 
 export default function SystemLogs() {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
   const [activeTab, setActiveTab] = useState("overview");
   const [searchTerm, setSearchTerm] = useState("");
   const [actionFilter, setActionFilter] = useState("");
   const [userFilter, setUserFilter] = useState("");
+  const REFRESH_INTERVAL_MS = 12000;
   const [stats, setStats] = useState({
     // Basic stats
     totalUsers: 0,
@@ -53,41 +57,54 @@ export default function SystemLogs() {
     recentActivity: []
   });
 
-  // Fetch logs
-  const fetchLogs = async () => {
+  const refreshDashboard = async ({ silent = false } = {}) => {
     try {
-      setLoading(true);
-      const res = await axios.get(`${BACKEND_URL}/logs`);
-      setLogs(res.data || []);
-    } catch (err) {
-      console.error("Failed to fetch logs:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
 
-  // Fetch statistics
-  const fetchStats = async () => {
-    try {
-      const res = await axios.get(`${BACKEND_URL}/stats`);
-      setStats(res.data);
+      const [logsRes, statsRes] = await Promise.all([
+        axios.get(`${BACKEND_URL}/logs`),
+        axios.get(`${BACKEND_URL}/stats`)
+      ]);
+
+      setLogs(logsRes.data || []);
+      setStats(statsRes.data || {});
+      setLastUpdated(new Date());
     } catch (err) {
-      console.error("Failed to fetch stats:", err);
+      console.error("Failed to refresh analytics dashboard:", err);
+    } finally {
+      if (silent) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
   };
 
   useEffect(() => {
-    fetchLogs();
-    fetchStats();
+    refreshDashboard();
 
-    // Set up realtime updates every 30 seconds
     const interval = setInterval(() => {
-      fetchLogs();
-      fetchStats();
-    }, 30000); // 30 seconds
+      if (document.visibilityState === "visible") {
+        refreshDashboard({ silent: true });
+      }
+    }, REFRESH_INTERVAL_MS);
 
-    // Cleanup interval on component unmount
-    return () => clearInterval(interval);
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        refreshDashboard({ silent: true });
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, []);
 
   // Format file size
@@ -127,6 +144,16 @@ export default function SystemLogs() {
     return users.filter(user => user);
   }, [logs]);
 
+  const errorLogsCount = logs.filter((log) => /error|failed|reject|denied/i.test(log.action || "")).length;
+  const successLogsCount = logs.filter((log) => /login|upload|approve|create|restore|share/i.test(log.action || "")).length;
+  const errorRate = logs.length > 0 ? ((errorLogsCount / logs.length) * 100).toFixed(1) : "0.0";
+  const actionsPerActiveUser = stats.activeUsers > 0 ? (logs.length / stats.activeUsers).toFixed(1) : "0.0";
+  const avgStoragePerUser = stats.totalUsers > 0 ? formatFileSize(stats.totalStorage / stats.totalUsers) : "0 B";
+  const liveStateText = refreshing ? "Syncing..." : `Live every ${Math.round(REFRESH_INTERVAL_MS / 1000)}s`;
+  const lastUpdatedText = lastUpdated
+    ? `Last updated ${lastUpdated.toLocaleTimeString()}`
+    : "Fetching data...";
+
   const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884D8", "#82CA9D"];
   const STATUS_COLORS = {
     success: "#28a745",
@@ -136,24 +163,38 @@ export default function SystemLogs() {
   };
 
   return (
-    <div className="container-fluid py-3">
+    <div className="container-fluid py-3 admin-analytics-page">
       {/* Header */}
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <div>
-          <h4 className="fw-bold mb-1">
-            <FaChartBar className="me-2 text-primary" />
-            System Analytics Dashboard
-          </h4>
-          <small className="text-muted">Comprehensive system monitoring and activity insights</small>
+      <div className="analytics-hero mb-4">
+        <div className="d-flex flex-column flex-xl-row justify-content-between align-items-start align-items-xl-center gap-3">
+          <div>
+            <h4 className="fw-bold mb-1">
+              <FaChartBar className="me-2 text-primary" />
+              System Analytics Dashboard
+            </h4>
+            <small className="text-muted">Comprehensive system monitoring and activity insights</small>
+          </div>
+          <div className="d-flex flex-wrap align-items-center gap-2">
+            <span className={`analytics-live-pill ${refreshing ? "is-refreshing" : "is-live"}`}>
+              {liveStateText}
+            </span>
+            <small className="analytics-last-updated text-muted">{lastUpdatedText}</small>
+            <button
+              className="btn btn-outline-primary"
+              onClick={() => refreshDashboard()}
+              disabled={loading || refreshing}
+            >
+              <FaSyncAlt className={loading || refreshing ? "fa-spin me-2" : "me-2"} />
+              Refresh Data
+            </button>
+          </div>
         </div>
-        <button
-          className="btn btn-outline-primary"
-          onClick={() => { fetchLogs(); fetchStats(); }}
-          disabled={loading}
-        >
-          <FaSyncAlt className={loading ? "fa-spin me-2" : "me-2"} />
-          Refresh Data
-        </button>
+        <div className="analytics-meta-strip mt-3">
+          <span className="analytics-chip">Error rate: {errorRate}%</span>
+          <span className="analytics-chip">Positive signals: {successLogsCount}</span>
+          <span className="analytics-chip">Actions per active user: {actionsPerActiveUser}</span>
+          <span className="analytics-chip">Avg storage per user: {avgStoragePerUser}</span>
+        </div>
       </div>
 
       {/* Navigation Tabs */}
@@ -196,9 +237,9 @@ export default function SystemLogs() {
       {activeTab === "overview" && (
         <>
           {/* Key Metrics Cards */}
-          <div className="row g-3 mb-4">
+          <div className="row g-4 mb-4">
             <div className="col-md-2">
-              <div className="card shadow-sm border-primary">
+              <div className="card shadow-sm border-primary analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaUsers className="text-primary mb-2" size={24} />
                   <h5 className="card-title mb-1">{stats.totalUsers}</h5>
@@ -211,7 +252,7 @@ export default function SystemLogs() {
               </div>
             </div>
             <div className="col-md-2">
-              <div className="card shadow-sm border-success">
+              <div className="card shadow-sm border-success analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaFile className="text-success mb-2" size={24} />
                   <h5 className="card-title mb-1">{stats.totalFiles}</h5>
@@ -223,7 +264,7 @@ export default function SystemLogs() {
               </div>
             </div>
             <div className="col-md-2">
-              <div className="card shadow-sm border-info">
+              <div className="card shadow-sm border-info analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaFolder className="text-info mb-2" size={24} />
                   <h5 className="card-title mb-1">{stats.totalFolders}</h5>
@@ -232,7 +273,7 @@ export default function SystemLogs() {
               </div>
             </div>
             <div className="col-md-2">
-              <div className="card shadow-sm border-warning">
+              <div className="card shadow-sm border-warning analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaShare className="text-warning mb-2" size={24} />
                   <h5 className="card-title mb-1">{stats.totalGroups}</h5>
@@ -244,7 +285,7 @@ export default function SystemLogs() {
               </div>
             </div>
             <div className="col-md-2">
-              <div className="card shadow-sm border-danger">
+              <div className="card shadow-sm border-danger analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaHdd className="text-danger mb-2" size={24} />
                   <h5 className="card-title mb-1">{formatFileSize(stats.totalStorage)}</h5>
@@ -253,7 +294,7 @@ export default function SystemLogs() {
               </div>
             </div>
             <div className="col-md-2">
-              <div className="card shadow-sm border-secondary">
+              <div className="card shadow-sm border-secondary analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaCogs className="text-secondary mb-2" size={24} />
                   <h5 className="card-title mb-1">{logs.length}</h5>

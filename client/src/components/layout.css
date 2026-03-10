@@ -1,29 +1,26 @@
 .layout {
-  height: 100vh;
+  min-height: 100vh;
   position: relative;
+  isolation: isolate;
 }
 
 .sidebar-wrapper {
-  width: 272px;
-  background: var(--bg-surface);
-  border-right: 1px solid var(--border-soft);
+  width: 286px;
+  background: transparent;
   flex-shrink: 0;
+  padding: 0.75rem 0.6rem 0.85rem;
   transition: transform 0.28s ease-in-out;
-  z-index: 1000;
+  z-index: 1100;
   position: relative;
-  box-shadow: 8px 0 22px rgba(15, 23, 42, 0.08);
 }
 
 .mobile-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(2, 6, 23, 0.52);
-  z-index: 999;
+  inset: 0;
+  background: rgba(6, 13, 26, 0.5);
+  z-index: 1090;
   display: none;
-  backdrop-filter: blur(1px);
+  backdrop-filter: blur(7px);
 }
 
 .content-area {
@@ -31,10 +28,14 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding-top: 68px !important;
-  padding-left: 1.2rem !important;
-  padding-right: 1.2rem !important;
-  padding-bottom: 1.2rem !important;
+  padding-top: 94px !important;
+  padding-left: 1rem !important;
+  padding-right: 1rem !important;
+  padding-bottom: 1rem !important;
+}
+
+.content-area > * {
+  width: 100%;
 }
 
 @media (max-width: 991.98px) {
@@ -43,9 +44,10 @@
     top: 0;
     left: 0;
     height: 100vh;
+    width: min(86vw, 320px);
     transform: translateX(-100%);
-    z-index: 1000;
-    box-shadow: 16px 0 30px rgba(2, 6, 23, 0.24);
+    z-index: 1100;
+    padding: 0;
   }
 
   .sidebar-wrapper.sidebar-open {
@@ -58,19 +60,19 @@
 
   .content-area {
     width: 100%;
-    padding: 60px 0.8rem 0.9rem !important;
+    padding: 74px 0.68rem 0.75rem !important;
   }
 }
 
 @media (min-width: 992px) and (max-width: 1199.98px) {
   .sidebar-wrapper {
-    width: 240px;
+    width: 252px;
+    padding: 0.62rem 0.5rem 0.75rem;
   }
 }
 
 @media (max-width: 575.98px) {
   .content-area {
-    padding: 60px 0.55rem 0.75rem !important;
+    padding: 70px 0.45rem 0.58rem !important;
   }
 }
-  

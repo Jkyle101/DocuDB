@@ -815,3 +815,169 @@ body.dark-mode .chip-btn.active {
   border-color: #5e93da;
   color: #e9f2ff;
 }
+
+/* ===============================
+   Glass Theme Navbar Overrides
+   =============================== */
+.navbar-google-drive {
+  top: 0.65rem;
+  right: 0.85rem;
+  height: 72px;
+  border-radius: 22px;
+  border: 1px solid var(--glass-stroke, rgba(148, 163, 184, 0.34));
+  background: color-mix(in srgb, var(--glass-bg, rgba(255, 255, 255, 0.58)) 84%, #ffffff);
+  box-shadow: 0 16px 34px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  padding: 0 0.65rem;
+}
+
+.navbar-google-drive .w-100.px-4 {
+  padding-left: 0.5rem !important;
+  padding-right: 0.5rem !important;
+}
+
+.navbar-brand-google {
+  font-size: 1rem;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.navbar-brand-google img {
+  height: 34px;
+}
+
+.search-container-google {
+  margin: 0 0.9rem;
+}
+
+.search-input-google {
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--glass-bg, rgba(255, 255, 255, 0.58)) 78%, #ffffff);
+  border: 1px solid var(--glass-stroke, rgba(148, 163, 184, 0.34));
+  height: 44px;
+  padding-left: 44px;
+  padding-right: 44px;
+}
+
+.search-input-google:focus {
+  border-color: color-mix(in srgb, var(--brand, #0a66ff) 56%, #c8d9f2);
+  box-shadow: 0 0 0 0.22rem rgba(10, 102, 255, 0.14);
+}
+
+.search-icon-google {
+  left: 14px;
+  font-size: 16px;
+}
+
+.search-advanced-toggle,
+.navbar-icon-google,
+.mobile-search-button {
+  border-radius: 12px;
+  border: 1px solid transparent;
+}
+
+.search-advanced-toggle {
+  background: color-mix(in srgb, var(--glass-bg, rgba(255, 255, 255, 0.58)) 76%, #ffffff);
+}
+
+.search-advanced-toggle:hover,
+.navbar-icon-google:hover,
+.mobile-search-button:hover {
+  border-color: color-mix(in srgb, var(--brand, #0a66ff) 38%, var(--glass-stroke, rgba(148, 163, 184, 0.34)));
+  background: color-mix(in srgb, var(--brand-soft, rgba(10, 102, 255, 0.12)) 45%, var(--glass-bg, rgba(255, 255, 255, 0.58)));
+}
+
+.navbar-icon-google {
+  width: 42px;
+  height: 42px;
+}
+
+.user-avatar-google {
+  width: 34px;
+  height: 34px;
+  border: 2px solid color-mix(in srgb, var(--glass-highlight, rgba(255, 255, 255, 0.7)) 70%, #ffffff);
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.2);
+}
+
+.advanced-filters-panel,
+.dropdown-menu-google,
+.suggestions-google {
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--glass-bg, rgba(255, 255, 255, 0.58)) 90%, #ffffff);
+  border-color: var(--glass-stroke, rgba(148, 163, 184, 0.34));
+  box-shadow: 0 20px 38px rgba(15, 23, 42, 0.2);
+}
+
+.suggestion-item-google,
+.dropdown-item-google {
+  min-height: 40px;
+  border-radius: 10px;
+  margin: 0 0.35rem;
+  width: calc(100% - 0.7rem);
+}
+
+.mobile-search-expanded {
+  background: color-mix(in srgb, var(--glass-bg-strong, rgba(255, 255, 255, 0.74)) 78%, #ffffff);
+  backdrop-filter: blur(16px);
+}
+
+.mobile-search-header {
+  background: transparent;
+  border-bottom: 1px solid var(--glass-stroke, rgba(148, 163, 184, 0.34));
+}
+
+@media (min-width: 992px) and (max-width: 1199.98px) {
+  .navbar-google-drive {
+    left: calc(252px + 0.45rem);
+    right: 0.65rem;
+  }
+}
+
+@media (min-width: 1200px) {
+  .navbar-google-drive {
+    left: calc(286px + 0.45rem);
+  }
+}
+
+@media (max-width: 991.98px) {
+  .navbar-google-drive {
+    top: 0.45rem;
+    left: 0.45rem;
+    right: 0.45rem;
+    height: 60px;
+    border-radius: 16px;
+    padding: 0 0.35rem;
+  }
+}
+
+@media (max-width: 575.98px) {
+  .navbar-google-drive {
+    top: 0.32rem;
+    left: 0.32rem;
+    right: 0.32rem;
+    border-radius: 14px;
+    height: 58px;
+  }
+
+  .navbar-brand-google img {
+    height: 30px;
+  }
+}
+
+body.dark-mode .navbar-google-drive {
+  background: color-mix(in srgb, var(--glass-bg, rgba(14, 26, 48, 0.58)) 92%, #08152c);
+  border-color: var(--glass-stroke, rgba(116, 149, 194, 0.32));
+}
+
+body.dark-mode .search-input-google,
+body.dark-mode .mobile-search-input {
+  background: color-mix(in srgb, var(--glass-bg-soft, rgba(13, 24, 44, 0.58)) 88%, #0a1731);
+  border-color: var(--glass-stroke-strong, rgba(116, 149, 194, 0.48));
+}
+
+body.dark-mode .advanced-filters-panel,
+body.dark-mode .dropdown-menu-google,
+body.dark-mode .suggestions-google {
+  background: color-mix(in srgb, var(--glass-bg, rgba(14, 26, 48, 0.58)) 92%, #071323);
+}

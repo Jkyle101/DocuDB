@@ -80,3 +80,41 @@ body.dark-mode .app-loading-card {
   background: color-mix(in srgb, var(--bg-surface) 90%, #071224);
   box-shadow: 0 28px 50px rgba(2, 6, 23, 0.58);
 }
+
+/* ===============================
+   Glass Theme Loading Overrides
+   =============================== */
+.app-loading-overlay {
+  background:
+    radial-gradient(950px circle at 14% -16%, rgba(10, 102, 255, 0.3), transparent 44%),
+    radial-gradient(820px circle at 110% 0%, rgba(21, 183, 146, 0.2), transparent 42%),
+    rgba(236, 244, 252, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.app-loading-card {
+  border: 1px solid var(--glass-stroke, rgba(148, 163, 184, 0.34));
+  border-radius: 24px;
+  background: color-mix(in srgb, var(--glass-bg, rgba(255, 255, 255, 0.58)) 90%, #ffffff);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  box-shadow: 0 28px 56px rgba(15, 23, 42, 0.2);
+}
+
+.app-loading-spinner {
+  border-color: color-mix(in srgb, var(--brand, #0a66ff) 24%, #d5e5fb);
+  border-top-color: var(--brand, #0a66ff);
+}
+
+body.dark-mode .app-loading-overlay {
+  background:
+    radial-gradient(980px circle at 14% -16%, rgba(45, 112, 230, 0.4), transparent 45%),
+    radial-gradient(860px circle at 110% 0%, rgba(19, 172, 136, 0.24), transparent 44%),
+    rgba(6, 14, 28, 0.74);
+}
+
+body.dark-mode .app-loading-card {
+  border-color: var(--glass-stroke, rgba(116, 149, 194, 0.32));
+  background: color-mix(in srgb, var(--glass-bg, rgba(14, 26, 48, 0.58)) 92%, #071325);
+  box-shadow: 0 30px 62px rgba(2, 7, 20, 0.6);
+}

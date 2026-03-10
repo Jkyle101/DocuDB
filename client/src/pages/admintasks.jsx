@@ -23,10 +23,12 @@ export default function AdminTasksPage() {
   const role = localStorage.getItem("role") || "superadmin";
   const userId = localStorage.getItem("userId");
   const [searchParams, setSearchParams] = useSearchParams();
+  const initialProgramId = searchParams.get("programId") || "";
   const initialFolderId = searchParams.get("folderId") || "";
 
   const [folders, setFolders] = useState([]);
   const [users, setUsers] = useState([]);
+  const [selectedProgramId, setSelectedProgramId] = useState(initialProgramId);
   const [currentFolderId, setCurrentFolderId] = useState(initialFolderId);
   const [folderTasks, setFolderTasks] = useState([]);
   const [taskProgress, setTaskProgress] = useState(0);
@@ -48,6 +50,16 @@ export default function AdminTasksPage() {
     scope: "",
     comments: "",
   });
+
+  const updateTaskSearchParams = useCallback(
+    (programId, folderId) => {
+      const next = {};
+      if (programId) next.programId = String(programId);
+      if (folderId) next.folderId = String(folderId);
+      setSearchParams(next);
+    },
+    [setSearchParams]
+  );
 
   const normalizeRole = (value) => {
     const raw = String(value || "").toLowerCase();
@@ -72,10 +84,25 @@ export default function AdminTasksPage() {
   const loadFolders = useCallback(async () => {
     const { data } = await axios.get(`${BACKEND_URL}/folders/all`, { params: { userId, role } });
     const allFolders = Array.isArray(data) ? data : [];
-    const copcFolders = allFolders.filter((folder) => {
-      const profileKey = String(folder?.complianceProfileKey || "").toUpperCase();
-      return profileKey.startsWith("COPC_") || !!folder?.copc?.isProgramRoot;
-    });
+    const folderById = new Map(allFolders.map((folder) => [String(folder._id), folder]));
+    const isCopcScoped = (folder) => {
+      const ownProfile = String(folder?.complianceProfileKey || "").toUpperCase();
+      if (ownProfile.startsWith("COPC_") || !!folder?.copc?.isProgramRoot) return true;
+
+      let cursor = folder;
+      let guard = 0;
+      while (cursor?.parentFolder && guard < 200) {
+        guard += 1;
+        const parent = folderById.get(String(cursor.parentFolder));
+        if (!parent) break;
+        const parentProfile = String(parent?.complianceProfileKey || "").toUpperCase();
+        if (parentProfile.startsWith("COPC_") || !!parent?.copc?.isProgramRoot) return true;
+        cursor = parent;
+      }
+      return false;
+    };
+
+    const copcFolders = allFolders.filter(isCopcScoped);
     setFolders(copcFolders);
   }, [role, userId]);
 
@@ -130,19 +157,121 @@ export default function AdminTasksPage() {
     });
   }, [currentFolderId, loadTasks]);
 
-  useEffect(() => {
-    if (!currentFolderId) return;
-    const existsInCopcScope = folders.some((f) => String(f._id) === String(currentFolderId));
-    if (!existsInCopcScope) {
-      setCurrentFolderId("");
-      setSearchParams({});
-    }
-  }, [folders, currentFolderId, setSearchParams]);
-
   const currentFolder = useMemo(
     () => folders.find((f) => String(f._id) === String(currentFolderId)),
     [folders, currentFolderId]
   );
+
+  const foldersById = useMemo(() => {
+    const map = new Map();
+    folders.forEach((folder) => map.set(String(folder._id), folder));
+    return map;
+  }, [folders]);
+
+  const programRoots = useMemo(
+    () =>
+      folders
+        .filter((folder) => !!folder?.copc?.isProgramRoot)
+        .sort((a, b) =>
+          String(a?.copc?.programCode || a?.name || "").localeCompare(
+            String(b?.copc?.programCode || b?.name || "")
+          )
+        ),
+    [folders]
+  );
+
+  const folderProgramById = useMemo(() => {
+    const map = new Map();
+    const resolveProgramId = (folderId) => {
+      let cursor = foldersById.get(String(folderId));
+      let guard = 0;
+      while (cursor && guard < 200) {
+        guard += 1;
+        if (cursor?.copc?.isProgramRoot) return String(cursor._id);
+        if (!cursor.parentFolder) return "";
+        cursor = foldersById.get(String(cursor.parentFolder));
+      }
+      return "";
+    };
+
+    folders.forEach((folder) => {
+      map.set(String(folder._id), resolveProgramId(folder._id));
+    });
+    return map;
+  }, [folders, foldersById]);
+
+  const foldersForSelectedProgram = useMemo(() => {
+    if (!selectedProgramId) return [];
+    return folders
+      .filter((folder) => folderProgramById.get(String(folder._id)) === String(selectedProgramId))
+      .sort((a, b) => String(a?.name || "").localeCompare(String(b?.name || "")));
+  }, [folders, folderProgramById, selectedProgramId]);
+
+  const folderOptionLabelById = useMemo(() => {
+    const map = new Map();
+    foldersForSelectedProgram.forEach((folder) => {
+      const parts = [];
+      let cursor = folder;
+      let guard = 0;
+      while (cursor && guard < 200) {
+        guard += 1;
+        parts.unshift(String(cursor?.name || "Untitled"));
+        if (String(cursor._id) === String(selectedProgramId) || !cursor.parentFolder) break;
+        cursor = foldersById.get(String(cursor.parentFolder));
+      }
+      map.set(String(folder._id), parts.join(" / "));
+    });
+    return map;
+  }, [foldersForSelectedProgram, foldersById, selectedProgramId]);
+
+  const currentProgram = useMemo(
+    () => programRoots.find((program) => String(program._id) === String(selectedProgramId)) || null,
+    [programRoots, selectedProgramId]
+  );
+
+  const programLabel = (program) => {
+    const code = String(program?.copc?.programCode || "").trim();
+    const name = String(program?.copc?.programName || program?.name || "").trim();
+    const year = program?.copc?.year ? ` (${program.copc.year})` : "";
+    if (code && name && code !== name) return `${code} - ${name}${year}`;
+    return `${name || code || "Program"}${year}`;
+  };
+
+  useEffect(() => {
+    if (!currentFolderId) return;
+
+    const inferredProgramId = folderProgramById.get(String(currentFolderId)) || "";
+    if (!selectedProgramId && inferredProgramId) {
+      setSelectedProgramId(inferredProgramId);
+      return;
+    }
+
+    const existsInScope = selectedProgramId
+      ? foldersForSelectedProgram.some((folder) => String(folder._id) === String(currentFolderId))
+      : folders.some((folder) => String(folder._id) === String(currentFolderId));
+
+    if (!existsInScope) {
+      setCurrentFolderId("");
+      updateTaskSearchParams(selectedProgramId, "");
+    }
+  }, [
+    currentFolderId,
+    selectedProgramId,
+    folders,
+    foldersForSelectedProgram,
+    folderProgramById,
+    updateTaskSearchParams,
+  ]);
+
+  useEffect(() => {
+    if (!selectedProgramId) return;
+    const exists = programRoots.some((program) => String(program._id) === String(selectedProgramId));
+    if (!exists) {
+      setSelectedProgramId("");
+      setCurrentFolderId("");
+      updateTaskSearchParams("", "");
+    }
+  }, [selectedProgramId, programRoots, updateTaskSearchParams]);
 
   const usersById = useMemo(() => {
     const map = new Map();
@@ -386,28 +515,65 @@ export default function AdminTasksPage() {
       <div className="card shadow-sm mb-3">
         <div className="card-body">
           <div className="row g-3 align-items-end">
-            <div className="col-lg-5">
-              <label className="form-label small fw-semibold"><FaFolder className="me-1" />Where?</label>
+            <div className="col-lg-4">
+              <label className="form-label small fw-semibold">Select Program</label>
               <select
                 className="form-select"
+                value={selectedProgramId}
+                onChange={(e) => {
+                  const nextProgramId = e.target.value;
+                  setSelectedProgramId(nextProgramId);
+                  setTaskDraft((prev) => ({ ...prev, scope: "" }));
+
+                  const folderStillValid =
+                    currentFolderId &&
+                    folderProgramById.get(String(currentFolderId)) === String(nextProgramId);
+                  const nextFolderId = folderStillValid ? currentFolderId : "";
+                  setCurrentFolderId(nextFolderId);
+                  updateTaskSearchParams(nextProgramId, nextFolderId);
+                }}
+              >
+                <option value="">Select program</option>
+                {programRoots.map((program) => (
+                  <option key={program._id} value={program._id}>
+                    {programLabel(program)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="col-lg-4">
+              <label className="form-label small fw-semibold"><FaFolder className="me-1" />Select Folder</label>
+              <select
+                className="form-select"
+                disabled={!selectedProgramId}
                 value={currentFolderId}
                 onChange={(e) => {
                   const next = e.target.value;
                   setCurrentFolderId(next);
                   setTaskDraft((prev) => ({ ...prev, scope: "" }));
-                  setSearchParams(next ? { folderId: next } : {});
+                  updateTaskSearchParams(selectedProgramId, next);
                 }}
               >
-                <option value="">Select folder</option>
-                {folders.map((f) => (
-                  <option key={f._id} value={f._id}>{f.name}</option>
+                <option value="">{selectedProgramId ? "Select folder" : "Select program first"}</option>
+                {foldersForSelectedProgram.map((f) => (
+                  <option key={f._id} value={f._id}>
+                    {folderOptionLabelById.get(String(f._id)) || f.name}
+                  </option>
                 ))}
               </select>
             </div>
-            <div className="col-lg-7">
+
+            <div className="col-lg-4">
               <label className="form-label small fw-semibold">Compliance Progress</label>
               <div className="d-flex justify-content-between align-items-center">
-                <div className="small text-muted">{currentFolder ? currentFolder.name : "No folder selected"}</div>
+                <div className="small text-muted">
+                  {currentFolder
+                    ? currentFolder.name
+                    : currentProgram
+                      ? `${programLabel(currentProgram)} selected`
+                      : "No folder selected"}
+                </div>
                 <div style={{ fontWeight: 600, color: "#555" }}>{Math.round(taskProgress)}%</div>
               </div>
               <div className="progress mt-2" style={{ height: "10px", background: "#d9dce0" }}>

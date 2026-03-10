@@ -11,6 +11,7 @@ import {
 } from "recharts";
 import "bootstrap/dist/css/bootstrap.min.css";
 import { BACKEND_URL } from "../../config";
+import "./admin-analytics.css";
 
 export default function ManageUsers() {
   const roleOptions = [
@@ -24,10 +25,13 @@ export default function ManageUsers() {
   const [userStats, setUserStats] = useState({});
   const [passwordRequests, setPasswordRequests] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [roleFilter, setRoleFilter] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
+  const REFRESH_INTERVAL_MS = 12000;
 
   // User creation states
   const [showAddUserModal, setShowAddUserModal] = useState(false);
@@ -53,21 +57,42 @@ export default function ManageUsers() {
     return raw;
   };
 
-  // Fetch users from backend
-  const fetchUsers = async () => {
+  const refreshDashboard = async ({ silent = false, includePasswordRequests = false } = {}) => {
     try {
-      setLoading(true);
-      const [usersRes, statsRes] = await Promise.all([
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+
+      const [usersRes, statsRes, passwordRes] = await Promise.all([
         axios.get(`${BACKEND_URL}/users?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`),
-        axios.get(`${BACKEND_URL}/users/stats?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`)
+        axios.get(`${BACKEND_URL}/users/stats?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`),
+        includePasswordRequests
+          ? axios.get(`${BACKEND_URL}/admin/password-requests?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`)
+          : Promise.resolve(null)
       ]);
+
       setUsers(usersRes.data || []);
       setUserStats(statsRes.data || {});
+      if (passwordRes) {
+        setPasswordRequests(passwordRes.data || []);
+      }
+      setLastUpdated(new Date());
     } catch (err) {
-      console.error("Failed to fetch users:", err);
+      console.error("Failed to refresh user dashboard:", err);
     } finally {
-      setLoading(false);
+      if (silent) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
     }
+  };
+
+  // Fetch users from backend
+  const fetchUsers = async () => {
+    await refreshDashboard({ includePasswordRequests: false });
   };
 
   // Fetch password requests from backend
@@ -75,20 +100,39 @@ export default function ManageUsers() {
     try {
       const response = await axios.get(`${BACKEND_URL}/admin/password-requests?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`);
       setPasswordRequests(response.data || []);
+      setLastUpdated(new Date());
     } catch (err) {
       console.error("Failed to fetch password requests:", err);
     }
   };
 
   useEffect(() => {
-    fetchUsers();
-    fetchPasswordRequests();
+    refreshDashboard({ includePasswordRequests: true });
   }, []);
 
   useEffect(() => {
     if (activeTab === "password-requests") {
       fetchPasswordRequests();
     }
+  }, [activeTab]);
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        refreshDashboard({
+          silent: true,
+          includePasswordRequests: activeTab === "password-requests"
+        });
+      }
+    };
+
+    const interval = setInterval(refreshWhenVisible, REFRESH_INTERVAL_MS);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [activeTab]);
 
   // Get user initials for avatar
@@ -164,6 +208,18 @@ export default function ManageUsers() {
               : '#17a2b8'
     }));
   }, [users]);
+
+  const pendingPasswordRequests = useMemo(
+    () => passwordRequests.filter((request) => request.status === "pending").length,
+    [passwordRequests]
+  );
+  const activeRate = userStats.totalUsers
+    ? ((userStats.activeUsers || 0) / userStats.totalUsers * 100).toFixed(1)
+    : "0.0";
+  const liveStateText = refreshing ? "Syncing..." : `Live every ${Math.round(REFRESH_INTERVAL_MS / 1000)}s`;
+  const lastUpdatedText = lastUpdated
+    ? `Last updated ${lastUpdated.toLocaleTimeString()}`
+    : "Fetching data...";
 
   // Toggle Active / Inactive instead of deleting
   const toggleUserStatus = async (user) => {
@@ -365,24 +421,39 @@ export default function ManageUsers() {
   };
 
   return (
-    <div className="container-fluid py-3">
+    <div className="container-fluid py-3 admin-analytics-page">
       {/* Header */}
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <div>
-          <h4 className="fw-bold mb-1">
-            <FaUsers className="me-2 text-primary" />
-            User Management Dashboard
-          </h4>
-          <small className="text-muted">Comprehensive user administration and analytics</small>
+      <div className="analytics-hero mb-4">
+        <div className="d-flex flex-column flex-xl-row justify-content-between align-items-start align-items-xl-center gap-3">
+          <div>
+            <h4 className="fw-bold mb-1">
+              <FaUsers className="me-2 text-primary" />
+              User Management Dashboard
+            </h4>
+            <small className="text-muted">Comprehensive user administration and analytics</small>
+          </div>
+          <div className="d-flex flex-wrap align-items-center gap-2">
+            <span className={`analytics-live-pill ${refreshing ? "is-refreshing" : "is-live"}`}>
+              {liveStateText}
+            </span>
+            <small className="analytics-last-updated text-muted">{lastUpdatedText}</small>
+            <button
+              className="btn btn-outline-primary"
+              onClick={() =>
+                refreshDashboard({ includePasswordRequests: activeTab === "password-requests" })
+              }
+              disabled={loading || refreshing}
+            >
+              <FaSync className={loading || refreshing ? "fa-spin me-2" : "me-2"} />
+              Refresh
+            </button>
+          </div>
         </div>
-        <button
-          className="btn btn-outline-primary"
-          onClick={fetchUsers}
-          disabled={loading}
-        >
-          <FaSync className={loading ? "fa-spin me-2" : "me-2"} />
-          Refresh
-        </button>
+        <div className="analytics-meta-strip mt-3">
+          <span className="analytics-chip">Active rate: {activeRate}%</span>
+          <span className="analytics-chip">Pending password requests: {pendingPasswordRequests}</span>
+          <span className="analytics-chip">Visible users: {filteredUsers.length}</span>
+        </div>
       </div>
 
       {/* Navigation Tabs */}
@@ -417,9 +488,9 @@ export default function ManageUsers() {
       {activeTab === "overview" && (
         <>
           {/* Key Metrics Cards */}
-          <div className="row g-3 mb-4">
+          <div className="row g-4 mb-4">
             <div className="col-md-3">
-              <div className="card shadow-sm border-primary">
+              <div className="card shadow-sm border-primary analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaUsers className="text-primary mb-2" size={32} />
                   <h5 className="card-title mb-1">{userStats.totalUsers || 0}</h5>
@@ -432,7 +503,7 @@ export default function ManageUsers() {
               </div>
             </div>
             <div className="col-md-3">
-              <div className="card shadow-sm border-warning">
+              <div className="card shadow-sm border-warning analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaShieldAlt className="text-warning mb-2" size={32} />
                   <h5 className="card-title mb-1">{userStats.rolesCount?.superadmin || 0}</h5>
@@ -441,7 +512,7 @@ export default function ManageUsers() {
               </div>
             </div>
             <div className="col-md-3">
-              <div className="card shadow-sm border-info">
+              <div className="card shadow-sm border-info analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaUser className="text-info mb-2" size={32} />
                   <h5 className="card-title mb-1">{userStats.rolesCount?.faculty || 0}</h5>
@@ -450,6 +521,18 @@ export default function ManageUsers() {
                     <span className="badge bg-primary me-1">Dept Chair: {userStats.rolesCount?.dept_chair || 0}</span>
                     <span className="badge bg-success me-1">QA Admin: {userStats.rolesCount?.qa_admin || 0}</span>
                     <span className="badge bg-secondary">Evaluator: {userStats.rolesCount?.evaluator || 0}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="col-md-3">
+              <div className="card shadow-sm border-danger analytics-kpi-card h-100">
+                <div className="card-body text-center">
+                  <FaKey className="text-danger mb-2" size={32} />
+                  <h5 className="card-title mb-1">{pendingPasswordRequests}</h5>
+                  <small className="text-muted">Pending Password Requests</small>
+                  <div className="mt-2 small">
+                    Active rate: {activeRate}%
                   </div>
                 </div>
               </div>

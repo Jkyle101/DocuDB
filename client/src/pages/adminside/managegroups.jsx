@@ -12,6 +12,7 @@ import {
 } from "recharts";
 import "bootstrap/dist/css/bootstrap.min.css";
 import { BACKEND_URL } from "../../config";
+import "./admin-analytics.css";
 
 export default function ManageGroups() {
   const [groups, setGroups] = useState([]);
@@ -27,15 +28,16 @@ export default function ManageGroups() {
   const [folders, setFolders] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [activeTab, setActiveTab] = useState("overview");
-  const [loading, _setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
+  const REFRESH_INTERVAL_MS = 12000;
 
   const userId = localStorage.getItem("userId");
   const role = localStorage.getItem("role") || "superadmin";
 
   useEffect(() => {
-    fetchGroups();
-    fetchUsers();
-    fetchFilesAndFolders();
+    refreshDashboard({ includeAssets: true });
   }, []);
 
   // Filter groups based on search
@@ -72,10 +74,65 @@ export default function ManageGroups() {
     return activityTypes;
   }, [groupStats]);
 
+  const sharedFilesCount = useMemo(
+    () => groups.reduce((sum, group) => sum + (group.sharedFiles?.length || 0), 0),
+    [groups]
+  );
+  const sharedFoldersCount = useMemo(
+    () => groups.reduce((sum, group) => sum + (group.sharedFolders?.length || 0), 0),
+    [groups]
+  );
+  const groupsWithLeaders = useMemo(
+    () => groups.filter((group) => (group.leaders?.length || 0) > 0).length,
+    [groups]
+  );
+  const leaderCoverage = groups.length > 0 ? ((groupsWithLeaders / groups.length) * 100).toFixed(0) : "0";
+  const collaborationDensity = groupStats.totalGroups > 0
+    ? ((groupStats.totalNotifications + groupStats.totalAnnouncements) / groupStats.totalGroups).toFixed(1)
+    : "0.0";
+
+  const refreshDashboard = async ({ silent = false, includeAssets = false } = {}) => {
+    try {
+      if (silent) {
+        setRefreshing(true);
+      } else {
+        setLoading(true);
+      }
+      const [groupsRes, usersRes, filesRes, foldersRes] = await Promise.all([
+        axios.get(`${BACKEND_URL}/groups`),
+        axios.get(`${BACKEND_URL}/users?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`),
+        includeAssets
+          ? axios.get(`${BACKEND_URL}/files`, { params: { role: "superadmin" } })
+          : Promise.resolve(null),
+        includeAssets
+          ? axios.get(`${BACKEND_URL}/folders`, { params: { role: "superadmin" } })
+          : Promise.resolve(null),
+      ]);
+      setGroups(groupsRes.data || []);
+      setUsers(usersRes.data || []);
+      if (filesRes) {
+        setFiles(filesRes.data || []);
+      }
+      if (foldersRes) {
+        setFolders(foldersRes.data || []);
+      }
+      setLastUpdated(new Date());
+    } catch (err) {
+      console.error("Failed to refresh groups dashboard:", err);
+    } finally {
+      if (silent) {
+        setRefreshing(false);
+      } else {
+        setLoading(false);
+      }
+    }
+  };
+
   const fetchGroups = async () => {
     try {
       const res = await axios.get(`${BACKEND_URL}/groups`);
       setGroups(res.data || []);
+      setLastUpdated(new Date());
     } catch (err) {
       console.error("Failed to fetch groups:", err);
     }
@@ -102,6 +159,25 @@ export default function ManageGroups() {
       console.error("Failed to fetch files/folders:", err);
     }
   };
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        refreshDashboard({
+          silent: true,
+          includeAssets: activeTab === "shared" || showShareModal
+        });
+      }
+    };
+
+    const interval = setInterval(refreshWhenVisible, REFRESH_INTERVAL_MS);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [activeTab, showShareModal]);
 
   const handleCreateGroup = async (name, description) => {
     try {
@@ -283,22 +359,49 @@ export default function ManageGroups() {
   };
 
   return (
-    <div className="container-fluid py-3">
+    <div className="container-fluid py-3 admin-analytics-page">
       {/* Header */}
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <div>
-          <h4 className="fw-bold mb-1">
-            <FaUsers className="me-2 text-primary" />
-            Group Management Dashboard
-          </h4>
-          <small className="text-muted">Comprehensive group administration and analytics</small>
+      <div className="analytics-hero mb-4">
+        <div className="d-flex flex-column flex-xl-row justify-content-between align-items-start align-items-xl-center gap-3">
+          <div>
+            <h4 className="fw-bold mb-1">
+              <FaUsers className="me-2 text-primary" />
+              Group Management Dashboard
+            </h4>
+            <small className="text-muted">Comprehensive group administration and analytics</small>
+          </div>
+          <div className="d-flex flex-wrap align-items-center gap-2">
+            <span className={`analytics-live-pill ${refreshing ? "is-refreshing" : "is-live"}`}>
+              {refreshing ? "Syncing..." : `Live every ${Math.round(REFRESH_INTERVAL_MS / 1000)}s`}
+            </span>
+            <small className="analytics-last-updated text-muted">
+              {lastUpdated ? `Last updated ${lastUpdated.toLocaleTimeString()}` : "Fetching data..."}
+            </small>
+            <button
+              className="btn btn-outline-primary"
+              onClick={() =>
+                refreshDashboard({
+                  includeAssets: activeTab === "shared" || showShareModal
+                })
+              }
+              disabled={loading || refreshing}
+            >
+              <FaSync className={loading || refreshing ? "fa-spin me-2" : "me-2"} />
+              Refresh
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => setShowCreateModal(true)}
+            >
+              <FaPlus className="me-2" /> Create Group
+            </button>
+          </div>
         </div>
-        <button
-          className="btn btn-primary"
-          onClick={() => setShowCreateModal(true)}
-        >
-          <FaPlus className="me-2" /> Create Group
-        </button>
+        <div className="analytics-meta-strip mt-3">
+          <span className="analytics-chip">Leader coverage: {leaderCoverage}%</span>
+          <span className="analytics-chip">Collaboration density: {collaborationDensity}</span>
+          <span className="analytics-chip">Shared assets: {sharedFilesCount + sharedFoldersCount}</span>
+        </div>
       </div>
 
       {/* Navigation Tabs */}
@@ -341,9 +444,9 @@ export default function ManageGroups() {
       {activeTab === "overview" && (
         <>
           {/* Key Metrics Cards */}
-          <div className="row g-3 mb-4">
-            <div className="col-md-3">
-              <div className="card shadow-sm border-primary">
+          <div className="row g-4 mb-4">
+            <div className="col-md-6 col-lg-3">
+              <div className="card shadow-sm border-primary analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaUsers className="text-primary mb-2" size={32} />
                   <h5 className="card-title mb-1">{groupStats.totalGroups}</h5>
@@ -351,8 +454,8 @@ export default function ManageGroups() {
                 </div>
               </div>
             </div>
-            <div className="col-md-3">
-              <div className="card shadow-sm border-success">
+            <div className="col-md-6 col-lg-3">
+              <div className="card shadow-sm border-success analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaUser className="text-success mb-2" size={32} />
                   <h5 className="card-title mb-1">{groupStats.totalMembers}</h5>
@@ -363,8 +466,8 @@ export default function ManageGroups() {
                 </div>
               </div>
             </div>
-            <div className="col-md-3">
-              <div className="card shadow-sm border-warning">
+            <div className="col-md-6 col-lg-3">
+              <div className="card shadow-sm border-warning analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaBell className="text-warning mb-2" size={32} />
                   <h5 className="card-title mb-1">{groupStats.totalNotifications}</h5>
@@ -372,12 +475,24 @@ export default function ManageGroups() {
                 </div>
               </div>
             </div>
-            <div className="col-md-3">
-              <div className="card shadow-sm border-info">
+            <div className="col-md-6 col-lg-3">
+              <div className="card shadow-sm border-info analytics-kpi-card h-100">
                 <div className="card-body text-center">
                   <FaBullhorn className="text-info mb-2" size={32} />
                   <h5 className="card-title mb-1">{groupStats.totalAnnouncements}</h5>
                   <small className="text-muted">Announcements</small>
+                </div>
+              </div>
+            </div>
+            <div className="col-md-6 col-lg-3">
+              <div className="card shadow-sm border-secondary analytics-kpi-card h-100">
+                <div className="card-body text-center">
+                  <FaShareAlt className="text-secondary mb-2" size={32} />
+                  <h5 className="card-title mb-1">{sharedFilesCount + sharedFoldersCount}</h5>
+                  <small className="text-muted">Shared Assets</small>
+                  <div className="mt-2 small">
+                    Files: {sharedFilesCount} | Folders: {sharedFoldersCount}
+                  </div>
                 </div>
               </div>
             </div>
@@ -487,10 +602,14 @@ export default function ManageGroups() {
                 <div className="col-md-4">
                   <button
                     className="btn btn-outline-primary w-100"
-                    onClick={fetchGroups}
-                    disabled={loading}
+                    onClick={() =>
+                      refreshDashboard({
+                        includeAssets: activeTab === "shared" || showShareModal
+                      })
+                    }
+                    disabled={loading || refreshing}
                   >
-                    <FaSync className={loading ? "fa-spin me-2" : "me-2"} />
+                    <FaSync className={loading || refreshing ? "fa-spin me-2" : "me-2"} />
                     Refresh
                   </button>
                 </div>
@@ -587,6 +706,7 @@ export default function ManageGroups() {
                         onClick={() => {
                           setSelectedGroup(group);
                           setShowShareModal(true);
+                          refreshDashboard({ silent: true, includeAssets: true });
                         }}
                       >
                         <FaShareAlt className="me-2" /> Share Files/Folders

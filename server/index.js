@@ -6879,7 +6879,12 @@ app.get("/stats", async (req, res) => {
     const totalUsers = await UserModel.countDocuments();
     const totalFiles = await File.countDocuments({ deletedAt: null });
     const totalFolders = await Folder.countDocuments({ deletedAt: null });
-    const activeUsers = await UserModel.countDocuments({ active: true });
+    const activeUsers = await UserModel.countDocuments({
+      $or: [
+        { active: { $ne: false } },
+        { active: { $exists: false } },
+      ],
+    });
     const inactiveUsers = totalUsers - activeUsers;
 
     // Storage usage
