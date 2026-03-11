@@ -8416,6 +8416,7 @@ app.get("/admin/search", async (req, res) => {
   try {
     const {
       query,
+      userId,
       role,
       limit,
       searchType,
@@ -8462,6 +8463,15 @@ app.get("/admin/search", async (req, res) => {
     const searchLower = searchTerm.toLowerCase();
 
     const results = [];
+    const toOwnerSummary = (ownerDoc) => {
+      if (!ownerDoc) return null;
+      const ownerId = ownerDoc._id || ownerDoc;
+      if (!ownerId) return null;
+      return {
+        _id: ownerId,
+        email: ownerDoc.email || null,
+      };
+    };
 
     let ownerIds = null;
     if (owner) {
@@ -8557,6 +8567,7 @@ app.get("/admin/search", async (req, res) => {
               .limit(limitNum * 2);
 
       filesByName.forEach(file => {
+        const fileOwner = toOwnerSummary(file.owner);
         results.push({
           _id: file._id,
           type: "file",
@@ -8565,7 +8576,9 @@ app.get("/admin/search", async (req, res) => {
           mimetype: file.mimetype,
           size: file.size,
           uploadDate: file.uploadDate,
-          ownerEmail: file.owner?.email || null,
+          owner: fileOwner,
+          ownerId: fileOwner?._id || null,
+          ownerEmail: fileOwner?.email || null,
           path: file.parentFolder ? 'In folder' : 'Root'
         });
       });
@@ -8612,6 +8625,7 @@ app.get("/admin/search", async (req, res) => {
 
               // Search for the term in file content
               if (fileContent.includes(searchLower)) {
+                const fileOwner = toOwnerSummary(file.owner);
                 results.push({
                   _id: file._id,
                   type: "file",
@@ -8620,7 +8634,9 @@ app.get("/admin/search", async (req, res) => {
                   mimetype: file.mimetype,
                   size: file.size,
                   uploadDate: file.uploadDate,
-                  ownerEmail: file.owner?.email || null,
+                  owner: fileOwner,
+                  ownerId: fileOwner?._id || null,
+                  ownerEmail: fileOwner?.email || null,
                   path: file.parentFolder ? 'In folder' : 'Root',
                   matchedBy: 'content'
                 });
@@ -8642,6 +8658,7 @@ app.get("/admin/search", async (req, res) => {
                 const parsed = await pdfParse(dataBuffer);
                 const text = (parsed.text || "").toLowerCase();
                 if (text.includes(searchLower)) {
+                  const fileOwner = toOwnerSummary(file.owner);
                   results.push({
                     _id: file._id,
                     type: "file",
@@ -8650,7 +8667,9 @@ app.get("/admin/search", async (req, res) => {
                     mimetype: file.mimetype,
                     size: file.size,
                     uploadDate: file.uploadDate,
-                    ownerEmail: file.owner?.email || null,
+                    owner: fileOwner,
+                    ownerId: fileOwner?._id || null,
+                    ownerEmail: fileOwner?.email || null,
                     path: file.parentFolder ? 'In folder' : 'Root',
                     matchedBy: 'content'
                   });
@@ -8667,6 +8686,7 @@ app.get("/admin/search", async (req, res) => {
                 const result = await mammoth.extractRawText({ path: filePath });
                 const text = (result.value || "").toLowerCase();
                 if (text.includes(searchLower)) {
+                  const fileOwner = toOwnerSummary(file.owner);
                   results.push({
                     _id: file._id,
                     type: "file",
@@ -8675,7 +8695,9 @@ app.get("/admin/search", async (req, res) => {
                     mimetype: file.mimetype,
                     size: file.size,
                     uploadDate: file.uploadDate,
-                    ownerEmail: file.owner?.email || null,
+                    owner: fileOwner,
+                    ownerId: fileOwner?._id || null,
+                    ownerEmail: fileOwner?.email || null,
                     path: file.parentFolder ? 'In folder' : 'Root',
                     matchedBy: 'content'
                   });
@@ -8697,6 +8719,7 @@ app.get("/admin/search", async (req, res) => {
                   if (csv) combined += " " + csv.toLowerCase();
                 }
                 if (combined.includes(searchLower)) {
+                  const fileOwner = toOwnerSummary(file.owner);
                   results.push({
                     _id: file._id,
                     type: "file",
@@ -8705,7 +8728,9 @@ app.get("/admin/search", async (req, res) => {
                     mimetype: file.mimetype,
                     size: file.size,
                     uploadDate: file.uploadDate,
-                    ownerEmail: file.owner?.email || null,
+                    owner: fileOwner,
+                    ownerId: fileOwner?._id || null,
+                    ownerEmail: fileOwner?.email || null,
                     path: file.parentFolder ? 'In folder' : 'Root',
                     matchedBy: 'content'
                   });
@@ -8734,12 +8759,15 @@ app.get("/admin/search", async (req, res) => {
         .limit(limitNum * 2);
 
       foldersByName.forEach(folder => {
+        const folderOwner = toOwnerSummary(folder.owner);
         results.push({
           _id: folder._id,
           type: "folder",
           name: folder.name,
           createdAt: folder.createdAt,
-          ownerEmail: folder.owner?.email || null,
+          owner: folderOwner,
+          ownerId: folderOwner?._id || null,
+          ownerEmail: folderOwner?.email || null,
           path: folder.parentFolder ? 'In folder' : 'Root'
         });
       });

@@ -64,6 +64,7 @@ const TASK_TEMPLATE_SETS = {
 export default function AdminOwnedPage() {
   const role = localStorage.getItem("role") || "superadmin";
   const userId = localStorage.getItem("userId");
+  const userEmail = localStorage.getItem("email");
   const normalizeRole = (value) => {
     const raw = String(value || "").toLowerCase();
     if (raw === "admin") return "superadmin";
@@ -420,11 +421,20 @@ export default function AdminOwnedPage() {
 
   const closeContextMenu = () => setContextMenu({ visible: false, item: null });
 
+  const isOwnedByCurrentUser = useCallback((item) => {
+    const ownerCandidate = item?.owner?._id || item?.owner || item?.ownerId;
+    if (ownerCandidate && String(ownerCandidate) === String(userId)) return true;
+    if (userEmail && item?.ownerEmail) {
+      return String(item.ownerEmail).toLowerCase() === String(userEmail).toLowerCase();
+    }
+    return false;
+  }, [userEmail, userId]);
+
   const searchFiles = searchResults?.filter((item) => item.type === "file") || [];
   const searchFolders = searchResults?.filter((item) => item.type === "folder") || [];
   const isSearchMode = Array.isArray(searchResults);
-  const visibleFolders = (searchResults ? searchFolders : folders).filter((f) => (f.owner?._id || f.owner)?.toString?.() === userId);
-  const visibleFiles = (searchResults ? searchFiles : files).filter((f) => (f.owner?._id || f.owner)?.toString?.() === userId);
+  const visibleFolders = (searchResults ? searchFolders : folders).filter(isOwnedByCurrentUser);
+  const visibleFiles = (searchResults ? searchFiles : files).filter(isOwnedByCurrentUser);
   const filteredVisibleFolders = useMemo(() => {
     const query = String(folderQuery || "").trim().toLowerCase();
     if (!query) return visibleFolders;
