@@ -28,6 +28,10 @@ const { timeStamp } = require("console");
 const { sendNotificationEmail, sendEmail } = require("./emailService");
 
 const app = express();
+const uploadsDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
 
 function normalizeOrigin(value) {
   return String(value || "").trim().replace(/\/+$/, "");
@@ -102,7 +106,7 @@ app.use(
 app.use(express.json());
 
 // Serve uploaded files
-app.use("/uploads", express.static("uploads"));
+app.use("/uploads", express.static(uploadsDir));
 
 /* ========================
    LOGGING HELPER (non-destructive)
@@ -633,7 +637,7 @@ const HOST = process.env.HOST || "0.0.0.0";
 ======================== */
 // Multer storage config
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, "uploads/"),
+  destination: (req, file, cb) => cb(null, uploadsDir),
   filename: (req, file, cb) =>
     cb(null, Date.now() + path.extname(file.originalname)),
 });

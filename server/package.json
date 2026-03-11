@@ -4,19 +4,23 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "start": "node index.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "audit": "^0.0.6",
     "cors": "^2.8.5",
     "docx": "^8.5.0",
     "dotenv": "^17.2.3",
     "exceljs": "^4.4.0",
     "express": "^5.1.0",
+    "fix": "^0.0.6",
     "mammoth": "^1.7.2",
+    "mongodb": "^7.1.0",
     "mongoose": "^8.17.1",
     "multer": "^1.4.5-lts.1",
     "nodemailer": "^6.9.14",
