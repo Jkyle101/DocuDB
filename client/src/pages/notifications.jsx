@@ -23,7 +23,10 @@ function Notifications() {
     try {
       setLoading(true);
       const response = await axios.get(`${BACKEND_URL}/notifications/${userId}`);
-      setNotifications(response.data || []);
+      const payload = Array.isArray(response.data)
+        ? response.data
+        : (Array.isArray(response.data?.notifications) ? response.data.notifications : []);
+      setNotifications(payload);
     } catch (error) {
       console.error("Failed to fetch notifications:", error);
     } finally {

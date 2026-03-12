@@ -7,7 +7,6 @@ function Settings() {
   const [userData, setUserData] = useState({
     name: "",
     email: "",
-    currentPassword: "",
     newPassword: "",
     confirmPassword: "",
     profilePicture: null
@@ -24,10 +23,11 @@ function Settings() {
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("");
   const [showPasswords, setShowPasswords] = useState({
-    current: false,
     new: false,
     confirm: false
   });
+  const [passwordOtpSent, setPasswordOtpSent] = useState(false);
+  const [passwordResetCode, setPasswordResetCode] = useState("");
 
   const userId = localStorage.getItem("userId");
 
@@ -67,40 +67,74 @@ function Settings() {
 
   // Profile is now read-only - no update function needed
 
-  const handlePasswordChangeRequest = async (e) => {
+  const handleSendPasswordOtp = async () => {
+    if (!userData.email) {
+      showMessage("Unable to detect your email address.", "error");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await axios.post(`${BACKEND_URL}/auth/forgot-password`, {
+        email: userData.email
+      });
+
+      if (response.data?.success) {
+        setPasswordOtpSent(true);
+        showMessage("OTP sent to your email. Enter it below to continue.");
+      }
+    } catch (error) {
+      console.error("Send OTP failed:", error);
+      showMessage(error.response?.data?.error || "Failed to send OTP.", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePasswordResetWithOtp = async (e) => {
     e.preventDefault();
+
+    if (!passwordOtpSent) {
+      showMessage("Please send OTP first.", "error");
+      return;
+    }
+
+    if (!passwordResetCode.trim()) {
+      showMessage("OTP code is required.", "error");
+      return;
+    }
 
     if (userData.newPassword !== userData.confirmPassword) {
       showMessage("New passwords do not match.", "error");
       return;
     }
 
-    if (userData.newPassword.length < 6) {
-      showMessage("Password must be at least 6 characters long.", "error");
+    if (userData.newPassword.length < 8) {
+      showMessage("Password must be at least 8 characters long.", "error");
       return;
     }
 
     setLoading(true);
-
     try {
-      const response = await axios.post(`${BACKEND_URL}/user/password-request`, {
-        userId,
-        currentPassword: userData.currentPassword,
+      const response = await axios.post(`${BACKEND_URL}/auth/reset-password`, {
+        email: userData.email,
+        code: passwordResetCode.trim(),
         newPassword: userData.newPassword
       });
 
-      if (response.data.success) {
+      if (response.data?.success) {
         setUserData(prev => ({
           ...prev,
-          currentPassword: "",
           newPassword: "",
           confirmPassword: ""
         }));
-        showMessage("Password change request submitted successfully! It will be reviewed by an administrator.");
+        setPasswordResetCode("");
+        setPasswordOtpSent(false);
+        showMessage(response.data.message || "Password changed successfully.");
       }
     } catch (error) {
-      console.error("Password change request failed:", error);
-      showMessage(error.response?.data?.message || "Failed to submit password change request.", "error");
+      console.error("Password reset failed:", error);
+      showMessage(error.response?.data?.error || "Failed to reset password.", "error");
     } finally {
       setLoading(false);
     }
@@ -381,30 +415,43 @@ function Settings() {
 
               {/* Security Tab */}
               {activeTab === 'security' && (
-                <form onSubmit={handlePasswordChangeRequest}>
-                  <h5 className="mb-3">Request Password Change</h5>
+                <form onSubmit={handlePasswordResetWithOtp}>
+                  <h5 className="mb-3">Change Password via Email OTP</h5>
                   <div className="row g-3">
                     <div className="col-md-12">
-                      <label htmlFor="currentPassword" className="form-label">Current Password</label>
-                      <div className="position-relative">
-                        <input
-                          type={showPasswords.current ? "text" : "password"}
-                          className="form-control pe-5"
-                          id="currentPassword"
-                          value={userData.currentPassword}
-                          onChange={(e) => setUserData(prev => ({ ...prev, currentPassword: e.target.value }))}
-                          placeholder="Enter current password"
-                          required
-                        />
-                        <button
-                          type="button"
-                          className="btn btn-link position-absolute end-0 top-50 translate-middle-y me-2 p-0 text-muted"
-                          onClick={() => togglePasswordVisibility('current')}
-                          style={{ zIndex: 5 }}
-                        >
-                          {showPasswords.current ? <FaEyeSlash /> : <FaEye />}
-                        </button>
-                      </div>
+                      <label htmlFor="securityEmail" className="form-label">Registered Email</label>
+                      <input
+                        type="email"
+                        className="form-control"
+                        id="securityEmail"
+                        value={userData.email}
+                        readOnly
+                      />
+                      <small className="text-muted">
+                        OTP will be sent to this email address.
+                      </small>
+                    </div>
+                    <div className="col-md-6">
+                      <label htmlFor="otpCode" className="form-label">OTP Code</label>
+                      <input
+                        type="text"
+                        className="form-control"
+                        id="otpCode"
+                        value={passwordResetCode}
+                        onChange={(e) => setPasswordResetCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                        placeholder="Enter OTP code"
+                        required
+                      />
+                    </div>
+                    <div className="col-md-6 d-flex align-items-end">
+                      <button
+                        type="button"
+                        className="btn btn-outline-primary w-100"
+                        onClick={handleSendPasswordOtp}
+                        disabled={loading}
+                      >
+                        {loading ? "Sending..." : passwordOtpSent ? "Resend OTP" : "Send OTP"}
+                      </button>
                     </div>
                     <div className="col-md-6">
                       <label htmlFor="newPassword" className="form-label">New Password</label>
@@ -416,7 +463,7 @@ function Settings() {
                           value={userData.newPassword}
                           onChange={(e) => setUserData(prev => ({ ...prev, newPassword: e.target.value }))}
                           placeholder="Enter new password"
-                          minLength="6"
+                          minLength="8"
                           required
                         />
                         <button
@@ -439,7 +486,7 @@ function Settings() {
                           value={userData.confirmPassword}
                           onChange={(e) => setUserData(prev => ({ ...prev, confirmPassword: e.target.value }))}
                           placeholder="Confirm new password"
-                          minLength="6"
+                          minLength="8"
                           required
                         />
                         <button
@@ -456,7 +503,7 @@ function Settings() {
                   <div className="mt-4">
                     <button type="submit" className="btn btn-primary" disabled={loading}>
                       <FaKey className="me-2" />
-                      {loading ? "Submitting..." : "Submit Request"}
+                      {loading ? "Changing..." : "Change Password"}
                     </button>
                   </div>
                 </form>

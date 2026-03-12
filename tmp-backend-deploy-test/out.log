@@ -1,0 +1,5 @@
+[dotenv@17.2.3] injecting env (0) from .env -- tip: ⚙️  override existing env vars with { override: true }
+ðŸš€ Server running on http://127.0.0.1:3009
+Allowed CORS origins: http://localhost:5173, http://127.0.0.1:5173
+LAN CORS fallback: enabled
+? MongoDB connected

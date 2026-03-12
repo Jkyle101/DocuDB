@@ -53,9 +53,9 @@ export default function AdminHome() {
         axios.get(`${BACKEND_URL}/breadcrumbs`, { params: { folderId } }),
       ]);
 
-      setFolders(fdrRes.data);
-      setFiles(filRes.data);
-      setBreadcrumbs(bcRes.data);
+      setFolders(Array.isArray(fdrRes.data) ? fdrRes.data : []);
+      setFiles(Array.isArray(filRes.data) ? filRes.data : []);
+      setBreadcrumbs(Array.isArray(bcRes.data) ? bcRes.data : []);
     } catch (err) {
       console.error("Error fetching admin contents:", err);
     }
@@ -300,7 +300,7 @@ export default function AdminHome() {
           )}
           <div className="d-flex align-items-center flex-wrap overflow-auto">
             <span className="fw-bold me-2 text-primary">Admin Drive</span>
-            {breadcrumbs.length > 0 &&
+            {Array.isArray(breadcrumbs) && breadcrumbs.length > 0 &&
               breadcrumbs.map((b) => (
                 <span key={b._id || "root"} className="d-flex align-items-center">
                   <FaChevronRight className="mx-2 text-muted" size={12} />

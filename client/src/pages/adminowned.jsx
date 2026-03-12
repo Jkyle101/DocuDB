@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useNavigate, useOutletContext } from "react-router-dom";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
@@ -25,6 +25,7 @@ import {
   FaEllipsisV,
   FaChevronDown,
   FaChevronUp,
+  FaArrowsAlt,
 } from "react-icons/fa";
 
 import CreateFolderModal from "../components/CreateFolderModal";
@@ -98,6 +99,7 @@ export default function AdminOwnedPage() {
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [assignments, setAssignments] = useState({ uploaders: [], programChairs: [], qaOfficers: [] });
   const [isChecklistCollapsed, setIsChecklistCollapsed] = useState(true);
+  const [isCurrentFolderCopcScoped, setIsCurrentFolderCopcScoped] = useState(false);
   const [showPresetModal, setShowPresetModal] = useState(false);
   const [presetKey, setPresetKey] = useState("copc_bsit");
   const [creatingPreset, setCreatingPreset] = useState(false);
@@ -111,6 +113,59 @@ export default function AdminOwnedPage() {
   const [selectedQaId, setSelectedQaId] = useState("");
   const { searchResults } = useOutletContext();
   const navigate = useNavigate();
+  const CHECKLIST_PANEL_WIDTH = 420;
+  const CHECKLIST_PANEL_TOP = 92;
+  const CHECKLIST_PANEL_RIGHT = 18;
+  const CHECKLIST_BOUNDARY_PADDING = 8;
+  const checklistCardRef = useRef(null);
+  const checklistDragOffsetRef = useRef({ x: 0, y: 0 });
+  const checklistDraggingRef = useRef(false);
+  const [checklistPosition, setChecklistPosition] = useState({ x: null, y: null });
+  const [isChecklistDragging, setIsChecklistDragging] = useState(false);
+
+  const getDefaultChecklistPosition = useCallback(() => {
+    if (typeof window === "undefined") return { x: 0, y: CHECKLIST_PANEL_TOP };
+    return {
+      x: Math.max(
+        CHECKLIST_BOUNDARY_PADDING,
+        window.innerWidth - CHECKLIST_PANEL_WIDTH - CHECKLIST_PANEL_RIGHT
+      ),
+      y: CHECKLIST_PANEL_TOP,
+    };
+  }, []);
+
+  const clampChecklistPosition = useCallback((x, y) => {
+    if (typeof window === "undefined") return { x, y };
+    const panelWidth = checklistCardRef.current?.offsetWidth || CHECKLIST_PANEL_WIDTH;
+    const panelHeight = checklistCardRef.current?.offsetHeight || 280;
+    const maxX = Math.max(
+      CHECKLIST_BOUNDARY_PADDING,
+      window.innerWidth - panelWidth - CHECKLIST_BOUNDARY_PADDING
+    );
+    const maxY = Math.max(
+      CHECKLIST_BOUNDARY_PADDING,
+      window.innerHeight - panelHeight - CHECKLIST_BOUNDARY_PADDING
+    );
+    return {
+      x: Math.min(Math.max(CHECKLIST_BOUNDARY_PADDING, x), maxX),
+      y: Math.min(Math.max(CHECKLIST_BOUNDARY_PADDING, y), maxY),
+    };
+  }, []);
+
+  const beginChecklistDrag = useCallback((event) => {
+    if (typeof window === "undefined" || window.innerWidth < 1200) return;
+    const cardRect = checklistCardRef.current?.getBoundingClientRect();
+    const fallback = getDefaultChecklistPosition();
+    const originX = cardRect?.left ?? (Number.isFinite(checklistPosition.x) ? checklistPosition.x : fallback.x);
+    const originY = cardRect?.top ?? (Number.isFinite(checklistPosition.y) ? checklistPosition.y : fallback.y);
+    checklistDragOffsetRef.current = {
+      x: event.clientX - originX,
+      y: event.clientY - originY,
+    };
+    checklistDraggingRef.current = true;
+    setIsChecklistDragging(true);
+    event.preventDefault();
+  }, [checklistPosition.x, checklistPosition.y, getDefaultChecklistPosition]);
 
   const fetchOwnedContents = useCallback(async (folderId) => {
     try {
@@ -122,9 +177,12 @@ export default function AdminOwnedPage() {
       ]);
 
       const isOwned = (owner) => (owner?._id || owner)?.toString?.() === userId?.toString();
-      setFolders((fdrRes.data || []).filter((f) => isOwned(f.owner)));
-      setFiles((filRes.data || []).filter((f) => isOwned(f.owner)));
-      setBreadcrumbs(bcRes.data || []);
+      const foldersData = Array.isArray(fdrRes.data) ? fdrRes.data : [];
+      const filesData = Array.isArray(filRes.data) ? filRes.data : [];
+      const breadcrumbData = Array.isArray(bcRes.data) ? bcRes.data : [];
+      setFolders(foldersData.filter((f) => isOwned(f.owner)));
+      setFiles(filesData.filter((f) => isOwned(f.owner)));
+      setBreadcrumbs(breadcrumbData);
     } catch (err) {
       console.error("Failed to fetch admin-owned contents:", err);
     }
@@ -174,6 +232,62 @@ export default function AdminOwnedPage() {
   }, [currentFolderId]);
 
   useEffect(() => {
+    const handlePointerMove = (event) => {
+      if (!checklistDraggingRef.current) return;
+      const nextX = event.clientX - checklistDragOffsetRef.current.x;
+      const nextY = event.clientY - checklistDragOffsetRef.current.y;
+      setChecklistPosition(clampChecklistPosition(nextX, nextY));
+    };
+    const stopChecklistDrag = () => {
+      if (!checklistDraggingRef.current) return;
+      checklistDraggingRef.current = false;
+      setIsChecklistDragging(false);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopChecklistDrag);
+    window.addEventListener("pointercancel", stopChecklistDrag);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopChecklistDrag);
+      window.removeEventListener("pointercancel", stopChecklistDrag);
+    };
+  }, [clampChecklistPosition]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || window.innerWidth < 1200) return;
+    setChecklistPosition((prev) => {
+      if (Number.isFinite(prev.x) && Number.isFinite(prev.y)) {
+        return clampChecklistPosition(prev.x, prev.y);
+      }
+      const defaults = getDefaultChecklistPosition();
+      return clampChecklistPosition(defaults.x, defaults.y);
+    });
+  }, [currentFolderId, isCurrentFolderCopcScoped, clampChecklistPosition, getDefaultChecklistPosition]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1200) return;
+      setChecklistPosition((prev) => {
+        const base = Number.isFinite(prev.x) && Number.isFinite(prev.y)
+          ? prev
+          : getDefaultChecklistPosition();
+        return clampChecklistPosition(base.x, base.y);
+      });
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [clampChecklistPosition, getDefaultChecklistPosition]);
+
+  useEffect(() => {
+    if (!isChecklistDragging) return undefined;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [isChecklistDragging]);
+
+  useEffect(() => {
     if (!isAdmin) return;
     axios.get(`${BACKEND_URL}/users`, { params: { role } })
       .then((res) => setUsers(Array.isArray(res.data) ? res.data : []))
@@ -185,19 +299,25 @@ export default function AdminOwnedPage() {
       setFolderTasks([]);
       setTaskProgress(0);
       setAssignments({ uploaders: [], programChairs: [], qaOfficers: [] });
+      setIsCurrentFolderCopcScoped(false);
       return;
     }
+    setIsCurrentFolderCopcScoped(false);
     try {
       const { data } = await axios.get(`${BACKEND_URL}/folders/${folderId}/tasks`, {
         params: { userId, role },
       });
+      const hasCopcProfile = String(data?.profileKey || "").toUpperCase().startsWith("COPC_");
+      const isCopcScoped = Boolean(data?.isCopcScoped) || hasCopcProfile;
       setFolderTasks(Array.isArray(data?.tasks) ? data.tasks : []);
       setTaskProgress(Number(data?.progress || 0));
       setAssignments(data?.assignments || { uploaders: [], programChairs: [], qaOfficers: [] });
+      setIsCurrentFolderCopcScoped(isCopcScoped);
     } catch {
       setFolderTasks([]);
       setTaskProgress(0);
       setAssignments({ uploaders: [], programChairs: [], qaOfficers: [] });
+      setIsCurrentFolderCopcScoped(false);
     }
   }, [role, userId]);
 
@@ -575,9 +695,16 @@ export default function AdminOwnedPage() {
     return () => clearTimeout(timer);
   }, [dropUploadMessage, uploadingDroppedItems]);
 
+  const shouldFloatChecklist = typeof window !== "undefined" && window.innerWidth >= 1200;
+  const defaultChecklistPosition = shouldFloatChecklist ? getDefaultChecklistPosition() : { x: 0, y: 0 };
+  const checklistLeft = Number.isFinite(checklistPosition.x) ? checklistPosition.x : defaultChecklistPosition.x;
+  const checklistTop = Number.isFinite(checklistPosition.y) ? checklistPosition.y : defaultChecklistPosition.y;
+  const showTaskChecklist = currentFolderId && isAdmin && isCurrentFolderCopcScoped;
+
   return (
     <div
       className="container-fluid py-3 file-manager-container"
+      style={showTaskChecklist && shouldFloatChecklist ? { paddingRight: "450px" } : undefined}
       onDragEnter={handleWorkspaceDragEnter}
       onDragOver={handleWorkspaceDragOver}
       onDragLeave={handleWorkspaceDragLeave}
@@ -601,7 +728,7 @@ export default function AdminOwnedPage() {
           )}
           <div className="d-flex align-items-center flex-wrap overflow-auto">
             <span className="fw-bold me-2 text-primary">Admin Owned Workspace</span>
-            {breadcrumbs.map((b) => (
+            {(Array.isArray(breadcrumbs) ? breadcrumbs : []).map((b) => (
               <span key={b._id || "root"} className="d-flex align-items-center">
                 <FaChevronRight className="mx-2 text-muted" size={12} />
                 <button className="btn btn-link p-0 text-dark text-decoration-none" onClick={() => setCurrentFolderId(b._id || null)}>
@@ -1022,11 +1149,39 @@ export default function AdminOwnedPage() {
         </>
       )}
 
-      {currentFolderId && isAdmin && (
-        <div className="card shadow-sm mt-3" style={{ maxWidth: "460px" }}>
+      {showTaskChecklist && (
+        <div
+          ref={checklistCardRef}
+          className="card shadow-sm mt-3"
+          style={shouldFloatChecklist
+            ? {
+                position: "fixed",
+                left: checklistLeft,
+                top: checklistTop,
+                width: "420px",
+                maxHeight: "82vh",
+                overflowY: "auto",
+                zIndex: 9,
+              }
+            : { maxWidth: "460px" }}
+        >
           <div className="card-header bg-light py-2">
             <div className="d-flex justify-content-between align-items-center">
-              <div className="fw-semibold small" style={{ color: "#555" }}>Task Checklist</div>
+              <div className="d-flex align-items-center gap-2">
+                {shouldFloatChecklist && (
+                  <button
+                    type="button"
+                    className="btn btn-sm btn-outline-secondary py-0 px-2"
+                    onPointerDown={beginChecklistDrag}
+                    title="Drag checklist"
+                    aria-label="Drag checklist"
+                    style={{ cursor: isChecklistDragging ? "grabbing" : "grab" }}
+                  >
+                    <FaArrowsAlt />
+                  </button>
+                )}
+                <div className="fw-semibold small" style={{ color: "#555" }}>Task Checklist</div>
+              </div>
               <div className="d-flex align-items-center gap-2">
                 <span className="small text-muted">{checklistStats.completed}/{checklistStats.total}</span>
                 <button

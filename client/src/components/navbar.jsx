@@ -180,8 +180,10 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
 
     try {
       const response = await axios.get(`${BACKEND_URL}/notifications/${userId}`);
-      const notifications = response.data || [];
-      const unreadCount = notifications.filter(n => !n.isRead).length;
+      const notifications = Array.isArray(response.data)
+        ? response.data
+        : (Array.isArray(response.data?.notifications) ? response.data.notifications : []);
+      const unreadCount = notifications.filter((n) => !n?.isRead).length;
 
       // Play sound if new notifications arrived
       if (unreadCount > lastNotificationCount && lastNotificationCount !== 0) {

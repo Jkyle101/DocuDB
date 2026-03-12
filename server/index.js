@@ -22,6 +22,7 @@ const FormTemplate = require("./models/formtemplate");
 const Log = require("./models/logs");
 const PasswordRequest = require("./models/passwordrequest");
 const Notification = require("./models/notification");
+const AuthChallenge = require("./models/authchallenge");
 const { timeStamp } = require("console");
 
 // Email service
@@ -29,6 +30,7 @@ const { sendNotificationEmail, sendEmail } = require("./emailService");
 
 const app = express();
 const uploadsDir = path.join(__dirname, "uploads");
+const publicDir = path.join(__dirname, "public");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
@@ -107,6 +109,37 @@ app.use(express.json());
 
 // Serve uploaded files
 app.use("/uploads", express.static(uploadsDir));
+// Serve built frontend when backend and UI are deployed together.
+if (fs.existsSync(publicDir)) {
+  app.use(express.static(publicDir));
+}
+
+// Optional modular API routes (only mounted when route files exist).
+const authRoutesPath = path.join(__dirname, "routes", "authRoutes.js");
+if (fs.existsSync(authRoutesPath)) {
+  const authRoutes = require("./routes/authRoutes");
+  app.use("/api/auth", authRoutes);
+}
+
+const fileRoutesPath = path.join(__dirname, "routes", "fileRoutes.js");
+if (fs.existsSync(fileRoutesPath)) {
+  const fileRoutes = require("./routes/fileRoutes");
+  app.use("/api/files", fileRoutes);
+}
+
+// API prefix compatibility:
+// - /api/auth/login -> /login
+// - /api/* -> /*
+app.use((req, res, next) => {
+  if (req.url.startsWith("/api/auth/login")) {
+    req.url = req.url.replace(/^\/api\/auth/, "") || "/";
+    return next();
+  }
+  if (req.url === "/api" || req.url.startsWith("/api/")) {
+    req.url = req.url.replace(/^\/api/, "") || "/";
+  }
+  return next();
+});
 
 /* ========================
    LOGGING HELPER (non-destructive)
@@ -1229,51 +1262,547 @@ function scoreFolderPath(pathParts, hints) {
 /* ========================
    AUTH
 ======================== */
-app.post("/login", async (req, res) => {
+function parseEnvPositiveInt(value, fallback) {
+  const parsed = Number.parseInt(String(value ?? ""), 10);
+  if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  return fallback;
+}
+
+const ALLOWED_REGISTRATION_DOMAIN = String(process.env.ALLOWED_EMAIL_DOMAIN || "llcc.edu.ph")
+  .trim()
+  .toLowerCase();
+const AUTH_CODE_LENGTH = Math.min(
+  Math.max(parseEnvPositiveInt(process.env.AUTH_CODE_LENGTH, 6), 4),
+  8
+);
+const REGISTER_OTP_EXP_MINUTES = Math.max(
+  parseEnvPositiveInt(process.env.REGISTER_OTP_EXP_MINUTES, parseEnvPositiveInt(process.env.LOGIN_OTP_EXP_MINUTES, 10)),
+  1
+);
+const RESET_OTP_EXP_MINUTES = Math.max(parseEnvPositiveInt(process.env.RESET_OTP_EXP_MINUTES, 15), 1);
+const AUTH_CODE_MAX_ATTEMPTS = Math.max(parseEnvPositiveInt(process.env.AUTH_CODE_MAX_ATTEMPTS, 5), 1);
+const MIN_PASSWORD_LENGTH = Math.max(parseEnvPositiveInt(process.env.MIN_PASSWORD_LENGTH, 8), 6);
+
+function normalizeEmail(email) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function escapeRegexForExactMatch(value) {
+  return String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function findUserByEmail(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return null;
+
+  let user = await UserModel.findOne({ email: normalizedEmail });
+  if (!user) {
+    user = await UserModel.findOne({
+      email: new RegExp(`^${escapeRegexForExactMatch(normalizedEmail)}$`, "i"),
+    });
+  }
+  return user;
+}
+
+function isAllowedRegistrationEmail(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail || !normalizedEmail.includes("@")) return false;
+  return normalizedEmail.endsWith(`@${ALLOWED_REGISTRATION_DOMAIN}`);
+}
+
+function isPasswordHashed(storedPassword) {
+  return String(storedPassword || "").startsWith("pbkdf2$");
+}
+
+function hashPassword(password) {
+  const raw = String(password || "");
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = crypto.pbkdf2Sync(raw, salt, 120000, 64, "sha512").toString("hex");
+  return `pbkdf2$${salt}$${hash}`;
+}
+
+function verifyPassword(rawPassword, storedPassword) {
+  const raw = String(rawPassword || "");
+  const stored = String(storedPassword || "");
+  if (!stored) return false;
+
+  if (!isPasswordHashed(stored)) {
+    return stored === raw;
+  }
+
+  const parts = stored.split("$");
+  if (parts.length !== 3) return false;
+  const [, salt, expectedHash] = parts;
+  const computedHash = crypto.pbkdf2Sync(raw, salt, 120000, 64, "sha512").toString("hex");
+
+  const expectedBuffer = Buffer.from(expectedHash, "hex");
+  const computedBuffer = Buffer.from(computedHash, "hex");
+  if (expectedBuffer.length !== computedBuffer.length) return false;
+  return crypto.timingSafeEqual(expectedBuffer, computedBuffer);
+}
+
+function normalizePasswordForStorage(password) {
+  const value = String(password || "");
+  return isPasswordHashed(value) ? value : hashPassword(value);
+}
+
+async function upgradeLegacyPasswordIfNeeded(user, rawPassword) {
+  if (!user) return;
+  const stored = String(user.password || "");
+  if (isPasswordHashed(stored)) return;
+  if (stored !== String(rawPassword || "")) return;
+
+  user.password = hashPassword(rawPassword);
   try {
-    const { email, password } = req.body;
-    const user = await UserModel.findOne({ email });
+    await user.save();
+  } catch (err) {
+    console.error("Password migration error:", err?.message || err);
+  }
+}
 
+function hashCode(code) {
+  return crypto.createHash("sha256").update(String(code || "")).digest("hex");
+}
+
+function generateNumericCode(length = 6) {
+  let code = "";
+  for (let i = 0; i < length; i += 1) {
+    code += crypto.randomInt(0, 10).toString();
+  }
+  return code;
+}
+
+function maskEmail(email) {
+  const normalizedEmail = normalizeEmail(email);
+  const [localPart, domain = ""] = normalizedEmail.split("@");
+  if (!localPart || !domain) return normalizedEmail;
+
+  if (localPart.length <= 2) {
+    return `${localPart[0]}***@${domain}`;
+  }
+
+  return `${localPart.slice(0, 2)}***${localPart.slice(-1)}@${domain}`;
+}
+
+async function createAuthChallenge({ userId, email, purpose, code, expiresInMinutes }) {
+  const normalizedEmail = normalizeEmail(email);
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + expiresInMinutes * 60 * 1000);
+
+  await AuthChallenge.updateMany(
+    { email: normalizedEmail, purpose, consumedAt: null },
+    { $set: { consumedAt: now } }
+  );
+
+  return AuthChallenge.create({
+    userId: userId || null,
+    email: normalizedEmail,
+    purpose,
+    codeHash: hashCode(code),
+    expiresAt,
+    attemptCount: 0,
+    createdAt: now,
+  });
+}
+
+function buildOneTimeCodeHtml({ title, message, code, expiresInMinutes, ctaHref }) {
+  return `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+      <h2 style="color: #0d6efd;">${title}</h2>
+      <p>${message}</p>
+      <p style="margin-bottom: 6px;">Your verification code is:</p>
+      <div style="background: #f8f9fa; border: 1px solid #d9e2ef; border-radius: 10px; display: inline-block; padding: 14px 18px; font-size: 26px; letter-spacing: 4px; font-weight: 700;">
+        ${code}
+      </div>
+      <p style="margin-top: 14px; color: #555;">This code expires in ${expiresInMinutes} minute${expiresInMinutes > 1 ? "s" : ""}.</p>
+      <a href="${ctaHref}"
+         style="background: #0d6efd; color: #fff; padding: 10px 16px; text-decoration: none; border-radius: 6px; display: inline-block; margin: 14px 0 18px;">
+        Open DocuDB
+      </a>
+      <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+      <p style="color: #777; font-size: 12px;">If you did not request this code, you can safely ignore this email.</p>
+    </div>
+  `;
+}
+
+async function sendAuthCodeEmail({ email, purpose, code, expiresInMinutes }) {
+  const loginUrl = `${process.env.FRONTEND_URL || "http://localhost:5173"}/login`;
+  const emailMetaByPurpose = {
+    registration: {
+      subject: "Your DocuDB registration verification code",
+      title: "Registration Verification",
+      message: "Use the code below to complete your DocuDB account registration.",
+      textPrefix: "Registration verification",
+    },
+    password_reset: {
+      subject: "Your DocuDB password reset code",
+      title: "Password Reset Verification",
+      message: "Use the code below to reset your DocuDB password.",
+      textPrefix: "Password reset",
+    },
+  };
+  const emailMeta = emailMetaByPurpose[purpose] || emailMetaByPurpose.password_reset;
+
+  const html = buildOneTimeCodeHtml({
+    title: emailMeta.title,
+    message: emailMeta.message,
+    code,
+    expiresInMinutes,
+    ctaHref: loginUrl,
+  });
+  const text = `${emailMeta.textPrefix} code: ${code}. Expires in ${expiresInMinutes} minute(s).`;
+  return sendEmail(email, emailMeta.subject, html, text);
+}
+
+async function issueAuthCode({ user, purpose, expiresInMinutes }) {
+  const code = generateNumericCode(AUTH_CODE_LENGTH);
+  const challenge = await createAuthChallenge({
+    userId: user?._id || null,
+    email: user?.email,
+    purpose,
+    code,
+    expiresInMinutes,
+  });
+
+  const emailResult = await sendAuthCodeEmail({
+    email: user.email,
+    purpose,
+    code,
+    expiresInMinutes,
+  });
+
+  if (!emailResult.success) {
+    await AuthChallenge.findByIdAndDelete(challenge._id).catch(() => {});
+    return { success: false, error: emailResult.error || "Failed to send verification code email" };
+  }
+
+  return {
+    success: true,
+    challengeId: challenge._id.toString(),
+    expiresAt: challenge.expiresAt,
+  };
+}
+
+function getCodeValidationError(challenge) {
+  if (!challenge) return { status: 400, error: "Verification code not found. Request a new code." };
+  if (challenge.consumedAt) return { status: 400, error: "Verification code was already used. Request a new code." };
+  if (!challenge.expiresAt || new Date(challenge.expiresAt).getTime() <= Date.now()) {
+    return { status: 400, error: "Verification code has expired. Request a new code." };
+  }
+  if (Number(challenge.attemptCount || 0) >= AUTH_CODE_MAX_ATTEMPTS) {
+    return { status: 429, error: "Too many invalid attempts. Request a new code." };
+  }
+  return null;
+}
+
+async function validateAuthCode({ email, purpose, code }) {
+  const normalizedEmail = normalizeEmail(email);
+  const challenge = await AuthChallenge.findOne({
+    email: normalizedEmail,
+    purpose,
+    consumedAt: null,
+  }).sort({ createdAt: -1 });
+
+  const validationError = getCodeValidationError(challenge);
+  if (validationError) {
+    if (challenge && !challenge.consumedAt) {
+      challenge.consumedAt = new Date();
+      await challenge.save().catch(() => {});
+    }
+    return { ok: false, ...validationError };
+  }
+
+  if (challenge.codeHash !== hashCode(code)) {
+    challenge.attemptCount = Number(challenge.attemptCount || 0) + 1;
+    if (challenge.attemptCount >= AUTH_CODE_MAX_ATTEMPTS) {
+      challenge.consumedAt = new Date();
+    }
+    await challenge.save();
+    return { ok: false, status: 401, error: "Invalid verification code" };
+  }
+
+  challenge.consumedAt = new Date();
+  await challenge.save();
+  return { ok: true, challenge };
+}
+
+const handleRegisterSendCode = async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
+
+    if (!normalizedEmail) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+    if (!isAllowedRegistrationEmail(normalizedEmail)) {
+      return res
+        .status(400)
+        .json({ error: `Only @${ALLOWED_REGISTRATION_DOMAIN} email addresses can register` });
+    }
+
+    const existingUser = await findUserByEmail(normalizedEmail);
+    if (existingUser) {
+      return res.status(409).json({ error: "User with this email already exists" });
+    }
+
+    const issued = await issueAuthCode({
+      user: { email: normalizedEmail },
+      purpose: "registration",
+      expiresInMinutes: REGISTER_OTP_EXP_MINUTES,
+    });
+    if (!issued.success) {
+      console.error("Registration code send error:", issued.error);
+      return res.status(500).json({ error: "Failed to send verification code. Please try again." });
+    }
+
+    res.json({
+      success: true,
+      message: "Registration verification code sent to your email.",
+      maskedEmail: maskEmail(normalizedEmail),
+      expiresInMinutes: REGISTER_OTP_EXP_MINUTES,
+    });
+  } catch (err) {
+    console.error("Register send-code error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+const handleRegister = async (req, res) => {
+  try {
+    const { email, password, name, code } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
+    const normalizedPassword = String(password || "");
+    const normalizedName = String(name || "").trim();
+    const normalizedCode = String(code || "").trim();
+
+    if (!normalizedEmail || !normalizedPassword || !normalizedCode) {
+      return res.status(400).json({ error: "Email, password, and verification code are required" });
+    }
+    if (!isAllowedRegistrationEmail(normalizedEmail)) {
+      return res
+        .status(400)
+        .json({ error: `Only @${ALLOWED_REGISTRATION_DOMAIN} email addresses can register` });
+    }
+    if (normalizedPassword.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({
+        error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+      });
+    }
+
+    const existingUser = await findUserByEmail(normalizedEmail);
+    if (existingUser) {
+      return res.status(409).json({ error: "User with this email already exists" });
+    }
+
+    const validation = await validateAuthCode({
+      email: normalizedEmail,
+      purpose: "registration",
+      code: normalizedCode,
+    });
+    if (!validation.ok) {
+      return res.status(validation.status).json({ error: validation.error });
+    }
+
+    const newUser = new UserModel({
+      email: normalizedEmail,
+      password: normalizePasswordForStorage(normalizedPassword),
+      name: normalizedName,
+      role: "faculty",
+      active: true,
+    });
+    await newUser.save();
+
+    try {
+      await createLog("REGISTER", newUser._id, `${normalizedEmail} registered`);
+    } catch (logErr) {
+      console.error("Register log failed:", logErr);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: "Registration successful. Please sign in to continue.",
+    });
+  } catch (err) {
+    console.error("Register error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+const handleLogin = async (req, res) => {
+  try {
+    const { email, password } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
+    const normalizedPassword = String(password || "");
+
+    if (!normalizedEmail || !normalizedPassword) {
+      return res.status(400).json({ error: "Email and password are required" });
+    }
+
+    const user = await findUserByEmail(normalizedEmail);
     if (!user) return res.status(404).json({ error: "No record found" });
-    if (user.password !== password)
+    if (!verifyPassword(normalizedPassword, user.password)) {
       return res.status(401).json({ error: "Incorrect password" });
-
-    // Check if user is active
+    }
     if (user.active === false) {
       return res.status(403).json({ error: "Account is deactivated" });
     }
 
-    // NEW: log login
+    await upgradeLegacyPasswordIfNeeded(user, normalizedPassword);
+
     try {
-      await createLog("LOGIN", user._id, `${email} logged in`);
+      await createLog("LOGIN", user._id, `${normalizedEmail} logged in`);
     } catch (e) {
       console.error("Login log failed:", e);
     }
 
-    // Create a welcome notification for new users (first login)
-    const existingNotifications = await Notification.countDocuments({ userId: user._id });
-    if (existingNotifications === 0) {
-      await createNotification(
-        user._id,
-        "WELCOME",
-        "Welcome to DocuDB!",
-        "Welcome to DocuDB! Start by uploading your first file or creating a folder.",
-        "Getting started guide",
-        null,
-        null,
-        { actorId: user._id, allowSelf: true }
-      );
+    try {
+      const existingNotifications = await Notification.countDocuments({ userId: user._id });
+      if (existingNotifications === 0) {
+        await createNotification(
+          user._id,
+          "WELCOME",
+          "Welcome to DocuDB!",
+          "Welcome to DocuDB! Start by uploading your first file or creating a folder.",
+          "Getting started guide",
+          null,
+          null,
+          { actorId: user._id, allowSelf: true }
+        );
+      }
+    } catch (notificationErr) {
+      console.error("Login notification error:", notificationErr);
     }
 
     res.json({
+      success: true,
       status: "success",
       role: normalizeRole(user.role),
       userId: user._id.toString(),
+      email: normalizeEmail(user.email),
     });
   } catch (err) {
+    console.error("Login error:", err);
     res.status(500).json({ error: "Server error" });
   }
-});
+};
+
+const handleForgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) {
+      return res.status(400).json({ error: "Email is required" });
+    }
+
+    const genericResponse = {
+      success: true,
+      message: "If an active account exists for this email, a reset code has been sent.",
+      expiresInMinutes: RESET_OTP_EXP_MINUTES,
+    };
+
+    const user = await findUserByEmail(normalizedEmail);
+    if (!user || user.active === false) {
+      return res.json(genericResponse);
+    }
+
+    const issued = await issueAuthCode({
+      user,
+      purpose: "password_reset",
+      expiresInMinutes: RESET_OTP_EXP_MINUTES,
+    });
+
+    if (!issued.success) {
+      console.error("Forgot password code send error:", issued.error);
+      return res.status(500).json({ error: "Failed to send reset code. Please try again." });
+    }
+
+    try {
+      await createLog("PASSWORD_RESET_CODE_SENT", user._id, `${normalizedEmail} requested password reset code`);
+    } catch (logErr) {
+      console.error("Password reset code log error:", logErr);
+    }
+
+    res.json(genericResponse);
+  } catch (err) {
+    console.error("Forgot password error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+const handleResetPassword = async (req, res) => {
+  try {
+    const { email, code, newPassword } = req.body || {};
+    const normalizedEmail = normalizeEmail(email);
+    const normalizedCode = String(code || "").trim();
+    const normalizedNewPassword = String(newPassword || "");
+
+    if (!normalizedEmail || !normalizedCode || !normalizedNewPassword) {
+      return res.status(400).json({ error: "Email, code, and new password are required" });
+    }
+    if (normalizedNewPassword.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({
+        error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+      });
+    }
+
+    const validation = await validateAuthCode({
+      email: normalizedEmail,
+      purpose: "password_reset",
+      code: normalizedCode,
+    });
+    if (!validation.ok) {
+      return res.status(validation.status).json({ error: validation.error });
+    }
+
+    const user = validation.challenge.userId
+      ? await UserModel.findById(validation.challenge.userId)
+      : await findUserByEmail(normalizedEmail);
+
+    if (!user) return res.status(404).json({ error: "No record found" });
+    if (user.active === false) {
+      return res.status(403).json({ error: "Account is deactivated" });
+    }
+
+    // Use atomic update to avoid failing on legacy records that still carry
+    // deprecated role values (e.g. "user"/"admin") in strict enum validation.
+    await UserModel.findByIdAndUpdate(user._id, {
+      password: normalizePasswordForStorage(normalizedNewPassword),
+    });
+
+    await PasswordRequest.updateMany(
+      { userId: user._id, status: "pending" },
+      {
+        $set: {
+          status: "rejected",
+          reviewedAt: new Date(),
+          reviewedBy: null,
+          reviewNotes: "Closed due to self-service password reset",
+        },
+      }
+    ).catch(() => {});
+
+    try {
+      await createLog("PASSWORD_RESET", user._id, `${normalizedEmail} reset password via email code`);
+    } catch (logErr) {
+      console.error("Password reset log error:", logErr);
+    }
+
+    res.json({ success: true, message: "Password reset successful. You can now sign in." });
+  } catch (err) {
+    console.error("Reset password error:", err);
+    res.status(500).json({ error: "Server error" });
+  }
+};
+
+app.post("/register/send-code", handleRegisterSendCode);
+app.post("/auth/register/send-code", handleRegisterSendCode);
+app.post("/register", handleRegister);
+app.post("/auth/register", handleRegister);
+app.post("/login", handleLogin);
+app.post("/auth/login", handleLogin);
+app.post("/api/auth/login", handleLogin);
+app.post("/auth/forgot-password", handleForgotPassword);
+app.post("/auth/reset-password", handleResetPassword);
 
 /* ========================
    FILES
@@ -3925,6 +4454,11 @@ app.get("/folders/:id/tasks", async (req, res) => {
     const programChairReviews = (folder.complianceReviews || []).filter((r) => isProgramChairRole(r.role));
     const qaReviews = (folder.complianceReviews || []).filter((r) => isQaReviewRole(r.role));
     const root = await findCopcRootFolderByFolderId(folder._id);
+    const profileKey = String(folder.complianceProfileKey || "");
+    const isCopcScoped =
+      profileKey.toUpperCase().startsWith("COPC_") ||
+      !!folder?.copc?.isProgramRoot ||
+      !!root?.copc?.isProgramRoot;
     const fallbackAssignments = folder.folderAssignments || {};
     const rootAssignments = root?.folderAssignments || {};
     const prefer = (rootList, fallbackList) => {
@@ -3961,6 +4495,7 @@ app.get("/folders/:id/tasks", async (req, res) => {
     res.json({
       folderId: folder._id,
       profileKey: folder.complianceProfileKey || null,
+      isCopcScoped,
       tasks: normalized,
       progress,
       totalNodes,
@@ -6717,14 +7252,21 @@ app.post("/admin/users", async (req, res) => {
     }
     const { email, password, name, role } = req.body;
     const allowedRoles = ["superadmin", "qa_admin", "dept_chair", "faculty", "evaluator"];
+    const normalizedEmail = normalizeEmail(email);
+    const normalizedPassword = String(password || "");
 
     // Validate required fields
-    if (!email || !password) {
+    if (!normalizedEmail || !normalizedPassword) {
       return res.status(400).json({ error: "Email and password are required" });
+    }
+    if (normalizedPassword.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({
+        error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+      });
     }
 
     // Check if user already exists
-    const existingUser = await UserModel.findOne({ email });
+    const existingUser = await findUserByEmail(normalizedEmail);
     if (existingUser) {
       return res.status(409).json({ error: "User with this email already exists" });
     }
@@ -6737,8 +7279,8 @@ app.post("/admin/users", async (req, res) => {
 
     // Create new user
     const newUser = new UserModel({
-      email,
-      password, // Will be hashed by the model
+      email: normalizedEmail,
+      password: normalizePasswordForStorage(normalizedPassword),
       name: name || "",
       role: normalizedRole || "faculty",
       active: true
@@ -6747,7 +7289,7 @@ app.post("/admin/users", async (req, res) => {
     await newUser.save();
 
     // Log user creation
-    createLog("CREATE_USER", newUser._id, `Admin created user: ${email}`);
+    createLog("CREATE_USER", newUser._id, `Admin created user: ${normalizedEmail}`);
 
     // Return user without password
     const { password: _, ...userWithoutPassword } = newUser.toObject();
@@ -6785,16 +7327,23 @@ app.post("/admin/users/bulk", async (req, res) => {
 
       try {
         // Validate required fields
-        if (!user.email || !user.password) {
+        const rowEmail = normalizeEmail(user.email);
+        const rowPassword = String(user.password || "");
+        if (!rowEmail || !rowPassword) {
           errors.push(`Row ${i + 1}: Email and password are required`);
+          failed++;
+          continue;
+        }
+        if (rowPassword.length < MIN_PASSWORD_LENGTH) {
+          errors.push(`Row ${i + 1}: Password must be at least ${MIN_PASSWORD_LENGTH} characters`);
           failed++;
           continue;
         }
 
         // Check if user already exists
-        const existingUser = await UserModel.findOne({ email: user.email });
+        const existingUser = await findUserByEmail(rowEmail);
         if (existingUser) {
-          errors.push(`Row ${i + 1}: User with email ${user.email} already exists`);
+          errors.push(`Row ${i + 1}: User with email ${rowEmail} already exists`);
           failed++;
           continue;
         }
@@ -6809,8 +7358,8 @@ app.post("/admin/users/bulk", async (req, res) => {
 
         // Create new user
         const newUser = new UserModel({
-          email: user.email,
-          password: user.password,
+          email: rowEmail,
+          password: normalizePasswordForStorage(rowPassword),
           name: user.name || "",
           role: userRole,
           active: true
@@ -6820,7 +7369,7 @@ app.post("/admin/users/bulk", async (req, res) => {
         successful++;
 
         // Log user creation
-        createLog("BULK_CREATE_USER", newUser._id, `Bulk imported user: ${user.email}`);
+        createLog("BULK_CREATE_USER", newUser._id, `Bulk imported user: ${rowEmail}`);
 
       } catch (userErr) {
         console.error(`Error creating user ${user.email}:`, userErr);
@@ -7779,9 +8328,16 @@ app.patch("/groups/:groupId/unshare", async (req, res) => {
 app.post("/user/password-request", async (req, res) => {
   try {
     const { userId, currentPassword, newPassword } = req.body;
+    const normalizedCurrentPassword = String(currentPassword || "");
+    const normalizedNewPassword = String(newPassword || "");
 
     if (!userId || !currentPassword || !newPassword) {
       return res.status(400).json({ error: "Missing required fields" });
+    }
+    if (normalizedNewPassword.length < MIN_PASSWORD_LENGTH) {
+      return res.status(400).json({
+        error: `New password must be at least ${MIN_PASSWORD_LENGTH} characters`,
+      });
     }
 
     // Verify user exists
@@ -7789,9 +8345,11 @@ app.post("/user/password-request", async (req, res) => {
     if (!user) return res.status(404).json({ error: "User not found" });
 
     // Verify current password
-    if (user.password !== currentPassword) {
+    if (!verifyPassword(normalizedCurrentPassword, user.password)) {
       return res.status(401).json({ error: "Current password is incorrect" });
     }
+
+    await upgradeLegacyPasswordIfNeeded(user, normalizedCurrentPassword);
 
     // Check if user already has a pending request
     const existingRequest = await PasswordRequest.findOne({
@@ -7806,8 +8364,8 @@ app.post("/user/password-request", async (req, res) => {
     // Create password change request
     const passwordRequest = new PasswordRequest({
       userId,
-      currentPassword, // Store for verification during approval
-      newPassword,
+      currentPassword: "__verified__",
+      newPassword: normalizePasswordForStorage(normalizedNewPassword),
       status: "pending"
     });
 
@@ -7916,7 +8474,7 @@ app.patch("/admin/password-requests/:id/approve", async (req, res) => {
 
     // Update user password
     await UserModel.findByIdAndUpdate(request.userId, {
-      password: request.newPassword
+      password: normalizePasswordForStorage(request.newPassword)
     });
 
     // Update request status
@@ -8816,6 +9374,16 @@ app.get("/admin/search", async (req, res) => {
     res.status(500).json({ error: "Failed to search" });
   }
 });
+
+if (fs.existsSync(path.join(publicDir, "index.html"))) {
+  app.get(/^\/(?!api).*/, (req, res, next) => {
+    if (req.originalUrl === "/api" || req.originalUrl.startsWith("/api/")) {
+      return res.status(404).json({ error: "Not found" });
+    }
+    if (req.path.startsWith("/uploads/")) return next();
+    return res.sendFile(path.join(publicDir, "index.html"));
+  });
+}
 
 /* ========================
    START SERVER

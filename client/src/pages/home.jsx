@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -114,6 +114,7 @@ export default function Home() {
   });
   const [folderReviews, setFolderReviews] = useState({ programChair: [], qa: [] });
   const [isChecklistCollapsed, setIsChecklistCollapsed] = useState(false);
+  const [isCurrentFolderCopcScoped, setIsCurrentFolderCopcScoped] = useState(false);
   const [dashboardRows, setDashboardRows] = useState([]);
   const [newTaskTitle, setNewTaskTitle] = useState("");
   const [canUploadCurrentFolder, setCanUploadCurrentFolder] = useState(true);
@@ -121,14 +122,123 @@ export default function Home() {
   const [facultyCompleteness, setFacultyCompleteness] = useState({ percent: 0, requirements: [] });
   const { searchResults } = useOutletContext();
   const navigate = useNavigate();
+  const CHECKLIST_PANEL_WIDTH = 360;
+  const CHECKLIST_PANEL_TOP = 92;
+  const CHECKLIST_PANEL_RIGHT = 18;
+  const CHECKLIST_BOUNDARY_PADDING = 8;
+  const checklistCardRef = useRef(null);
+  const checklistDragOffsetRef = useRef({ x: 0, y: 0 });
+  const checklistDraggingRef = useRef(false);
+  const [checklistPosition, setChecklistPosition] = useState({ x: null, y: null });
+  const [isChecklistDragging, setIsChecklistDragging] = useState(false);
 
   // âœ… Pagination state
   const [itemsToShow, setItemsToShow] = useState(12);
+
+  const getDefaultChecklistPosition = useCallback(() => {
+    if (typeof window === "undefined") return { x: 0, y: CHECKLIST_PANEL_TOP };
+    return {
+      x: Math.max(
+        CHECKLIST_BOUNDARY_PADDING,
+        window.innerWidth - CHECKLIST_PANEL_WIDTH - CHECKLIST_PANEL_RIGHT
+      ),
+      y: CHECKLIST_PANEL_TOP,
+    };
+  }, []);
+
+  const clampChecklistPosition = useCallback((x, y) => {
+    if (typeof window === "undefined") return { x, y };
+    const panelWidth = checklistCardRef.current?.offsetWidth || CHECKLIST_PANEL_WIDTH;
+    const panelHeight = checklistCardRef.current?.offsetHeight || 280;
+    const maxX = Math.max(
+      CHECKLIST_BOUNDARY_PADDING,
+      window.innerWidth - panelWidth - CHECKLIST_BOUNDARY_PADDING
+    );
+    const maxY = Math.max(
+      CHECKLIST_BOUNDARY_PADDING,
+      window.innerHeight - panelHeight - CHECKLIST_BOUNDARY_PADDING
+    );
+    return {
+      x: Math.min(Math.max(CHECKLIST_BOUNDARY_PADDING, x), maxX),
+      y: Math.min(Math.max(CHECKLIST_BOUNDARY_PADDING, y), maxY),
+    };
+  }, []);
+
+  const beginChecklistDrag = useCallback((event) => {
+    if (typeof window === "undefined" || window.innerWidth < 1200) return;
+    const cardRect = checklistCardRef.current?.getBoundingClientRect();
+    const fallback = getDefaultChecklistPosition();
+    const originX = cardRect?.left ?? (Number.isFinite(checklistPosition.x) ? checklistPosition.x : fallback.x);
+    const originY = cardRect?.top ?? (Number.isFinite(checklistPosition.y) ? checklistPosition.y : fallback.y);
+    checklistDragOffsetRef.current = {
+      x: event.clientX - originX,
+      y: event.clientY - originY,
+    };
+    checklistDraggingRef.current = true;
+    setIsChecklistDragging(true);
+    event.preventDefault();
+  }, [checklistPosition.x, checklistPosition.y, getDefaultChecklistPosition]);
 
   // Reset pagination when folder or search changes
   useEffect(() => {
     setItemsToShow(12);
   }, [currentFolder, searchResults]);
+
+  useEffect(() => {
+    const handlePointerMove = (event) => {
+      if (!checklistDraggingRef.current) return;
+      const nextX = event.clientX - checklistDragOffsetRef.current.x;
+      const nextY = event.clientY - checklistDragOffsetRef.current.y;
+      setChecklistPosition(clampChecklistPosition(nextX, nextY));
+    };
+    const stopChecklistDrag = () => {
+      if (!checklistDraggingRef.current) return;
+      checklistDraggingRef.current = false;
+      setIsChecklistDragging(false);
+    };
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopChecklistDrag);
+    window.addEventListener("pointercancel", stopChecklistDrag);
+    return () => {
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopChecklistDrag);
+      window.removeEventListener("pointercancel", stopChecklistDrag);
+    };
+  }, [clampChecklistPosition]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || window.innerWidth < 1200) return;
+    setChecklistPosition((prev) => {
+      if (Number.isFinite(prev.x) && Number.isFinite(prev.y)) {
+        return clampChecklistPosition(prev.x, prev.y);
+      }
+      const defaults = getDefaultChecklistPosition();
+      return clampChecklistPosition(defaults.x, defaults.y);
+    });
+  }, [canCheckTasks, currentFolder, clampChecklistPosition, getDefaultChecklistPosition]);
+
+  useEffect(() => {
+    const handleResize = () => {
+      if (window.innerWidth < 1200) return;
+      setChecklistPosition((prev) => {
+        const base = Number.isFinite(prev.x) && Number.isFinite(prev.y)
+          ? prev
+          : getDefaultChecklistPosition();
+        return clampChecklistPosition(base.x, base.y);
+      });
+    };
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [clampChecklistPosition, getDefaultChecklistPosition]);
+
+  useEffect(() => {
+    if (!isChecklistDragging) return undefined;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+    };
+  }, [isChecklistDragging]);
 
   // Fetch folders + files + breadcrumbs
   const fetchFolderContents = useCallback(async (folderId) => {
@@ -142,9 +252,9 @@ export default function Home() {
       axios.get(`${BACKEND_URL}/files`, { params }),
       axios.get(`${BACKEND_URL}/breadcrumbs`, { params: { folderId } }),
     ]);
-    setFolders(fdrRes.data);
-    setFiles(filRes.data);
-    setBreadcrumbs(bcRes.data);
+    setFolders(Array.isArray(fdrRes.data) ? fdrRes.data : []);
+    setFiles(Array.isArray(filRes.data) ? filRes.data : []);
+    setBreadcrumbs(Array.isArray(bcRes.data) ? bcRes.data : []);
   }, [userId, role]);
 
   useEffect(() => {
@@ -178,19 +288,24 @@ export default function Home() {
       setFolderTasks([]);
       setTaskProgress(0);
       setFolderAssignments({ uploaders: [], programChairs: [], qaOfficers: [] });
+      setIsCurrentFolderCopcScoped(false);
       setCanUploadCurrentFolder(canUploadByRole);
       return;
     }
+    setIsCurrentFolderCopcScoped(false);
     try {
       const { data } = await axios.get(`${BACKEND_URL}/folders/${folderId}/tasks`, {
         params: { userId, role },
       });
       const tasks = Array.isArray(data?.tasks) ? data.tasks : [];
       const assignments = data?.assignments || { uploaders: [], programChairs: [], qaOfficers: [] };
+      const hasCopcProfile = String(data?.profileKey || "").toUpperCase().startsWith("COPC_");
+      const isCopcScoped = Boolean(data?.isCopcScoped) || hasCopcProfile;
       setFolderTasks(tasks);
       setTaskProgress(Number(data?.progress || 0));
       setFolderAssignments(assignments);
       setFolderReviews(data?.reviews || { programChair: [], qa: [] });
+      setIsCurrentFolderCopcScoped(isCopcScoped);
 
       const assignedUploaders = new Set(
         (assignments.uploaders || []).map((u) => String(u?._id || u))
@@ -205,6 +320,7 @@ export default function Home() {
       setFolderTasks([]);
       setTaskProgress(0);
       setFolderAssignments({ uploaders: [], programChairs: [], qaOfficers: [] });
+      setIsCurrentFolderCopcScoped(false);
       setCanUploadCurrentFolder(canUploadByRole);
     }
   }, [collectAssignedUploaders, isAdmin, canUploadByRole, role, userId]);
@@ -270,8 +386,9 @@ export default function Home() {
 
   const goInto = (folderId) => setCurrentFolder(folderId);
   const goUp = () => {
-    if (!breadcrumbs.length) return;
-    const parent = breadcrumbs[breadcrumbs.length - 2];
+    const breadcrumbList = Array.isArray(breadcrumbs) ? breadcrumbs : [];
+    if (!breadcrumbList.length) return;
+    const parent = breadcrumbList[breadcrumbList.length - 2];
     setCurrentFolder(parent ? parent._id : null);
   };
 
@@ -808,11 +925,16 @@ export default function Home() {
     </ul>
   );
 
+  const shouldFloatChecklist = typeof window !== "undefined" && window.innerWidth >= 1200;
+  const defaultChecklistPosition = shouldFloatChecklist ? getDefaultChecklistPosition() : { x: 0, y: 0 };
+  const checklistLeft = Number.isFinite(checklistPosition.x) ? checklistPosition.x : defaultChecklistPosition.x;
+  const checklistTop = Number.isFinite(checklistPosition.y) ? checklistPosition.y : defaultChecklistPosition.y;
+
   return (
     <>
       <div
         className="page-container"
-        style={currentFolder && canCheckTasks && window.innerWidth >= 1200 ? { paddingRight: "390px" } : undefined}
+        style={currentFolder && canCheckTasks && isCurrentFolderCopcScoped && shouldFloatChecklist ? { paddingRight: "390px" } : undefined}
         onDragEnter={handleWorkspaceDragEnter}
         onDragOver={handleWorkspaceDragOver}
         onDragLeave={handleWorkspaceDragLeave}
@@ -840,7 +962,7 @@ export default function Home() {
                 )}
                 <div className="d-flex align-items-center flex-wrap overflow-auto">
                   <span className="fw-semibold text-primary me-2">Home</span>
-                  {breadcrumbs.length > 0 &&
+                  {Array.isArray(breadcrumbs) && breadcrumbs.length > 0 &&
                     breadcrumbs.map((b) => (
                       <span
                         key={b._id || "root"}
@@ -1569,14 +1691,15 @@ export default function Home() {
           </div>
         )}
 
-        {currentFolder && canCheckTasks && (
+        {currentFolder && canCheckTasks && isCurrentFolderCopcScoped && (
           <div
+            ref={checklistCardRef}
             className="card shadow-sm"
-            style={window.innerWidth >= 1200
+            style={shouldFloatChecklist
               ? {
                   position: "fixed",
-                  right: "18px",
-                  top: "92px",
+                  left: checklistLeft,
+                  top: checklistTop,
                   width: "360px",
                   maxHeight: "82vh",
                   overflowY: "auto",
@@ -1586,7 +1709,21 @@ export default function Home() {
           >
             <div className="card-header bg-light">
               <div className="d-flex justify-content-between align-items-center">
-                <div className="fw-semibold" style={{ color: "#555" }}>Task Checklist</div>
+                <div className="d-flex align-items-center gap-2">
+                  {shouldFloatChecklist && (
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-outline-secondary py-0 px-2"
+                      onPointerDown={beginChecklistDrag}
+                      title="Drag checklist"
+                      aria-label="Drag checklist"
+                      style={{ cursor: isChecklistDragging ? "grabbing" : "grab" }}
+                    >
+                      <FaArrowsAlt />
+                    </button>
+                  )}
+                  <div className="fw-semibold" style={{ color: "#555" }}>Task Checklist</div>
+                </div>
                 <div className="d-flex align-items-center gap-2">
                   <div style={{ fontWeight: 600, color: "#555" }}>{Math.round(taskProgress)}%</div>
                   <button

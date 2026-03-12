@@ -62,6 +62,35 @@
   letter-spacing: 0.01em;
 }
 
+.login-links {
+  margin-top: 0.95rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.login-links-single {
+  justify-content: center;
+}
+
+.login-links .btn-link {
+  font-size: 0.84rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.login-links .btn-link:hover,
+.login-links .btn-link:focus-visible {
+  text-decoration: underline;
+}
+
+.code-input {
+  letter-spacing: 0.3rem;
+  font-weight: 700;
+  text-align: center;
+}
+
 .login-version {
   margin: 1rem 0 0;
   text-align: center;
