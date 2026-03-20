@@ -1,198 +1,536 @@
 .copc-dashboard-gh {
-  --copc-gh-border: color-mix(in srgb, var(--glass-stroke) 82%, #ffffff);
-  --copc-gh-border-strong: color-mix(in srgb, var(--glass-stroke-strong) 86%, #ffffff);
-  --copc-gh-text-secondary: color-mix(in srgb, var(--text-muted) 92%, #2f3f56);
-  --copc-gh-tab-active: var(--brand);
+  --copc-border: color-mix(in srgb, var(--glass-stroke) 82%, #ffffff);
+  --copc-border-strong: color-mix(in srgb, var(--glass-stroke-strong) 86%, #ffffff);
+  --copc-panel: color-mix(in srgb, var(--glass-bg) 78%, #ffffff);
+  --copc-panel-strong: color-mix(in srgb, var(--glass-bg-strong) 85%, #ffffff);
+  --copc-muted: color-mix(in srgb, var(--text-muted) 88%, #304868);
+  --copc-accent: var(--brand);
 }
 
-.copc-dashboard-gh .copc-gh-shell {
-  border: 1px solid var(--copc-gh-border-strong);
-  border-radius: 16px;
-  background: var(--glass-bg-strong);
-  /* Keep this container free of filter/transform so child fixed overlays
-     (like the floating COPC task checklist) stay anchored to the viewport. */
-  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.12);
+.copc-dashboard-gh .copc-glass-shell {
+  position: relative;
+  border-radius: 26px;
+  border: 1px solid var(--copc-border-strong);
+  background: linear-gradient(
+    160deg,
+    color-mix(in srgb, var(--glass-bg-strong) 84%, #ffffff) 0%,
+    color-mix(in srgb, var(--glass-bg) 86%, #f6f9ff) 48%,
+    color-mix(in srgb, var(--glass-bg-soft) 82%, #f8fbff) 100%
+  );
+  box-shadow: 0 24px 48px rgba(15, 23, 42, 0.14);
+  backdrop-filter: blur(20px) saturate(150%);
+  -webkit-backdrop-filter: blur(20px) saturate(150%);
+  padding: clamp(0.95rem, 1vw + 0.55rem, 1.35rem);
   overflow: hidden;
 }
 
-.copc-dashboard-gh .copc-gh-repo-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
+.copc-dashboard-gh .copc-glass-shell::before,
+.copc-dashboard-gh .copc-glass-shell::after {
+  content: "";
+  position: absolute;
+  border-radius: 999px;
+  pointer-events: none;
+  filter: blur(2px);
+  z-index: 0;
+}
+
+.copc-dashboard-gh .copc-glass-shell::before {
+  width: 260px;
+  height: 260px;
+  top: -140px;
+  right: -80px;
+  background: radial-gradient(circle, rgba(10, 102, 255, 0.2) 0%, rgba(10, 102, 255, 0) 68%);
+}
+
+.copc-dashboard-gh .copc-glass-shell::after {
+  width: 240px;
+  height: 240px;
+  left: -110px;
+  bottom: -120px;
+  background: radial-gradient(circle, rgba(25, 175, 151, 0.16) 0%, rgba(25, 175, 151, 0) 66%);
+}
+
+.copc-dashboard-gh .copc-glass-hero,
+.copc-dashboard-gh .copc-step-grid,
+.copc-dashboard-gh .copc-main-layout {
+  position: relative;
+  z-index: 1;
+}
+
+.copc-dashboard-gh .copc-glass-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
   gap: 1rem;
-  padding: 1rem 1.2rem;
-  border-bottom: 1px solid var(--copc-gh-border);
-  background: color-mix(in srgb, var(--glass-bg-soft) 74%, #ffffff);
+  align-items: stretch;
+  margin-bottom: 0.95rem;
 }
 
-.copc-dashboard-gh .copc-gh-repo-main {
-  min-width: 0;
+.copc-dashboard-gh .copc-glass-hero-main {
+  border: 1px solid var(--copc-border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--copc-panel-strong) 74%, #ffffff);
+  padding: clamp(0.95rem, 0.8vw + 0.7rem, 1.25rem);
 }
 
-.copc-dashboard-gh .copc-gh-repo-path {
+.copc-dashboard-gh .copc-glass-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.46rem;
+  padding: 0.35rem 0.62rem;
+  border: 1px solid var(--copc-border-strong);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--copc-muted);
+  background: color-mix(in srgb, var(--glass-bg-soft) 75%, #ffffff);
+}
+
+.copc-dashboard-gh .copc-glass-title {
+  margin: 0.62rem 0 0.4rem;
+  font-size: clamp(1.34rem, 1.4vw + 1rem, 2.05rem);
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+}
+
+.copc-dashboard-gh .copc-glass-subtitle {
+  margin: 0;
+  color: var(--copc-muted);
+  font-size: clamp(0.9rem, 0.3vw + 0.84rem, 1.05rem);
+  max-width: 72ch;
+}
+
+.copc-dashboard-gh .copc-glass-meta {
+  margin-top: 0.76rem;
   display: flex;
   align-items: center;
-  color: var(--copc-gh-text-secondary);
-  font-size: 0.9rem;
-  font-weight: 650;
-  margin-bottom: 0.35rem;
-}
-
-.copc-dashboard-gh .copc-gh-owner {
-  opacity: 0.88;
-}
-
-.copc-dashboard-gh .copc-gh-sep {
-  margin: 0 0.4rem;
-  opacity: 0.7;
-}
-
-.copc-dashboard-gh .copc-gh-repo {
-  color: var(--text-strong);
-}
-
-.copc-dashboard-gh .copc-gh-title {
-  letter-spacing: -0.02em;
-}
-
-.copc-dashboard-gh .copc-gh-subtitle {
-  color: var(--copc-gh-text-secondary);
-}
-
-.copc-dashboard-gh .copc-gh-repo-meta {
-  display: flex;
-  gap: 0.45rem;
   flex-wrap: wrap;
-  justify-content: flex-end;
+  gap: 0.48rem;
 }
 
-.copc-dashboard-gh .copc-gh-pill {
+.copc-dashboard-gh .copc-glass-pill {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  border: 1px solid var(--copc-gh-border-strong);
+  border: 1px solid var(--copc-border-strong);
   padding: 0.3rem 0.65rem;
-  font-size: 0.76rem;
+  font-size: 0.74rem;
   font-weight: 700;
-  color: var(--copc-gh-text-secondary);
+  color: var(--copc-muted);
   background: color-mix(in srgb, var(--glass-bg-soft) 80%, #ffffff);
 }
 
-.copc-dashboard-gh .copc-gh-pill-active {
+.copc-dashboard-gh .copc-glass-pill-active {
   color: var(--text-strong);
-  background: color-mix(in srgb, var(--brand-soft) 30%, var(--glass-bg-soft));
-  border-color: color-mix(in srgb, var(--brand) 28%, var(--copc-gh-border-strong));
+  border-color: color-mix(in srgb, var(--brand) 34%, var(--copc-border-strong));
+  background: color-mix(in srgb, var(--brand-soft) 36%, #f4f8ff);
+}
+
+.copc-dashboard-gh .copc-health-card {
+  border: 1px solid var(--copc-border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--copc-panel-strong) 80%, #ffffff);
+  padding: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.copc-dashboard-gh .copc-health-ring {
+  --copc-health: 82%;
+  width: 82px;
+  height: 82px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  position: relative;
+  background:
+    radial-gradient(closest-side, color-mix(in srgb, var(--copc-panel-strong) 92%, #ffffff) 80%, transparent 81% 100%),
+    conic-gradient(var(--copc-accent) var(--copc-health), color-mix(in srgb, var(--copc-border-strong) 86%, #e8eef8) 0);
+  flex-shrink: 0;
+}
+
+.copc-dashboard-gh .copc-health-ring span {
+  font-size: 1.1rem;
+  font-weight: 800;
+  letter-spacing: -0.015em;
+}
+
+.copc-dashboard-gh .copc-health-label {
+  font-size: 0.74rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  color: var(--copc-muted);
+}
+
+.copc-dashboard-gh .copc-health-status {
+  font-size: 1.38rem;
+  font-weight: 760;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  margin-top: 0.3rem;
+}
+
+.copc-dashboard-gh .copc-health-note {
+  margin-top: 0.28rem;
+  font-size: 0.82rem;
+  color: var(--copc-muted);
+}
+
+.copc-dashboard-gh .copc-step-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 0.78rem;
+  margin-bottom: 0.95rem;
+}
+
+.copc-dashboard-gh .copc-step-card {
+  --copc-step-accent: #0a66ff;
+  width: 100%;
+  border: 1px solid color-mix(in srgb, var(--copc-step-accent) 26%, var(--copc-border-strong));
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--copc-panel) 86%, #ffffff);
+  text-align: left;
+  padding: 0.78rem 0.82rem 0.75rem;
+  transition: transform 0.16s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.copc-dashboard-gh .copc-step-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 14px 24px rgba(15, 23, 42, 0.12);
+}
+
+.copc-dashboard-gh .copc-step-card.is-active {
+  border-color: color-mix(in srgb, var(--copc-step-accent) 52%, #c7d7ee);
+  box-shadow: 0 16px 28px color-mix(in srgb, var(--copc-step-accent) 22%, rgba(15, 23, 42, 0.12));
+}
+
+.copc-dashboard-gh .copc-step-card.tone-workflow {
+  --copc-step-accent: #0a66ff;
+}
+
+.copc-dashboard-gh .copc-step-card.tone-tasks {
+  --copc-step-accent: #14a078;
+}
+
+.copc-dashboard-gh .copc-step-card.tone-programs {
+  --copc-step-accent: #7c4dff;
+}
+
+.copc-dashboard-gh .copc-step-card.tone-upload {
+  --copc-step-accent: #1c78f2;
+}
+
+.copc-dashboard-gh .copc-step-card.tone-review {
+  --copc-step-accent: #2b9f70;
+}
+
+.copc-dashboard-gh .copc-step-card.tone-evaluation {
+  --copc-step-accent: #a85cf0;
+}
+
+.copc-dashboard-gh .copc-step-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.copc-dashboard-gh .copc-step-badge {
+  border-radius: 999px;
+  padding: 0.2rem 0.55rem;
+  background: color-mix(in srgb, var(--copc-step-accent) 18%, #ffffff);
+  color: color-mix(in srgb, var(--copc-step-accent) 80%, #2d4f7e);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.copc-dashboard-gh .copc-step-icon {
+  color: var(--copc-step-accent);
+  font-size: 1rem;
+}
+
+.copc-dashboard-gh .copc-step-title {
+  margin-top: 0.56rem;
+  font-size: 1.02rem;
+  font-weight: 730;
+  letter-spacing: -0.015em;
+}
+
+.copc-dashboard-gh .copc-step-copy {
+  margin-top: 0.22rem;
+  font-size: 0.8rem;
+  color: var(--copc-muted);
+  min-height: 2.35em;
+}
+
+.copc-dashboard-gh .copc-step-progress {
+  margin-top: 0.55rem;
+  border-radius: 999px;
+  height: 7px;
+  background: color-mix(in srgb, var(--copc-step-accent) 12%, #dde6f4);
+  overflow: hidden;
+}
+
+.copc-dashboard-gh .copc-step-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--copc-step-accent) 82%, #ffffff) 0%,
+    color-mix(in srgb, var(--copc-step-accent) 56%, #86b3ff) 100%
+  );
+}
+
+.copc-dashboard-gh .copc-main-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 290px;
+  gap: 0.9rem;
+  align-items: start;
+}
+
+.copc-dashboard-gh .copc-main-content {
+  min-width: 0;
 }
 
 .copc-dashboard-gh .copc-gh-tabbar {
-  border-bottom: 1px solid var(--copc-gh-border);
-  background: color-mix(in srgb, var(--glass-bg) 75%, #ffffff);
-  padding: 0 0.9rem;
+  border: 1px solid var(--copc-border);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--copc-panel) 82%, #ffffff);
+  padding: 0.22rem;
 }
 
 .copc-dashboard-gh .copc-gh-tabs {
   display: flex;
-  gap: 0.3rem;
+  gap: 0.22rem;
   overflow-x: auto;
   scrollbar-width: thin;
 }
 
 .copc-dashboard-gh .copc-gh-tab {
   border: 0;
-  border-bottom: 2px solid transparent;
+  border-radius: 11px;
   background: transparent;
-  color: var(--copc-gh-text-secondary);
-  font-weight: 650;
-  font-size: 0.88rem;
-  line-height: 1;
+  color: var(--copc-muted);
+  font-weight: 700;
+  font-size: 0.84rem;
   white-space: nowrap;
-  padding: 0.82rem 0.64rem 0.74rem;
-  margin-bottom: -1px;
-  transition: color 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+  padding: 0.66rem 0.76rem;
+  transition: color 0.16s ease, background-color 0.16s ease;
 }
 
 .copc-dashboard-gh .copc-gh-tab:hover {
   color: var(--text-strong);
-  background: color-mix(in srgb, var(--brand-soft) 18%, transparent);
+  background: color-mix(in srgb, var(--brand-soft) 30%, #ffffff);
 }
 
 .copc-dashboard-gh .copc-gh-tab.is-active {
   color: var(--text-strong);
-  border-bottom-color: var(--copc-gh-tab-active);
-  background: color-mix(in srgb, var(--brand-soft) 16%, transparent);
+  background: color-mix(in srgb, var(--brand-soft) 48%, #f4f8ff);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 35%, #c7d6eb);
 }
 
 .copc-dashboard-gh .copc-gh-content {
-  padding: 0.8rem;
+  margin-top: 0.72rem;
+  border: 1px solid var(--copc-border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--copc-panel) 84%, #ffffff);
+  overflow: hidden;
+  min-height: 560px;
 }
 
-.copc-dashboard-gh .container-fluid.py-2,
-.copc-dashboard-gh .container-fluid.py-3 {
-  padding: 0.6rem !important;
+.copc-dashboard-gh .copc-gh-content > .container-fluid,
+.copc-dashboard-gh .copc-gh-content .container-fluid.py-2,
+.copc-dashboard-gh .copc-gh-content .container-fluid.py-3 {
+  padding: 0.88rem !important;
+}
+
+.copc-dashboard-gh .copc-right-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.copc-dashboard-gh .copc-rail-card {
+  border: 1px solid var(--copc-border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--copc-panel-strong) 78%, #ffffff);
+  padding: 0.85rem;
+}
+
+.copc-dashboard-gh .copc-rail-heading {
+  font-size: 0.78rem;
+  font-weight: 780;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--copc-muted);
+  margin-bottom: 0.56rem;
+}
+
+.copc-dashboard-gh .copc-activity-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+
+.copc-dashboard-gh .copc-activity-item {
+  width: 100%;
+  border: 1px solid var(--copc-border);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--copc-panel) 78%, #ffffff);
+  color: var(--text-strong);
+  font-size: 0.82rem;
+  font-weight: 650;
+  padding: 0.52rem 0.62rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+}
+
+.copc-dashboard-gh .copc-activity-item:hover {
+  border-color: color-mix(in srgb, var(--brand) 34%, var(--copc-border-strong));
+  background: color-mix(in srgb, var(--brand-soft) 25%, #ffffff);
+}
+
+.copc-dashboard-gh .copc-activity-item.is-active {
+  border-color: color-mix(in srgb, var(--brand) 44%, var(--copc-border-strong));
+  background: color-mix(in srgb, var(--brand-soft) 42%, #f5f9ff);
+}
+
+.copc-dashboard-gh .copc-help-card p {
+  font-size: 0.83rem;
+  line-height: 1.45;
+  color: var(--copc-muted);
+}
+
+.copc-dashboard-gh .copc-help-inline {
+  margin-top: 0.7rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.36rem 0.52rem;
+  border: 1px solid color-mix(in srgb, var(--brand) 28%, var(--copc-border-strong));
+  border-radius: 11px;
+  font-size: 0.75rem;
+  color: color-mix(in srgb, var(--brand-strong) 75%, #355482);
+  background: color-mix(in srgb, var(--brand-soft) 36%, #ffffff);
 }
 
 .copc-dashboard-gh .card {
-  border-radius: 12px !important;
-  border: 1px solid var(--copc-gh-border) !important;
-  background: color-mix(in srgb, var(--glass-bg-soft) 76%, #ffffff) !important;
-  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08) !important;
+  border-radius: 14px !important;
+  border: 1px solid color-mix(in srgb, var(--copc-border) 84%, #ffffff) !important;
+  background: color-mix(in srgb, var(--glass-bg-soft) 82%, #ffffff) !important;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.09) !important;
 }
 
 .copc-dashboard-gh .card-header {
-  background: color-mix(in srgb, var(--glass-bg-strong) 85%, #ffffff) !important;
-  border-bottom: 1px solid var(--copc-gh-border) !important;
-  font-weight: 700;
-}
-
-.copc-dashboard-gh .btn {
-  border-radius: 8px;
+  border-bottom: 1px solid var(--copc-border) !important;
+  background: color-mix(in srgb, var(--glass-bg-strong) 86%, #ffffff) !important;
 }
 
 .copc-dashboard-gh .btn.btn-primary {
-  background: linear-gradient(180deg, #2f81f7 0%, #1f6feb 100%);
-  border-color: #1f6feb;
-  box-shadow: none;
+  background: linear-gradient(135deg, #0a66ff 0%, #2f7fff 100%);
+  border-color: #0a66ff;
 }
 
 .copc-dashboard-gh .btn.btn-primary:hover,
 .copc-dashboard-gh .btn.btn-primary:focus {
-  background: linear-gradient(180deg, #1f6feb 0%, #1a62d0 100%);
-  border-color: #1a62d0;
-}
-
-.copc-dashboard-gh .btn-outline-primary,
-.copc-dashboard-gh .btn-outline-secondary,
-.copc-dashboard-gh .btn-outline-success,
-.copc-dashboard-gh .btn-outline-danger,
-.copc-dashboard-gh .btn-outline-warning,
-.copc-dashboard-gh .btn-outline-dark,
-.copc-dashboard-gh .btn-outline-info {
-  border-color: var(--copc-gh-border-strong);
-  background: color-mix(in srgb, var(--glass-bg-soft) 78%, #ffffff);
+  background: linear-gradient(135deg, #0958dd 0%, #226dd7 100%);
+  border-color: #0958dd;
 }
 
 .copc-dashboard-gh .table thead th,
 .copc-dashboard-gh .table-light th {
-  background: color-mix(in srgb, var(--glass-bg-strong) 88%, #ffffff) !important;
-  border-bottom: 1px solid var(--copc-gh-border) !important;
-  color: var(--copc-gh-text-secondary) !important;
-  text-transform: none;
-  letter-spacing: 0;
-  font-size: 0.8rem;
+  background: color-mix(in srgb, var(--glass-bg-strong) 87%, #ffffff) !important;
+  color: var(--copc-muted) !important;
+  border-bottom: 1px solid var(--copc-border) !important;
 }
 
 .copc-dashboard-gh .table td,
 .copc-dashboard-gh .table th {
-  border-color: var(--copc-gh-border) !important;
+  border-color: var(--copc-border) !important;
+}
+
+@media (max-width: 1299.98px) {
+  .copc-dashboard-gh .copc-main-layout {
+    grid-template-columns: minmax(0, 1fr) 260px;
+  }
+}
+
+@media (max-width: 1199.98px) {
+  .copc-dashboard-gh .copc-main-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .copc-dashboard-gh .copc-right-rail {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 991.98px) {
-  .copc-dashboard-gh .copc-gh-repo-header {
-    flex-direction: column;
-    align-items: stretch;
+  .copc-dashboard-gh .copc-glass-shell {
+    border-radius: 20px;
+    padding: 0.78rem;
   }
 
-  .copc-dashboard-gh .copc-gh-repo-meta {
+  .copc-dashboard-gh .copc-glass-hero {
+    grid-template-columns: 1fr;
+    gap: 0.72rem;
+  }
+
+  .copc-dashboard-gh .copc-health-card {
     justify-content: flex-start;
   }
+
+  .copc-dashboard-gh .copc-gh-content {
+    min-height: 480px;
+  }
+}
+
+@media (max-width: 767.98px) {
+  .copc-dashboard-gh .copc-step-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .copc-dashboard-gh .copc-right-rail {
+    grid-template-columns: 1fr;
+  }
+
+  .copc-dashboard-gh .copc-health-status {
+    font-size: 1.18rem;
+  }
+
+  .copc-dashboard-gh .copc-gh-content > .container-fluid,
+  .copc-dashboard-gh .copc-gh-content .container-fluid.py-2,
+  .copc-dashboard-gh .copc-gh-content .container-fluid.py-3 {
+    padding: 0.7rem !important;
+  }
+}
+
+body.dark-mode .copc-dashboard-gh {
+  --copc-border: color-mix(in srgb, var(--glass-stroke) 88%, #5f7ea8);
+  --copc-border-strong: color-mix(in srgb, var(--glass-stroke-strong) 90%, #7f9ec8);
+  --copc-panel: color-mix(in srgb, var(--glass-bg) 86%, #091a33);
+  --copc-panel-strong: color-mix(in srgb, var(--glass-bg-strong) 88%, #0a1830);
+  --copc-muted: color-mix(in srgb, var(--text-muted) 92%, #b6caea);
+}
+
+body.dark-mode .copc-dashboard-gh .copc-glass-shell::before {
+  background: radial-gradient(circle, rgba(82, 145, 248, 0.24) 0%, rgba(82, 145, 248, 0) 70%);
+}
+
+body.dark-mode .copc-dashboard-gh .copc-glass-shell::after {
+  background: radial-gradient(circle, rgba(30, 177, 152, 0.2) 0%, rgba(30, 177, 152, 0) 68%);
+}
+
+body.dark-mode .copc-dashboard-gh .copc-step-card:hover {
+  box-shadow: 0 16px 26px rgba(1, 7, 20, 0.46);
 }

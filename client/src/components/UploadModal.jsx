@@ -1,6 +1,13 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
+import {
+  buildCopcFilename,
+  buildCopcFilenameFromServerError,
+  isCopcNamingError,
+  renameFileForCopc,
+  renameFileWithName,
+} from "../utils/copcFilename";
 
 
 export default function UploadModal({ onClose, onUploaded, parentFolder, hideDestinationFolder = false }) {
@@ -259,6 +266,67 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
     setProgress((prevState) => ({ ...prevState, active: false, percent: 0, speedText: "0.00 MB/s" }));
   };
 
+  const createUploadFormData = ({ uploadFile, userId, role, parentId }) => {
+    const formData = new FormData();
+    formData.append("file", uploadFile);
+    formData.append("userId", userId || "");
+    formData.append("role", role || "faculty");
+    if (parentId) formData.append("parentFolder", parentId);
+    return formData;
+  };
+
+  const postUploadFile = async ({
+    uploadFile,
+    userId,
+    role,
+    parentId,
+    onUploadProgress,
+  }) => {
+    const formData = createUploadFormData({
+      uploadFile,
+      userId,
+      role,
+      parentId,
+    });
+    return axios.post(`${BACKEND_URL}/upload`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+      onUploadProgress,
+    });
+  };
+
+  const uploadWithCopcRetry = async ({
+    sourceFile,
+    userId,
+    role,
+    parentId,
+    onUploadProgress,
+  }) => {
+    const initialFile = isCopcContext ? renameFileForCopc(sourceFile).file : sourceFile;
+    try {
+      return await postUploadFile({
+        uploadFile: initialFile,
+        userId,
+        role,
+        parentId,
+        onUploadProgress,
+      });
+    } catch (err) {
+      if (!isCopcContext || !isCopcNamingError(err)) throw err;
+      const retryName = buildCopcFilenameFromServerError(
+        err?.response?.data?.error,
+        sourceFile?.name || initialFile?.name
+      );
+      const retryFile = renameFileWithName(sourceFile, retryName);
+      return postUploadFile({
+        uploadFile: retryFile,
+        userId,
+        role,
+        parentId,
+        onUploadProgress,
+      });
+    }
+  };
+
   const submit = async (e) => {
     e.preventDefault();
     if (!file) {
@@ -268,17 +336,23 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
 
     try {
       setUploadingSingle(true);
-      beginProgress(file.name, "single");
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("userId", localStorage.getItem("userId"));
-      formData.append("role", localStorage.getItem("role")); // optional
-      if (destinationFolder) formData.append("parentFolder", destinationFolder);
+      const userId = localStorage.getItem("userId");
+      const role = localStorage.getItem("role");
+      const preparedFile = isCopcContext ? renameFileForCopc(file).file : file;
+      beginProgress(preparedFile?.name || file.name, "single");
 
-      const { data } = await axios.post(`${BACKEND_URL}/upload`, formData, {
-        headers: { "Content-Type": "multipart/form-data" },
+      const { data } = await uploadWithCopcRetry({
+        sourceFile: file,
+        userId,
+        role,
+        parentId: destinationFolder,
         onUploadProgress: (evt) => {
-          updateProgress(evt.loaded || 0, evt.total || file.size || 1, file.name, "single");
+          updateProgress(
+            evt.loaded || 0,
+            evt.total || preparedFile?.size || file.size || 1,
+            preparedFile?.name || file.name,
+            "single"
+          );
         },
       });
 
@@ -410,22 +484,20 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
           ? relative.split("/").slice(0, -1).join("/")
           : "";
         const parentId = folderMap.get(folderPath) || destinationFolder || null;
-
-        const formData = new FormData();
-        formData.append("file", item.file);
-        formData.append("userId", userId);
-        formData.append("role", role || "user");
-        if (parentId) formData.append("parentFolder", parentId);
+        const preparedFile = isCopcContext ? renameFileForCopc(item.file).file : item.file;
         beginProgress(relative, "folder");
 
-        await axios.post(`${BACKEND_URL}/upload`, formData, {
-          headers: { "Content-Type": "multipart/form-data" },
+        await uploadWithCopcRetry({
+          sourceFile: item.file,
+          userId,
+          role: role || "faculty",
+          parentId,
           onUploadProgress: (evt) => {
             const loadedCurrent = evt.loaded || 0;
             updateProgress(
               completedBytes + loadedCurrent,
-              totalBytes || completedBytes + (item.file?.size || 1),
-              relative,
+              totalBytes || completedBytes + (preparedFile?.size || item.file?.size || 1),
+              preparedFile?.name || relative,
               "folder"
             );
           },
@@ -507,7 +579,13 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
     formData.append("role", localStorage.getItem("role"));
     if (destinationFolder) formData.append("parentFolder", destinationFolder);
     formData.append("desiredType", desiredType);
-    if (originalName) formData.append("originalName", originalName);
+    if (isCopcContext) {
+      const seededName = originalName || captures[0]?.name || "CameraCapture";
+      const normalizedName = buildCopcFilename(seededName);
+      formData.append("originalName", normalizedName);
+    } else if (originalName) {
+      formData.append("originalName", originalName);
+    }
     try {
       const { data } = await axios.post(`${BACKEND_URL}/upload-camera`, formData, {
         headers: { "Content-Type": "multipart/form-data" },
@@ -635,6 +713,9 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
                   </div>
                   <div className="small">
                     Example: <code>{copcNamingExample}</code>
+                  </div>
+                  <div className="small mt-1">
+                    If your filename does not match this format, the system auto-corrects it during upload.
                   </div>
                 </div>
               )}

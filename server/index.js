@@ -799,6 +799,33 @@ function removeTaskById(tasks = [], taskId) {
   return null;
 }
 
+function buildNoReviewWorkflow() {
+  return {
+    requiresReview: false,
+    status: "approved",
+    assignedProgramChairs: [],
+    assignedQaOfficers: [],
+    programChair: {
+      status: "not_required",
+      reviewedBy: null,
+      reviewedAt: null,
+      notes: "",
+    },
+    qaOfficer: {
+      status: "not_required",
+      reviewedBy: null,
+      reviewedAt: null,
+      notes: "",
+    },
+    verificationBadge: {
+      verified: false,
+      verifiedBy: null,
+      verifiedAt: null,
+      label: "Pending Verification",
+    },
+  };
+}
+
 function buildFileWorkflowFromFolder(folder) {
   const chairAssignments = folder?.folderAssignments?.programChairs || [];
   const qaAssignments = folder?.folderAssignments?.qaOfficers || [];
@@ -825,7 +852,72 @@ function buildFileWorkflowFromFolder(folder) {
       reviewedAt: null,
       notes: "",
     },
+    verificationBadge: {
+      verified: false,
+      verifiedBy: null,
+      verifiedAt: null,
+      label: "Pending Verification",
+    },
   };
+}
+
+async function buildFileWorkflowForFolder(folder) {
+  const localChairs = cleanObjectIdList(folder?.folderAssignments?.programChairs || []);
+  const localQa = cleanObjectIdList(folder?.folderAssignments?.qaOfficers || []);
+
+  let chairAssignments = localChairs;
+  let qaAssignments = localQa;
+
+  if (folder?._id) {
+    const root = await findCopcRootFolderByFolderId(folder._id);
+    if (root?.copc?.isProgramRoot) {
+      const rootChairs = cleanObjectIdList(root?.folderAssignments?.programChairs || []);
+      const rootQa = cleanObjectIdList(root?.folderAssignments?.qaOfficers || []);
+      if (!chairAssignments.length && rootChairs.length) chairAssignments = rootChairs;
+      if (!qaAssignments.length && rootQa.length) qaAssignments = rootQa;
+    }
+  }
+
+  const workflowFolder = {
+    folderAssignments: {
+      programChairs: chairAssignments,
+      qaOfficers: qaAssignments,
+    },
+  };
+  return buildFileWorkflowFromFolder(workflowFolder);
+}
+
+async function inferReviewWorkflowForFile(file, cache = new Map()) {
+  const parentFolderId = file?.parentFolder?._id?.toString?.() || file?.parentFolder?.toString?.();
+  if (!parentFolderId) return null;
+  const cacheKey = String(parentFolderId);
+  if (cache.has(cacheKey)) return cache.get(cacheKey);
+
+  const folder = await Folder.findById(parentFolderId).select("folderAssignments");
+  if (!folder) {
+    cache.set(cacheKey, null);
+    return null;
+  }
+
+  const inferred = await buildFileWorkflowForFolder(folder);
+  cache.set(cacheKey, inferred);
+  return inferred;
+}
+
+async function ensureFileReviewWorkflow(file, cache = new Map()) {
+  const existing = file?.reviewWorkflow || {};
+  if (existing?.requiresReview) return existing;
+
+  const inferred = await inferReviewWorkflowForFile(file, cache);
+  if (!inferred?.requiresReview) {
+    if (existing && Object.keys(existing).length > 0) return existing;
+    return buildNoReviewWorkflow();
+  }
+
+  const hydrated = JSON.parse(JSON.stringify(inferred));
+  file.reviewWorkflow = hydrated;
+  await file.save();
+  return hydrated;
 }
 
 function collectTaskAssignmentUserIds(tasks = [], key = "assignedUploaders", out = new Set()) {
@@ -838,6 +930,18 @@ function collectTaskAssignmentUserIds(tasks = [], key = "assignedUploaders", out
       if (raw) out.add(raw);
     }
     collectTaskAssignmentUserIds(task.children || [], key, out);
+  }
+  return out;
+}
+
+function collectFacultyTaskAssignedToUserIds(tasks = [], out = new Set()) {
+  for (const task of tasks || []) {
+    const assignedRole = normalizeTaskAssignedRole(task?.assignedRole || "");
+    if (assignedRole === "faculty" && task?.assignedTo) {
+      const raw = task?.assignedTo?._id?.toString?.() || task?.assignedTo?.toString?.();
+      if (raw) out.add(raw);
+    }
+    collectFacultyTaskAssignedToUserIds(task.children || [], out);
   }
   return out;
 }
@@ -960,26 +1064,34 @@ function canUploadToFolder(folder, userId, role) {
   const normalizedRole = normalizeRole(role);
   if (!canUploadDocuments(normalizedRole)) return false;
   if (["superadmin", "qa_admin", "dept_chair"].includes(normalizedRole)) return true;
+  const target = userId?.toString?.() || String(userId || "");
   const ownerId = folder.owner?._id?.toString?.() || folder.owner?.toString?.();
-  if (ownerId === userId?.toString?.()) return true;
+  if (ownerId === target) return true;
+
+  const taskUploaders = collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedUploaders");
+  const facultyTaskAssignees = collectFacultyTaskAssignedToUserIds(folder.complianceTasks || []);
+  const hasComplianceScope =
+    !!folder?.complianceProfileKey || Array.isArray(folder?.complianceTasks) && folder.complianceTasks.length > 0;
+
+  if (normalizedRole === "faculty" && hasComplianceScope) {
+    const hasTaskAssignments = taskUploaders.size > 0 || facultyTaskAssignees.size > 0;
+    if (!hasTaskAssignments) return false;
+    return taskUploaders.has(target) || facultyTaskAssignees.has(target);
+  }
 
   const folderUploaders = new Set(
     (folder.folderAssignments?.uploaders || [])
       .map((id) => id?._id?.toString?.() || id?.toString?.())
       .filter(Boolean)
   );
-  const taskUploaders = collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedUploaders");
   const directTaskAssignees = collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedTo");
   const restrictedByAssignments = folderUploaders.size > 0 || taskUploaders.size > 0 || directTaskAssignees.size > 0;
-  const hasComplianceScope =
-    !!folder?.complianceProfileKey || Array.isArray(folder?.complianceTasks) && folder.complianceTasks.length > 0;
   if (!restrictedByAssignments && hasComplianceScope) {
     // Compliance folders must be explicitly assigned for non-admin users.
     return false;
   }
   if (!restrictedByAssignments) return true;
 
-  const target = userId?.toString?.();
   return folderUploaders.has(target) || taskUploaders.has(target) || directTaskAssignees.has(target);
 }
 
@@ -1317,6 +1429,33 @@ function flattenTaskTree(tasks = [], depth = 0, parentTaskId = null, out = []) {
   return out;
 }
 
+function filterTaskTreeForActor(tasks = [], userId, actorRole, includeAncestors = false) {
+  const target = String(userId || "");
+  if (!target) return [];
+  const normalizedActorRole = normalizeRole(actorRole);
+
+  const walk = (nodes = []) => {
+    const out = [];
+    for (const node of nodes || []) {
+      const task = normalizeTaskNode(node || {});
+      const children = walk(task.children || []);
+      const assignedDirectly = includesUserInAssignmentList(
+        roleScopedTaskAssigneeIds(task, normalizedActorRole),
+        target
+      );
+      if (assignedDirectly || (includeAncestors && children.length > 0)) {
+        out.push({
+          ...task,
+          children,
+        });
+      }
+    }
+    return out;
+  };
+
+  return walk(tasks);
+}
+
 const COPC_PREDEFINED_TASKS_BY_FOLDER_NAME = collectCopcTemplateTaskMap(
   cloneFolderTemplate(COPC_FOLDER_TREE_TEMPLATE)
 );
@@ -1510,6 +1649,33 @@ function parseCopcFilename(originalName) {
   };
 }
 
+function normalizeCopcDocNameSegment(value) {
+  const raw = String(value || "")
+    .replace(/\.[^.]+$/, "")
+    .trim();
+  const normalized = raw
+    .replace(/[\s-]+/g, "_")
+    .replace(/[^A-Za-z0-9_()&.\-]/g, "_")
+    .replace(/_{2,}/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return normalized || "Document_Name";
+}
+
+function extractAreaTokenFromFilename(name) {
+  const match = String(name || "").match(/(?:^|_)(?:Area)?(\d{1,2})(?:_|$)/i);
+  const digits = Number(match?.[1]);
+  if (!Number.isFinite(digits)) return null;
+  return toCopcAreaToken(digits);
+}
+
+function extractCopcDateText(name) {
+  const match = String(name || "").match(
+    /((?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))/
+  );
+  if (match?.[1]) return String(match[1]);
+  return new Date().toISOString().slice(0, 10);
+}
+
 async function getFolderLineage(folderId) {
   const lineage = [];
   let cursor = await Folder.findById(folderId).select("name parentFolder");
@@ -1552,45 +1718,71 @@ function inferCopcFilenameExpectations(lineage, rootFolder) {
 }
 
 async function validateCopcFilenameForFolder(folderId, originalName) {
+  const raw = String(originalName || "").trim();
   const root = await findCopcRootFolderByFolderId(folderId);
-  if (!root) return { valid: true, isCopc: false };
+  if (!root) {
+    return {
+      valid: true,
+      isCopc: false,
+      correctedName: raw,
+      autoCorrected: false,
+    };
+  }
+
+  const extension = String(path.extname(raw || "") || "").toLowerCase();
+  if (extension && extension !== ".pdf") {
+    return {
+      valid: false,
+      isCopc: true,
+      expected: null,
+      error: "COPC uploads currently require PDF files. Please upload a PDF document.",
+    };
+  }
 
   const lineage = await getFolderLineage(folderId);
   const expected = inferCopcFilenameExpectations(lineage, root);
-  const parsed = parseCopcFilename(originalName);
-  const sampleCollege = expected.expectedCollege || "COT";
+  const parsed = parseCopcFilename(raw);
+  const sampleCollege = expected.expectedCollege || parsed?.collegeCode || "COT";
   const sampleArea = expected.expectedAreaToken || "Area01";
   const sampleDate = new Date().toISOString().slice(0, 10);
   const sample = `${sampleCollege}_${sampleArea}_Document_Name_${sampleDate}.pdf`;
 
-  if (!parsed) {
-    return {
-      valid: false,
-      isCopc: true,
-      expected,
-      error: `COPC naming is required: [College]_[Area#]_[DocName]_[Date].pdf (YYYY-MM-DD). Example: ${sample}`,
-    };
+  let docNameSeed = parsed?.docName || "";
+  if (!docNameSeed) {
+    const baseWithoutExt = raw.replace(/\.[^.]+$/, "");
+    const tokens = baseWithoutExt.split("_").filter(Boolean);
+    const looksLikeDateToken = /^((?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))$/.test(
+      String(tokens[tokens.length - 1] || "")
+    );
+    const looksLikeAreaToken = /^(?:Area)?\d{1,2}$/i.test(String(tokens[1] || ""));
+    if (tokens.length >= 4 && looksLikeDateToken && looksLikeAreaToken) {
+      docNameSeed = tokens.slice(2, -1).join("_");
+    } else {
+      docNameSeed = baseWithoutExt;
+    }
   }
 
-  if (expected.expectedCollege && parsed.collegeCode !== expected.expectedCollege) {
-    return {
-      valid: false,
-      isCopc: true,
-      expected,
-      error: `Invalid COPC filename for this folder. Expected college code "${expected.expectedCollege}" and format [College]_[Area#]_[DocName]_[Date].pdf. Example: ${sample}`,
-    };
-  }
+  const normalizedDocName = normalizeCopcDocNameSegment(docNameSeed);
+  const collegeCode = String(
+    expected.expectedCollege || parsed?.collegeCode || sampleCollege
+  ).toUpperCase();
+  const areaToken =
+    expected.expectedAreaToken ||
+    parsed?.areaToken ||
+    extractAreaTokenFromFilename(raw) ||
+    sampleArea;
+  const dateText = parsed?.dateText || extractCopcDateText(raw);
+  const correctedName = `${collegeCode}_${areaToken}_${normalizedDocName}_${dateText}.pdf`;
 
-  if (expected.expectedAreaToken && parsed.areaToken !== expected.expectedAreaToken) {
-    return {
-      valid: false,
-      isCopc: true,
-      expected,
-      error: `Invalid COPC filename for this folder. Expected area token "${expected.expectedAreaToken}" and format [College]_[Area#]_[DocName]_[Date].pdf. Example: ${sample}`,
-    };
-  }
-
-  return { valid: true, isCopc: true, expected, parsed };
+  return {
+    valid: true,
+    isCopc: true,
+    expected,
+    parsed,
+    correctedName,
+    autoCorrected: correctedName !== raw,
+    sample,
+  };
 }
 
 async function getDescendantFolderIds(rootId, options = {}) {
@@ -1809,7 +2001,9 @@ const ensureExtension = (name, mime) => {
 };
 const getContentType = (name, mime) => {
   const ext = getExtension(name);
-  return mime || mimeByExt[ext] || "application/octet-stream";
+  const normalizedMime = String(mime || "").trim().toLowerCase();
+  if (normalizedMime && normalizedMime !== "application/octet-stream") return normalizedMime;
+  return mimeByExt[ext] || normalizedMime || "application/octet-stream";
 };
 
 const CLASSIFICATION_VERSION = "v1";
@@ -3136,6 +3330,9 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
     const { userId, role, parentFolder, isUpdate, fileId, changeDescription } = req.body;
+    const uploadOriginalName = String(req.file.originalname || "").trim();
+    let effectiveOriginalName = uploadOriginalName;
+    let namingCheckResult = null;
     if (!userId) return res.status(400).json({ error: "Missing userId" });
     const actorRole = await resolveActorRole(userId, role);
     if (!canUploadDocuments(actorRole)) {
@@ -3144,7 +3341,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
 
     let targetFolder = null;
     if (parentFolder) {
-      targetFolder = await Folder.findById(parentFolder).select("owner folderAssignments complianceTasks deletedAt");
+      targetFolder = await Folder.findById(parentFolder).select("owner folderAssignments complianceTasks complianceProfileKey deletedAt");
       if (!targetFolder || targetFolder.deletedAt) {
         return res.status(404).json({ error: "Parent folder not found" });
       }
@@ -3161,12 +3358,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     let previousHash = null;
     const uploadedFilePath = path.join(__dirname, "uploads", req.file.filename);
     const contentHash = await computeFileHash(uploadedFilePath);
-    const extractedText = await extractTextForClassification(uploadedFilePath, req.file.mimetype, req.file.originalname);
-    const classificationResult = classifyDocument({
-      originalName: req.file.originalname,
-      mimetype: req.file.mimetype,
-      text: extractedText,
-    });
+    let classificationResult = null;
 
     if (isUpdate && fileId) {
       // Update existing file - create new version
@@ -3175,7 +3367,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       previousHash = file.contentHash || null;
 
       if (!targetFolder && file.parentFolder) {
-        targetFolder = await Folder.findById(file.parentFolder).select("owner folderAssignments complianceTasks deletedAt");
+        targetFolder = await Folder.findById(file.parentFolder).select("owner folderAssignments complianceTasks complianceProfileKey deletedAt");
       }
       if (file.parentFolder && await isFolderWithinLockedCopc(file.parentFolder)) {
         return res.status(423).json({ error: "This COPC scope is locked after final approval" });
@@ -3184,16 +3376,17 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         return res.status(403).json({ error: "You are not assigned to upload in this folder" });
       }
       if (targetFolder?._id) {
-        const namingCheck = await validateCopcFilenameForFolder(targetFolder._id, req.file.originalname);
-        if (!namingCheck.valid) {
+        namingCheckResult = await validateCopcFilenameForFolder(targetFolder._id, effectiveOriginalName);
+        if (!namingCheckResult.valid) {
           try {
             fs.unlinkSync(uploadedFilePath);
           } catch {}
           return res.status(400).json({
-            error: namingCheck.error,
+            error: namingCheckResult.error,
             code: "COPC_FILENAME_INVALID",
           });
         }
+        effectiveOriginalName = namingCheckResult.correctedName || effectiveOriginalName;
       }
 
       const isOwner =
@@ -3209,6 +3402,17 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       if (!isOwner && !isSharedWithEditor && !isGroupEditor && !isLeader && !isAdmin) {
         return res.status(403).json({ error: "Not authorized to update this file" });
       }
+
+      const extractedText = await extractTextForClassification(
+        uploadedFilePath,
+        req.file.mimetype,
+        effectiveOriginalName
+      );
+      classificationResult = classifyDocument({
+        originalName: effectiveOriginalName,
+        mimetype: req.file.mimetype,
+        text: extractedText,
+      });
 
       // Get latest version number
       const latestVersion = await FileVersion.findOne({ fileId: file._id })
@@ -3236,7 +3440,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       await oldVersion.save();
 
       // Update file with new version
-      file.originalName = req.file.originalname;
+      file.originalName = effectiveOriginalName;
       file.filename = req.file.filename;
       file.mimetype = req.file.mimetype;
       file.size = req.file.size;
@@ -3249,25 +3453,36 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         classifierVersion: CLASSIFICATION_VERSION,
       };
       if (targetFolder) {
-        file.reviewWorkflow = buildFileWorkflowFromFolder(targetFolder);
+        file.reviewWorkflow = await buildFileWorkflowForFolder(targetFolder);
       }
       await file.save();
     } else {
       // New file upload
       if (targetFolder?._id) {
-        const namingCheck = await validateCopcFilenameForFolder(targetFolder._id, req.file.originalname);
-        if (!namingCheck.valid) {
+        namingCheckResult = await validateCopcFilenameForFolder(targetFolder._id, effectiveOriginalName);
+        if (!namingCheckResult.valid) {
           try {
             fs.unlinkSync(uploadedFilePath);
           } catch {}
           return res.status(400).json({
-            error: namingCheck.error,
+            error: namingCheckResult.error,
             code: "COPC_FILENAME_INVALID",
           });
         }
+        effectiveOriginalName = namingCheckResult.correctedName || effectiveOriginalName;
       }
+      const extractedText = await extractTextForClassification(
+        uploadedFilePath,
+        req.file.mimetype,
+        effectiveOriginalName
+      );
+      classificationResult = classifyDocument({
+        originalName: effectiveOriginalName,
+        mimetype: req.file.mimetype,
+        text: extractedText,
+      });
       file = new File({
-      originalName: req.file.originalname,
+      originalName: effectiveOriginalName,
       filename: req.file.filename,
       mimetype: req.file.mimetype,
       size: req.file.size,
@@ -3284,25 +3499,8 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         classifierVersion: CLASSIFICATION_VERSION,
       },
       reviewWorkflow: targetFolder
-        ? buildFileWorkflowFromFolder(targetFolder)
-        : {
-            requiresReview: false,
-            status: "approved",
-            assignedProgramChairs: [],
-            assignedQaOfficers: [],
-            programChair: {
-              status: "not_required",
-              reviewedBy: null,
-              reviewedAt: null,
-              notes: "",
-            },
-            qaOfficer: {
-              status: "not_required",
-              reviewedBy: null,
-              reviewedAt: null,
-              notes: "",
-            },
-          },
+        ? await buildFileWorkflowForFolder(targetFolder)
+        : buildNoReviewWorkflow(),
     });
     await file.save();
     }
@@ -3327,7 +3525,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
     await fileVersion.save();
 
     // NEW: log upload
-    createLog("UPLOAD", userId, `Uploaded ${req.file.originalname}`);
+    createLog("UPLOAD", userId, `Uploaded ${effectiveOriginalName}`);
     if (file?.parentFolder) {
       await updateCopcStage(file.parentFolder, "collecting_documents", "Collecting Documents");
     }
@@ -3337,14 +3535,14 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         file.owner,
         "FILE_UPDATED",
         "Shared file updated",
-        `${req.file.originalname} was updated by another user.`,
+        `${effectiveOriginalName} was updated by another user.`,
         changeDescription || "The document content was updated.",
         file._id,
         "File",
         {
           actorId: userId,
           metadata: {
-            fileName: req.file.originalname,
+            fileName: effectiveOriginalName,
           },
         }
       );
@@ -3365,14 +3563,14 @@ app.post("/upload", upload.single("file"), async (req, res) => {
           reviewTargets,
           "REVIEW_REQUIRED",
           "Document ready for review",
-          `"${req.file.originalname}" is now ready for ${reviewStageLabel} review.`,
+          `"${effectiveOriginalName}" is now ready for ${reviewStageLabel} review.`,
           isUpdate ? "An existing document was updated." : "A new document was uploaded.",
           file._id,
           "File",
           {
             actorId: userId,
             metadata: {
-              fileName: req.file.originalname,
+              fileName: effectiveOriginalName,
               stage: reviewStageLabel,
             },
           }
@@ -3395,6 +3593,12 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         status: duplicateStatus,
         count: duplicateCount,
         duplicateOf: file.duplicateOf || null,
+      },
+      naming: {
+        isCopc: !!namingCheckResult?.isCopc,
+        autoCorrected: !!namingCheckResult?.autoCorrected,
+        originalName: uploadOriginalName,
+        storedName: effectiveOriginalName,
       },
     });
   } catch (err) {
@@ -3587,6 +3791,9 @@ app.post("/form-templates/:id/generate", async (req, res) => {
     fs.writeFileSync(targetPath, buffer);
 
     const targetFolder = destinationFolder || template.destinationFolder || null;
+    const targetFolderDoc = targetFolder
+      ? await Folder.findById(targetFolder).select("folderAssignments")
+      : null;
     const contentHash = await computeFileHash(targetPath);
     const extractedText = await extractTextForClassification(targetPath, mime, generatedName);
     const classificationResult = classifyDocument({
@@ -3612,6 +3819,9 @@ app.post("/form-templates/:id/generate", async (req, res) => {
         classifiedAt: new Date(),
         classifierVersion: CLASSIFICATION_VERSION,
       },
+      reviewWorkflow: targetFolderDoc
+        ? await buildFileWorkflowForFolder(targetFolderDoc)
+        : buildNoReviewWorkflow(),
     });
 
     await reconcileDuplicateGroup(contentHash);
@@ -3664,6 +3874,9 @@ app.post("/reports/auto-generate", async (req, res) => {
     fs.writeFileSync(targetPath, buffer);
 
     const targetFolder = reportData?.destinationFolder || null;
+    const targetFolderDoc = targetFolder
+      ? await Folder.findById(targetFolder).select("folderAssignments")
+      : null;
     const contentHash = await computeFileHash(targetPath);
     const extractedText = await extractTextForClassification(targetPath, mime, reportName);
     const classificationResult = classifyDocument({
@@ -3689,6 +3902,9 @@ app.post("/reports/auto-generate", async (req, res) => {
         classifiedAt: new Date(),
         classifierVersion: CLASSIFICATION_VERSION,
       },
+      reviewWorkflow: targetFolderDoc
+        ? await buildFileWorkflowForFolder(targetFolderDoc)
+        : buildNoReviewWorkflow(),
     });
 
     await reconcileDuplicateGroup(contentHash);
@@ -4101,7 +4317,7 @@ app.post("/upload-camera", upload.array("images", 20), async (req, res) => {
     }
     let targetFolder = null;
     if (parentFolder) {
-      targetFolder = await Folder.findById(parentFolder).select("owner folderAssignments complianceTasks deletedAt");
+      targetFolder = await Folder.findById(parentFolder).select("owner folderAssignments complianceTasks complianceProfileKey deletedAt");
       if (!targetFolder || targetFolder.deletedAt) {
         return res.status(404).json({ error: "Parent folder not found" });
       }
@@ -4206,26 +4422,29 @@ app.post("/upload-camera", upload.array("images", 20), async (req, res) => {
       let baseName = (originalName || `CameraCapture_${Date.now()}`).replace(/[^\w\-.]/g, "_");
       const hasExt = baseName.toLowerCase().endsWith(ext.toLowerCase());
       const safeName = hasExt ? baseName : `${baseName}${ext}`;
+      let finalOriginalName = safeName;
+      let namingCheckResult = null;
       if (targetFolder?._id) {
-        const namingCheck = await validateCopcFilenameForFolder(targetFolder._id, safeName);
-        if (!namingCheck.valid) {
+        namingCheckResult = await validateCopcFilenameForFolder(targetFolder._id, safeName);
+        if (!namingCheckResult.valid) {
           try {
             for (const f of imageFiles) {
               fs.unlinkSync(path.join(__dirname, "uploads", f.filename));
             }
           } catch {}
           return res.status(400).json({
-            error: namingCheck.error,
+            error: namingCheckResult.error,
             code: "COPC_FILENAME_INVALID",
           });
         }
+        finalOriginalName = namingCheckResult.correctedName || finalOriginalName;
       }
       const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
       const targetPath = path.join(__dirname, "uploads", filename);
       fs.writeFileSync(targetPath, buffer);
 
       const file = new File({
-        originalName: safeName,
+        originalName: finalOriginalName,
         filename,
         mimetype: mime,
         size: buffer.length,
@@ -4235,9 +4454,9 @@ app.post("/upload-camera", upload.array("images", 20), async (req, res) => {
         uploadDate: new Date(),
       });
       const contentHash = await computeFileHash(targetPath);
-      const extractedText = await extractTextForClassification(targetPath, mime, safeName);
+      const extractedText = await extractTextForClassification(targetPath, mime, finalOriginalName);
       const classificationResult = classifyDocument({
-        originalName: safeName,
+        originalName: finalOriginalName,
         mimetype: mime,
         text: extractedText,
       });
@@ -4250,15 +4469,8 @@ app.post("/upload-camera", upload.array("images", 20), async (req, res) => {
         classifierVersion: CLASSIFICATION_VERSION,
       };
       file.reviewWorkflow = targetFolder
-        ? buildFileWorkflowFromFolder(targetFolder)
-        : {
-            requiresReview: false,
-            status: "approved",
-            assignedProgramChairs: [],
-            assignedQaOfficers: [],
-            programChair: { status: "not_required", reviewedBy: null, reviewedAt: null, notes: "" },
-            qaOfficer: { status: "not_required", reviewedBy: null, reviewedAt: null, notes: "" },
-          };
+        ? await buildFileWorkflowForFolder(targetFolder)
+        : buildNoReviewWorkflow();
       await file.save();
       await reconcileDuplicateGroup(contentHash);
 
@@ -4290,6 +4502,12 @@ app.post("/upload-camera", upload.array("images", 20), async (req, res) => {
           status: duplicateCount > 1 ? "duplicate" : "unique",
           count: duplicateCount,
           duplicateOf: file.duplicateOf || null,
+        },
+        naming: {
+          isCopc: !!namingCheckResult?.isCopc,
+          autoCorrected: !!namingCheckResult?.autoCorrected,
+          originalName: safeName,
+          storedName: finalOriginalName,
         },
       });
     }
@@ -4576,19 +4794,16 @@ app.get("/view/:filename", async (req, res) => {
 
     const filePath = path.join(__dirname, "uploads", req.params.filename);
 
-    // Compute a reliable content type for inline preview
-    const ext = (doc.originalName || "").toLowerCase();
-    let contentType = doc.mimetype || "application/octet-stream";
-    if (ext.endsWith(".pdf")) contentType = "application/pdf";
-    if (ext.endsWith(".png")) contentType = "image/png";
-    if (ext.endsWith(".jpg") || ext.endsWith(".jpeg")) contentType = "image/jpeg";
-    if (ext.endsWith(".gif")) contentType = "image/gif";
+    // Compute a reliable content type for inline preview.
+    // Prefer detected MIME; only fall back to extension when MIME is generic/empty.
+    const downloadName = ensureExtension(doc.originalName, doc.mimetype);
+    const contentType = getContentType(downloadName, doc.mimetype);
 
     // Set appropriate headers for browser preview
     res.setHeader("Content-Type", contentType);
     res.setHeader(
       "Content-Disposition",
-      `inline; filename="${encodeURIComponent(doc.originalName)}"`
+      `inline; filename="${encodeURIComponent(downloadName)}"`
     );
     res.setHeader("Cache-Control", "private, max-age=3600");
     res.setHeader("X-Content-Type-Options", "nosniff");
@@ -4616,13 +4831,29 @@ app.get("/preview/:filename", async (req, res) => {
     const ext = (doc.originalName || "").toLowerCase();
     const filename = req.params.filename;
     const filePath = path.join(__dirname, "uploads", filename);
+    const downloadLink = `/download/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`;
     const extOnly = path.extname(ext);
-    const isPdf = doc.mimetype?.includes("pdf") || extOnly === ".pdf";
-    const isImage = doc.mimetype?.startsWith("image/") || [".png", ".jpg", ".jpeg", ".gif"].includes(extOnly);
-    const isText = doc.mimetype?.startsWith("text/") || ["application/json", "application/xml"].includes(doc.mimetype) || [".txt", ".json", ".xml", ".csv"].includes(extOnly);
-    const isDocx = doc.mimetype?.includes("vnd.openxmlformats-officedocument.wordprocessingml.document") || extOnly === ".docx";
-    const isXlsx = doc.mimetype?.includes("spreadsheetml") || doc.mimetype?.includes("vnd.ms-excel") || [".xlsx", ".xls"].includes(extOnly);
-    const isPptx = doc.mimetype?.includes("presentationml") || [".pptx", ".ppt"].includes(extOnly);
+    const normalizedMime = String(doc.mimetype || "").toLowerCase();
+    const hasSpecificMime = normalizedMime && normalizedMime !== "application/octet-stream";
+    const isPdf = hasSpecificMime ? normalizedMime.includes("pdf") : extOnly === ".pdf";
+    const isImage = hasSpecificMime
+      ? normalizedMime.startsWith("image/")
+      : [".png", ".jpg", ".jpeg", ".gif"].includes(extOnly);
+    const isText = hasSpecificMime
+      ? (
+        normalizedMime.startsWith("text/") ||
+        ["application/json", "application/xml", "text/csv"].includes(normalizedMime)
+      )
+      : [".txt", ".json", ".xml", ".csv"].includes(extOnly);
+    const isDocx = hasSpecificMime
+      ? normalizedMime.includes("vnd.openxmlformats-officedocument.wordprocessingml.document")
+      : extOnly === ".docx";
+    const isXlsx = hasSpecificMime
+      ? (normalizedMime.includes("spreadsheetml") || normalizedMime.includes("vnd.ms-excel"))
+      : [".xlsx", ".xls"].includes(extOnly);
+    const isPptx = hasSpecificMime
+      ? normalizedMime.includes("presentationml")
+      : [".pptx", ".ppt"].includes(extOnly);
 
     if (isPdf) {
       const url = `/view/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`;
@@ -4657,7 +4888,9 @@ app.get("/preview/:filename", async (req, res) => {
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         return res.send(html);
       } catch (e) {
-        return res.status(500).send("Failed to preview DOCX");
+        const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>body{font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial;padding:24px;color:#1f2937} .card{border:1px solid #e5e7eb;border-radius:8px;padding:16px;max-width:680px;margin:auto} a.btn{display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 14px;border-radius:6px} p{margin:.5em 0}</style></head><body><div class="card"><h2>Document Preview Unavailable</h2><p>This file cannot be rendered inline right now. You can still download it.</p><a class="btn" href="${downloadLink}">Download File</a></div></body></html>`;
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        return res.send(html);
       }
     }
 
@@ -4676,13 +4909,14 @@ app.get("/preview/:filename", async (req, res) => {
         res.setHeader("Content-Type", "text/html; charset=utf-8");
         return res.send(html);
       } catch (e) {
-        return res.status(500).send("Failed to preview Excel");
+        const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>body{font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial;padding:24px;color:#1f2937} .card{border:1px solid #e5e7eb;border-radius:8px;padding:16px;max-width:680px;margin:auto} a.btn{display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 14px;border-radius:6px} p{margin:.5em 0}</style></head><body><div class="card"><h2>Spreadsheet Preview Unavailable</h2><p>This file cannot be rendered inline right now. You can still download it.</p><a class="btn" href="${downloadLink}">Download File</a></div></body></html>`;
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+        return res.send(html);
       }
     }
 
     if (isPptx) {
-      const dl = `/download/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`;
-      const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>body{font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial;padding:24px;color:#1f2937} .card{border:1px solid #e5e7eb;border-radius:8px;padding:16px;max-width:640px;margin:auto} a.btn{display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 14px;border-radius:6px} p{margin:.5em 0}</style></head><body><div class="card"><h2>PowerPoint Preview</h2><p>PPTX cannot be rendered inline. Please download to open locally.</p><a class="btn" href="${dl}">Download PPTX</a></div></body></html>`;
+      const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>body{font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial;padding:24px;color:#1f2937} .card{border:1px solid #e5e7eb;border-radius:8px;padding:16px;max-width:640px;margin:auto} a.btn{display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 14px;border-radius:6px} p{margin:.5em 0}</style></head><body><div class="card"><h2>PowerPoint Preview</h2><p>PPTX cannot be rendered inline. Please download to open locally.</p><a class="btn" href="${downloadLink}">Download PPTX</a></div></body></html>`;
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return res.send(html);
     }
@@ -4781,7 +5015,7 @@ app.patch("/files/:id/move", async (req, res) => {
     }
 
     if (newFolderId) {
-      const targetFolder = await Folder.findById(newFolderId).select("owner folderAssignments complianceTasks deletedAt");
+      const targetFolder = await Folder.findById(newFolderId).select("owner folderAssignments complianceTasks complianceProfileKey deletedAt");
       if (!targetFolder || targetFolder.deletedAt) {
         return res.status(404).json({ error: "Destination folder not found" });
       }
@@ -4798,7 +5032,7 @@ app.patch("/files/:id/move", async (req, res) => {
     file.parentFolder = nextFolderId;
     if (newFolderId) {
       const targetFolder = await Folder.findById(newFolderId).select("folderAssignments");
-      if (targetFolder) file.reviewWorkflow = buildFileWorkflowFromFolder(targetFolder);
+      if (targetFolder) file.reviewWorkflow = await buildFileWorkflowForFolder(targetFolder);
     }
     await file.save();
 
@@ -5050,23 +5284,36 @@ app.patch("/files/:id/unshare", async (req, res) => {
 app.post("/folders", async (req, res) => {
   try {
     const { name, owner, parentFolder, role, isPredefinedRoot, predefinedTemplateKey } = req.body;
-    if (isReadOnlyReviewerRole(role)) {
+    const actorRole = await resolveActorRole(owner, role);
+    if (isReadOnlyReviewerRole(actorRole)) {
       return res.status(403).json({ error: "Reviewer role is read-only and cannot create folders" });
     }
     if (!name || !owner)
       return res.status(400).json({ error: "Missing folder name or owner" });
 
-    const isAdmin = await isAdminContext(role, owner);
-    if (parentFolder && await isFolderWithinLockedCopc(parentFolder)) {
-      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    const isSuperAdmin = normalizeRole(actorRole) === "superadmin";
+    let parentFolderDoc = null;
+    if (parentFolder) {
+      parentFolderDoc = await Folder.findById(parentFolder).select(
+        "owner folderAssignments complianceTasks complianceProfileKey deletedAt"
+      );
+      if (!parentFolderDoc || parentFolderDoc.deletedAt) {
+        return res.status(404).json({ error: "Parent folder not found" });
+      }
+      if (await isFolderWithinLockedCopc(parentFolder)) {
+        return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+      }
+      if (!canEditAnyDocuments(actorRole) && !canUploadToFolder(parentFolderDoc, owner, actorRole)) {
+        return res.status(403).json({ error: "You are not assigned to create folders in this folder" });
+      }
     }
 
     const folder = new Folder({
       name,
       owner,
       parentFolder: parentFolder || null,
-      isPredefinedRoot: !!(isAdmin && isPredefinedRoot),
-      predefinedTemplateKey: isAdmin && isPredefinedRoot ? (predefinedTemplateKey || null) : null,
+      isPredefinedRoot: !!(isSuperAdmin && isPredefinedRoot),
+      predefinedTemplateKey: isSuperAdmin && isPredefinedRoot ? (predefinedTemplateKey || null) : null,
       sharedWith: [],
       permissions: "owner",
     });
@@ -5254,7 +5501,7 @@ app.patch("/folders/:id/move", async (req, res) => {
     }
 
     if (newFolderId) {
-      const targetFolder = await Folder.findById(newFolderId).select("owner folderAssignments complianceTasks deletedAt");
+      const targetFolder = await Folder.findById(newFolderId).select("owner folderAssignments complianceTasks complianceProfileKey deletedAt");
       if (!targetFolder || targetFolder.deletedAt) {
         return res.status(404).json({ error: "Destination folder not found" });
       }
@@ -5351,7 +5598,7 @@ app.patch("/files/:id/review/program-chair", async (req, res) => {
 
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
-    const workflow = file.reviewWorkflow || {};
+    let workflow = await ensureFileReviewWorkflow(file);
     if (!workflow.requiresReview) {
       return res.status(400).json({ error: "This file does not require review" });
     }
@@ -5460,15 +5707,17 @@ app.patch("/files/:id/review/qa", async (req, res) => {
 
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
-    const workflow = file.reviewWorkflow || {};
+    let workflow = await ensureFileReviewWorkflow(file);
     if (!workflow.requiresReview) {
       return res.status(400).json({ error: "This file does not require review" });
     }
     if (!workflow.qaOfficer || workflow.qaOfficer.status === "not_required") {
       return res.status(400).json({ error: "QA review is not required for this file" });
     }
-    if (workflow.programChair && workflow.programChair.status === "pending") {
-      return res.status(400).json({ error: "Program chair review must be completed first" });
+    const chairStatus = String(workflow?.programChair?.status || "not_required");
+    const chairReviewRequired = chairStatus !== "not_required";
+    if (chairReviewRequired && chairStatus !== "approved") {
+      return res.status(400).json({ error: "Program chair approval is required before QA review" });
     }
     const assignedQa = Array.isArray(workflow.assignedQaOfficers) ? workflow.assignedQaOfficers : [];
     if (!isAdmin && assignedQa.length === 0) {
@@ -5557,7 +5806,7 @@ app.patch("/files/:id/review/qa/tag-category", async (req, res) => {
 
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
-    const workflow = file.reviewWorkflow || {};
+    const workflow = await ensureFileReviewWorkflow(file);
     if (!workflow.requiresReview) {
       return res.status(400).json({ error: "This file does not require COPC review" });
     }
@@ -5615,14 +5864,20 @@ app.get("/folders/:id/tasks", async (req, res) => {
 
     const ownerId = folder.owner?.toString?.() || folder.owner?._id?.toString?.();
     const actorRole = await resolveActorRole(userId, role);
-    const isAdmin = actorRole === "superadmin";
+    const normalizedActorRole = normalizeRole(actorRole);
+    const isAdmin = normalizedActorRole === "superadmin";
     const isOwner = ownerId && userId && ownerId.toString() === userId.toString();
     const isAssignedScope = await canUserAccessFolderByAssignment(folder._id, userId, actorRole);
     const canView = canViewCompliance(actorRole) || isAdmin || isOwner || isAssignedScope;
     if (!canView) return res.status(403).json({ error: "Not authorized to view folder tasks" });
 
-    const { normalized, progress, totalNodes, counts } = computeTaskProgress(folder.complianceTasks || []);
-    const flattenedTasks = flattenTaskTree(normalized);
+    const baseReport = computeTaskProgress(folder.complianceTasks || []);
+    const visibleTaskTree =
+      !isAdmin && normalizedActorRole === "faculty"
+        ? filterTaskTreeForActor(baseReport.normalized, userId, actorRole, false)
+        : baseReport.normalized;
+    const visibleReport = computeTaskProgress(visibleTaskTree);
+    const flattenedTasks = flattenTaskTree(visibleReport.normalized);
     const now = new Date();
     const dueSoonThreshold = new Date(now);
     dueSoonThreshold.setDate(dueSoonThreshold.getDate() + 7);
@@ -5679,18 +5934,22 @@ app.get("/folders/:id/tasks", async (req, res) => {
       folderId: folder._id,
       profileKey: folder.complianceProfileKey || null,
       isCopcScoped,
-      tasks: normalized,
-      progress,
-      totalNodes,
-      statusCounts: counts,
+      tasks: visibleReport.normalized,
+      progress: visibleReport.progress,
+      totalNodes: visibleReport.totalNodes,
+      statusCounts: visibleReport.counts,
       dashboard: {
-        totalTasks: totalNodes,
-        completedTasks: counts.approved,
-        pendingTasks: counts.pending + counts.in_progress + counts.for_review + counts.rejected,
-        overdueTasks: counts.overdue,
+        totalTasks: visibleReport.totalNodes,
+        completedTasks: visibleReport.counts.approved,
+        pendingTasks:
+          visibleReport.counts.pending +
+          visibleReport.counts.in_progress +
+          visibleReport.counts.for_review +
+          visibleReport.counts.rejected,
+        overdueTasks: visibleReport.counts.overdue,
         dueSoonTasks: dueSoonCount,
-        copcReadinessScore: progress,
-        forReviewQueue: counts.for_review,
+        copcReadinessScore: visibleReport.progress,
+        forReviewQueue: visibleReport.counts.for_review,
       },
       assignments: folder.folderAssignments || { uploaders: [], uploaderGroups: [], programChairs: [], qaOfficers: [], evaluators: [] },
       assignmentPool: {
@@ -6184,9 +6443,11 @@ app.patch("/folders/:id/tasks/:taskId/check", async (req, res) => {
 
     const folderRoleAssignments = getFolderAssignmentsForRole(folder, actorRole);
     const taskRoleAssignments = roleScopedTaskAssigneeIds(task, actorRole);
-    const actorIsAssignedToTask =
-      includesUserInAssignmentList(folderRoleAssignments, userId) ||
-      includesUserInAssignmentList(taskRoleAssignments, userId);
+    const assignedByFolderScope = includesUserInAssignmentList(folderRoleAssignments, userId);
+    const assignedByTaskScope = includesUserInAssignmentList(taskRoleAssignments, userId);
+    const actorIsAssignedToTask = normalizedActorRole === "faculty"
+      ? assignedByTaskScope
+      : (assignedByFolderScope || assignedByTaskScope);
     if (!isAdmin && !actorIsAssignedToTask) {
       return res.status(403).json({ error: "Not assigned to this task scope" });
     }
@@ -7111,8 +7372,9 @@ app.get("/copc/programs/:id/workflow", async (req, res) => {
       approved: 0,
       verified: 0,
     };
+    const workflowCache = new Map();
     for (const file of files) {
-      const wf = file.reviewWorkflow || {};
+      const wf = await ensureFileReviewWorkflow(file, workflowCache);
       counts.submitted += 1;
       if (wf.status === "pending_program_chair") counts.pendingProgramChair += 1;
       if (wf.status === "pending_qa") counts.pendingQa += 1;
@@ -7220,39 +7482,40 @@ app.get("/copc/programs/:id/department-chair/submissions", async (req, res) => {
       .populate("parentFolder", "name");
 
     const normalizedStatus = String(status || "pending").toLowerCase();
-    const submissions = files
-      .filter((file) => {
-        const wf = file?.reviewWorkflow || {};
-        if (!wf?.requiresReview) return false;
-        if (!wf?.programChair || wf.programChair.status === "not_required") return false;
+    const workflowCache = new Map();
+    const submissions = [];
+    for (const file of files) {
+      const wf = await ensureFileReviewWorkflow(file, workflowCache);
+      if (!wf?.requiresReview) continue;
+      if (!wf?.programChair || wf.programChair.status === "not_required") continue;
 
-        const assigned = Array.isArray(wf.assignedProgramChairs) ? wf.assignedProgramChairs : [];
-        if (!isAdmin && !isUserAssignedTo(userId, assigned)) return false;
+      const assigned = Array.isArray(wf.assignedProgramChairs) ? wf.assignedProgramChairs : [];
+      if (!isAdmin && !isUserAssignedTo(userId, assigned)) continue;
 
-        const chairStatus = String(wf?.programChair?.status || "");
-        if (normalizedStatus === "all") return true;
-        if (normalizedStatus === "pending") return chairStatus === "pending";
-        if (normalizedStatus === "completed") return chairStatus === "approved" || chairStatus === "rejected";
-        if (normalizedStatus === "revision") return String(wf?.status || "") === "rejected_program_chair";
-        return chairStatus === "pending";
-      })
-      .map((file) => {
-        const wf = file?.reviewWorkflow || {};
-        return {
-          _id: file._id,
-          originalName: file.originalName,
-          filename: file.filename,
-          mimetype: file.mimetype,
-          size: file.size,
-          uploadDate: file.uploadDate,
-          folderName: file?.parentFolder?.name || "Unknown Folder",
-          status: wf?.status || "pending_program_chair",
-          programChairStatus: wf?.programChair?.status || "pending",
-          programChairNotes: wf?.programChair?.notes || "",
-          classification: file?.classification || null,
-        };
-      })
-      .sort((a, b) => new Date(b.uploadDate || 0).getTime() - new Date(a.uploadDate || 0).getTime());
+      const chairStatus = String(wf?.programChair?.status || "");
+      let includeRow = false;
+      if (normalizedStatus === "all") includeRow = true;
+      else if (normalizedStatus === "pending") includeRow = chairStatus === "pending";
+      else if (normalizedStatus === "completed") includeRow = chairStatus === "approved" || chairStatus === "rejected";
+      else if (normalizedStatus === "revision") includeRow = String(wf?.status || "") === "rejected_program_chair";
+      else includeRow = chairStatus === "pending";
+      if (!includeRow) continue;
+
+      submissions.push({
+        _id: file._id,
+        originalName: file.originalName,
+        filename: file.filename,
+        mimetype: file.mimetype,
+        size: file.size,
+        uploadDate: file.uploadDate,
+        folderName: file?.parentFolder?.name || "Unknown Folder",
+        status: wf?.status || "pending_program_chair",
+        programChairStatus: wf?.programChair?.status || "pending",
+        programChairNotes: wf?.programChair?.notes || "",
+        classification: file?.classification || null,
+      });
+    }
+    submissions.sort((a, b) => new Date(b.uploadDate || 0).getTime() - new Date(a.uploadDate || 0).getTime());
 
     const counts = {
       pending: submissions.filter((s) => s.programChairStatus === "pending").length,
@@ -7304,35 +7567,35 @@ app.get("/copc/programs/:id/qa/submissions", async (req, res) => {
       .populate("parentFolder", "name");
 
     const normalizedStatus = String(status || "pending").toLowerCase();
-    const queue = files
-      .filter((file) => {
-        const wf = file?.reviewWorkflow || {};
-        if (!wf?.requiresReview) return false;
-        if (!wf?.qaOfficer || wf.qaOfficer.status === "not_required") return false;
-        if (wf?.programChair && wf.programChair.status === "pending") return false;
+    const workflowCache = new Map();
+    const queue = [];
+    for (const file of files) {
+      const wf = await ensureFileReviewWorkflow(file, workflowCache);
+      if (!wf?.requiresReview) continue;
+      if (!wf?.qaOfficer || wf.qaOfficer.status === "not_required") continue;
+      const chairStatus = String(wf?.programChair?.status || "not_required");
+      const chairReviewRequired = chairStatus !== "not_required";
+      if (chairReviewRequired && chairStatus !== "approved") continue;
 
-        const assigned = Array.isArray(wf.assignedQaOfficers) ? wf.assignedQaOfficers : [];
-        if (!isAdmin && !isUserAssignedTo(userId, assigned)) return false;
-        return true;
-      })
-      .map((file) => {
-        const wf = file?.reviewWorkflow || {};
-        return {
-          _id: file._id,
-          originalName: file.originalName,
-          filename: file.filename,
-          mimetype: file.mimetype,
-          size: file.size,
-          uploadDate: file.uploadDate,
-          folderName: file?.parentFolder?.name || "Unknown Folder",
-          status: wf?.status || "pending_qa",
-          programChairStatus: wf?.programChair?.status || "not_required",
-          programChairNotes: wf?.programChair?.notes || "",
-          qaStatus: wf?.qaOfficer?.status || "pending",
-          qaNotes: wf?.qaOfficer?.notes || "",
-          classification: file?.classification || null,
-        };
+      const assigned = Array.isArray(wf.assignedQaOfficers) ? wf.assignedQaOfficers : [];
+      if (!isAdmin && !isUserAssignedTo(userId, assigned)) continue;
+
+      queue.push({
+        _id: file._id,
+        originalName: file.originalName,
+        filename: file.filename,
+        mimetype: file.mimetype,
+        size: file.size,
+        uploadDate: file.uploadDate,
+        folderName: file?.parentFolder?.name || "Unknown Folder",
+        status: wf?.status || "pending_qa",
+        programChairStatus: wf?.programChair?.status || "not_required",
+        programChairNotes: wf?.programChair?.notes || "",
+        qaStatus: wf?.qaOfficer?.status || "pending",
+        qaNotes: wf?.qaOfficer?.notes || "",
+        classification: file?.classification || null,
       });
+    }
 
     const submissions = queue
       .filter((item) => {
@@ -7507,8 +7770,9 @@ app.get("/copc/programs/:id/evaluation/report/download", async (req, res) => {
       approved: 0,
       verified: 0,
     };
+    const workflowCache = new Map();
     for (const file of files) {
-      const wf = file.reviewWorkflow || {};
+      const wf = await ensureFileReviewWorkflow(file, workflowCache);
       counts.submitted += 1;
       if (wf.status === "pending_program_chair") counts.pendingProgramChair += 1;
       if (wf.status === "pending_qa") counts.pendingQa += 1;
@@ -7611,27 +7875,28 @@ app.get("/copc/programs/:id/my-upload-status", async (req, res) => {
       .sort({ uploadDate: -1 });
 
     const normalizedStatus = String(status || "all").toLowerCase();
-    const mappedRows = rawFiles
-      .map((file) => {
-        const wf = file.reviewWorkflow || {};
-        const workflowStatus = wf.requiresReview ? (wf.status || "pending_program_chair") : "approved";
-        return {
-          _id: file._id,
-          originalName: file.originalName,
-          filename: file.filename,
-          mimetype: file.mimetype,
-          size: file.size,
-          uploadDate: file.uploadDate,
-          folderId: file?.parentFolder?._id || file?.parentFolder || null,
-          folderName: file?.parentFolder?.name || "Unknown Folder",
-          workflowStatus,
-          programChairStatus: wf?.programChair?.status || "not_required",
-          programChairNotes: wf?.programChair?.notes || "",
-          qaStatus: wf?.qaOfficer?.status || "not_required",
-          qaNotes: wf?.qaOfficer?.notes || "",
-          classification: file?.classification || null,
-        };
+    const workflowCache = new Map();
+    const mappedRows = [];
+    for (const file of rawFiles) {
+      const wf = await ensureFileReviewWorkflow(file, workflowCache);
+      const workflowStatus = wf.requiresReview ? (wf.status || "pending_program_chair") : "approved";
+      mappedRows.push({
+        _id: file._id,
+        originalName: file.originalName,
+        filename: file.filename,
+        mimetype: file.mimetype,
+        size: file.size,
+        uploadDate: file.uploadDate,
+        folderId: file?.parentFolder?._id || file?.parentFolder || null,
+        folderName: file?.parentFolder?.name || "Unknown Folder",
+        workflowStatus,
+        programChairStatus: wf?.programChair?.status || "not_required",
+        programChairNotes: wf?.programChair?.notes || "",
+        qaStatus: wf?.qaOfficer?.status || "not_required",
+        qaNotes: wf?.qaOfficer?.notes || "",
+        classification: file?.classification || null,
       });
+    }
 
     const rows = mappedRows.filter((row) => {
       if (normalizedStatus === "all") return true;
@@ -7691,8 +7956,9 @@ app.get("/copc/programs/:id/assigned-tasks", async (req, res) => {
     const folderById = new Map(folders.map((folder) => [String(folder._id), folder]));
     const rootId = String(root._id);
     const normalizedActorRole = normalizeRole(actorRole);
-    const rootRoleAssignments = getFolderAssignmentsForRole(root, actorRole);
-    const facultyUsesUploaderGroups = normalizedActorRole === "faculty";
+    const facultyTaskOnlyAccess = normalizedActorRole === "faculty";
+    const rootRoleAssignments = facultyTaskOnlyAccess ? [] : getFolderAssignmentsForRole(root, actorRole);
+    const facultyUsesUploaderGroups = normalizedActorRole === "faculty" && !facultyTaskOnlyAccess;
 
     const uploaderGroupMemberMap = new Map();
     if (facultyUsesUploaderGroups) {
@@ -7754,12 +8020,21 @@ app.get("/copc/programs/:id/assigned-tasks", async (req, res) => {
       const folderId = String(folder._id);
       if (folderId === rootId) continue;
 
-      const taskNodes = flattenTaskTree(folder.complianceTasks || []);
-      const folderRoleAssignments = getFolderAssignmentsForRole(folder, actorRole);
+      const normalizedTaskTree = (folder.complianceTasks || []).map((task) => normalizeTaskNode(task));
+      const scopedTaskTree =
+        !isAdmin && facultyTaskOnlyAccess
+          ? filterTaskTreeForActor(normalizedTaskTree, userId, actorRole, false)
+          : normalizedTaskTree;
+      const taskNodes = flattenTaskTree(scopedTaskTree);
+      const folderRoleAssignments = facultyTaskOnlyAccess ? [] : getFolderAssignmentsForRole(folder, actorRole);
       const assignedFromFolderScope =
-        includesUserInAssignmentList(folderRoleAssignments, userId) ||
-        includesUserInAssignmentList(rootRoleAssignments, userId);
+        !facultyTaskOnlyAccess &&
+        (
+          includesUserInAssignmentList(folderRoleAssignments, userId) ||
+          includesUserInAssignmentList(rootRoleAssignments, userId)
+        );
       const assignedFromUploaderGroupScope =
+        !facultyTaskOnlyAccess &&
         facultyUsesUploaderGroups &&
         (
           includesUserInAnyGroupMemberList(
@@ -7776,14 +8051,16 @@ app.get("/copc/programs/:id/assigned-tasks", async (req, res) => {
 
       const folderAssignedForRole = isAdmin
         ? true
-        : (assignedFromFolderScope || assignedFromUploaderGroupScope);
+        : facultyTaskOnlyAccess
+          ? false
+          : (assignedFromFolderScope || assignedFromUploaderGroupScope);
 
       const assignedTasks = [];
       for (const node of taskNodes) {
         const normalizedTask = normalizeTaskNode(node.task || {});
         const taskAssignedForRole = isAdmin
           ? true
-          : includesUserInAssignmentList(getTaskAssignmentsForRole(normalizedTask, actorRole), userId);
+          : includesUserInAssignmentList(roleScopedTaskAssigneeIds(normalizedTask, actorRole), userId);
 
         if (!folderAssignedForRole && !taskAssignedForRole) continue;
 
@@ -7841,7 +8118,7 @@ app.get("/copc/programs/:id/assigned-tasks", async (req, res) => {
         folderName: folder.name,
         folderPath: buildFolderPath(folder._id),
         assignedByRoleScope: folderAssignedForRole,
-        progress: computeTaskProgress(folder.complianceTasks || []).progress,
+        progress: computeTaskProgress(scopedTaskTree).progress,
         stats: folderStats,
         tasks: assignedTasks,
       });
@@ -7889,14 +8166,41 @@ app.get("/copc/programs/:id/folders", async (req, res) => {
       .select("name parentFolder owner folderAssignments complianceTasks complianceProfileKey")
       .sort({ name: 1 });
 
-    const rows = folders.map((folder) => ({
+    const files = await File.find({
+      parentFolder: { $in: folderIds },
+      deletedAt: null,
+    }).select("parentFolder reviewWorkflow userId");
+
+    const approvedCountsByFolder = new Map();
+    const approvedOwnCountsByFolder = new Map();
+    for (const file of files) {
+      if (!isFileFullyApprovedForCopc(file)) continue;
+      const folderKey = String(file?.parentFolder || "");
+      if (!folderKey) continue;
+      approvedCountsByFolder.set(folderKey, Number(approvedCountsByFolder.get(folderKey) || 0) + 1);
+      if (String(file?.userId || "") === String(userId || "")) {
+        approvedOwnCountsByFolder.set(
+          folderKey,
+          Number(approvedOwnCountsByFolder.get(folderKey) || 0) + 1
+        );
+      }
+    }
+
+    const normalizedActorRole = normalizeRole(actorRole);
+    let rows = folders.map((folder) => ({
       _id: folder._id,
       name: folder.name,
       parentFolder: folder.parentFolder || null,
       canUpload: !root?.copc?.locked?.isLocked && canUploadToFolder(folder, userId, actorRole),
       isProgramRoot: String(folder._id) === String(root._id),
       taskCount: Array.isArray(folder.complianceTasks) ? folder.complianceTasks.length : 0,
+      approvedFileCount: Number(approvedCountsByFolder.get(String(folder._id)) || 0),
+      approvedOwnFileCount: Number(approvedOwnCountsByFolder.get(String(folder._id)) || 0),
     }));
+
+    if (normalizedActorRole === "faculty") {
+      rows = rows.filter((row) => row.canUpload && !row.isProgramRoot);
+    }
 
     res.json({
       program: {

@@ -4,28 +4,17 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   FaArrowLeft,
   FaCheckCircle,
-  FaCheckSquare,
-  FaChevronDown,
-  FaChevronUp,
   FaDownload,
-  FaEye,
-  FaFolderOpen,
+  FaExternalLinkAlt,
   FaFileAlt,
-  FaList,
-  FaRegSquare,
+  FaFolderOpen,
+  FaSearch,
   FaTag,
-  FaTh,
   FaTimesCircle,
   FaUndo,
 } from "react-icons/fa";
 import { BACKEND_URL } from "../config";
-
-const CHECKLIST_ITEMS = [
-  { key: "facultyQualification", label: "Faculty qualification compliance" },
-  { key: "curriculumAlignment", label: "Curriculum alignment" },
-  { key: "facilityDocumentation", label: "Facility documentation" },
-  { key: "programRequirements", label: "Program requirements" },
-];
+import "./copc-review-workspace.css";
 
 const COMPLIANCE_CATEGORIES = [
   "Faculty Qualification Compliance",
@@ -37,23 +26,10 @@ const COMPLIANCE_CATEGORIES = [
   "Supporting Documents",
 ];
 
-const normalizeQaStatusBadge = (status) => {
-  if (status === "approved") return "bg-success";
-  if (status === "rejected") return "bg-danger";
-  return "bg-warning text-dark";
-};
-
-const formatSize = (bytes) => {
-  const value = Number(bytes || 0);
-  if (!value || Number.isNaN(value)) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let size = value;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-  return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+const statusToneClass = (status) => {
+  if (status === "approved") return "status-approved";
+  if (status === "rejected") return "status-rejected";
+  return "status-pending";
 };
 
 export default function CopcQaReviewPage() {
@@ -73,7 +49,7 @@ export default function CopcQaReviewPage() {
   const [reviewNotes, setReviewNotes] = useState({});
   const [tagDrafts, setTagDrafts] = useState({});
   const [query, setQuery] = useState("");
-  const [view, setView] = useState("list");
+  const [selectedSubmissionId, setSelectedSubmissionId] = useState("");
   const [loadingCompilation, setLoadingCompilation] = useState(false);
   const [runningCompile, setRunningCompile] = useState(false);
   const [compilationData, setCompilationData] = useState({
@@ -81,18 +57,6 @@ export default function CopcQaReviewPage() {
     counts: { approvedFiles: 0, foldersWithApprovedFiles: 0 },
     folders: [],
   });
-  const [checklist, setChecklist] = useState({
-    facultyQualification: false,
-    curriculumAlignment: false,
-    facilityDocumentation: false,
-    programRequirements: false,
-  });
-  const [isChecklistCollapsed, setIsChecklistCollapsed] = useState(true);
-
-  const checklistDone = useMemo(
-    () => Object.values(checklist).filter(Boolean).length,
-    [checklist]
-  );
 
   const loadPrograms = async () => {
     const { data } = await axios.get(`${BACKEND_URL}/copc/programs`, { params: { userId, role } });
@@ -103,9 +67,9 @@ export default function CopcQaReviewPage() {
       return;
     }
     const queryProgramId = String(searchParams.get("programId") || "");
-    const hasQueryProgram = queryProgramId && list.some((p) => String(p._id) === queryProgramId);
+    const hasQueryProgram = queryProgramId && list.some((item) => String(item._id) === queryProgramId);
     setSelectedProgramId((prev) => {
-      if (prev && list.some((p) => String(p._id) === String(prev))) return prev;
+      if (prev && list.some((item) => String(item._id) === String(prev))) return prev;
       if (hasQueryProgram) return queryProgramId;
       return String(list[0]._id);
     });
@@ -206,9 +170,20 @@ export default function CopcQaReviewPage() {
     });
   }, [query, submissions]);
 
-  const setChecklistValue = (key) => {
-    setChecklist((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
+  useEffect(() => {
+    if (!filteredSubmissions.length) {
+      setSelectedSubmissionId("");
+      return;
+    }
+    if (!filteredSubmissions.some((item) => String(item._id) === String(selectedSubmissionId))) {
+      setSelectedSubmissionId(String(filteredSubmissions[0]._id));
+    }
+  }, [filteredSubmissions, selectedSubmissionId]);
+
+  const selectedSubmission = useMemo(
+    () => filteredSubmissions.find((item) => String(item._id) === String(selectedSubmissionId)) || null,
+    [filteredSubmissions, selectedSubmissionId]
+  );
 
   const setDraft = (fileId, key, value) => {
     setTagDrafts((prev) => ({
@@ -300,60 +275,42 @@ export default function CopcQaReviewPage() {
     window.open(url, "_blank");
   };
 
-  const renderTagControls = (submission) => {
-    const draft = tagDrafts[submission._id] || {};
-    const category = draft.category ?? submission.classification?.category ?? "";
-    const tags = draft.tags ?? (submission.classification?.tags || []).join(", ");
-    return (
-      <div className="d-flex flex-column gap-1">
-        <select
-          className="form-select form-select-sm"
-          value={category}
-          onChange={(e) => setDraft(submission._id, "category", e.target.value)}
-        >
-          <option value="">Select Compliance Category</option>
-          {COMPLIANCE_CATEGORIES.map((item) => (
-            <option key={`${submission._id}-${item}`} value={item}>
-              {item}
-            </option>
-          ))}
-        </select>
-        <input
-          className="form-control form-control-sm"
-          placeholder="Tags (comma-separated)"
-          value={tags}
-          onChange={(e) => setDraft(submission._id, "tags", e.target.value)}
-        />
-        <button
-          className="btn btn-sm btn-outline-secondary"
-          disabled={actingId === `${submission._id}-tag`}
-          onClick={() => handleTagCategory(submission)}
-        >
-          <FaTag className="me-1" /> Tag Compliance Category
-        </button>
-      </div>
-    );
-  };
-
   const goBackToDashboard = () => {
     const params = new URLSearchParams({ tab: "workflow" });
     if (selectedProgramId) params.set("programId", String(selectedProgramId));
     navigate(`/copc-dashboard?${params.toString()}`);
   };
 
+  const previewUrl = selectedSubmission
+    ? `${BACKEND_URL}/preview/${selectedSubmission.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`
+    : "";
+  const downloadUrl = selectedSubmission
+    ? `${BACKEND_URL}/download/${selectedSubmission.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`
+    : "";
+  const canAct = selectedSubmission?.qaStatus === "pending";
+  const tagDraft = selectedSubmission ? tagDrafts[selectedSubmission._id] || {} : {};
+  const categoryValue = selectedSubmission
+    ? tagDraft.category ?? selectedSubmission.classification?.category ?? ""
+    : "";
+  const tagsValue = selectedSubmission
+    ? tagDraft.tags ?? (selectedSubmission.classification?.tags || []).join(", ")
+    : "";
+
   return (
     <div className="container-fluid py-3 file-manager-container">
-      <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-        <div className="d-flex align-items-center gap-2">
-          <button className="btn btn-outline-secondary" onClick={goBackToDashboard}>
-            <FaArrowLeft className="me-1" /> Back
-          </button>
-          <h4 className="mb-0">QA Compliance Review</h4>
-        </div>
-        <div className="d-flex align-items-center gap-2 flex-wrap">
+      <div className="copc-review-shell">
+        <div className="copc-review-page-header">
+          <div className="copc-review-heading">
+            <button className="btn btn-outline-secondary" onClick={goBackToDashboard}>
+              <FaArrowLeft className="me-1" /> Back
+            </button>
+            <div>
+              <div className="copc-review-kicker">Explorer / QA Compliance</div>
+              <h4 className="mb-0">QA File Review</h4>
+            </div>
+          </div>
           <select
-            className="form-select"
-            style={{ minWidth: "260px", width: "100%", maxWidth: "460px" }}
+            className="form-select copc-review-program-select"
             value={selectedProgramId}
             onChange={(e) => setSelectedProgramId(e.target.value)}
           >
@@ -364,361 +321,266 @@ export default function CopcQaReviewPage() {
               </option>
             ))}
           </select>
-          <div className="btn-group" role="group">
-            <button
-              className={`btn ${view === "grid" ? "btn-primary" : "btn-outline-primary"}`}
-              onClick={() => setView("grid")}
-              title="Grid View"
-            >
-              <FaTh />
-            </button>
-            <button
-              className={`btn ${view === "list" ? "btn-primary" : "btn-outline-primary"}`}
-              onClick={() => setView("list")}
-              title="List View"
-            >
-              <FaList />
-            </button>
-          </div>
         </div>
-      </div>
 
-      {!selectedProgramId && (
-        <div className="alert alert-info">Select a COPC program to start QA compliance review.</div>
-      )}
+        {!selectedProgramId && (
+          <div className="alert alert-info mb-0">Select a COPC program to start QA compliance review.</div>
+        )}
 
-      {selectedProgramId && programMeta && (
-        <div className="card shadow-sm mb-3">
-          <div className="card-body">
-            <div className="d-flex justify-content-between align-items-start flex-wrap gap-2">
+        {selectedProgramId && programMeta && (
+          <div className="copc-review-program-card">
+            <div>
+              <div className="copc-review-program-title">{programMeta.code} - {programMeta.name}</div>
+              <div className="copc-review-program-subtitle">
+                {programMeta.description || "No description"} | AY {programMeta.year || "N/A"}
+              </div>
+            </div>
+            <div className="copc-review-counts">
+              <span className="copc-review-count-pill">Pending: {overallCounts.pending}</span>
+              <span className="copc-review-count-pill">Approved: {overallCounts.approved}</span>
+              <span className="copc-review-count-pill">Rejected: {overallCounts.rejected}</span>
+            </div>
+          </div>
+        )}
+
+        {selectedProgramId && (
+          <div className="copc-review-compilation-card">
+            <div className="copc-review-compilation-head">
               <div>
-                <div className="fw-semibold">{programMeta.code} - {programMeta.name}</div>
-                <div className="small text-muted">{programMeta.description || "No description"} | AY {programMeta.year || "N/A"}</div>
+                <div className="copc-review-program-title mb-1">COPC Compilation Stage</div>
+                <div className="copc-review-program-subtitle">
+                  Compile and download verified documents once QA approvals are complete.
+                </div>
               </div>
-              <div className="d-flex gap-2 flex-wrap">
-                <span className="badge text-bg-light border">Pending: {overallCounts.pending}</span>
-                <span className="badge text-bg-light border">Approved: {overallCounts.approved}</span>
-                <span className="badge text-bg-light border">Rejected: {overallCounts.rejected}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {selectedProgramId && (
-        <div className="card shadow-sm mb-3">
-          <div className="card-header bg-light fw-semibold">COPC Compilation Stage</div>
-          <div className="card-body">
-            <div className="small text-muted mb-2">
-              QA Admin compiles verified documents into a COPC submission package.
-            </div>
-            <div className="d-flex flex-wrap gap-2 mb-2">
-              <button
-                className="btn btn-primary"
-                onClick={runCompile}
-                disabled={runningCompile || !selectedProgramId}
-              >
-                <FaFolderOpen className="me-1" />
-                {runningCompile ? "Generating..." : "Generate COPC Package"}
-              </button>
-              <button
-                className="btn btn-outline-dark"
-                onClick={downloadPackage}
-                disabled={!selectedProgramId}
-              >
-                <FaDownload className="me-1" />
-                Download {compilationData?.program?.packageFileName || "COPC Package"}
-              </button>
-              <span className="badge text-bg-light border align-self-center">
-                Approved Files: {compilationData.counts.approvedFiles || 0}
-              </span>
-              <span className="badge text-bg-light border align-self-center">
-                Folders: {compilationData.counts.foldersWithApprovedFiles || 0}
-              </span>
-            </div>
-            {loadingCompilation && <div className="small text-muted">Loading approved folder structure...</div>}
-            {!loadingCompilation && (!compilationData.folders || compilationData.folders.length === 0) && (
-              <div className="small text-muted">
-                No fully approved files yet. Files appear here after Dept Chair and QA both approve.
-              </div>
-            )}
-            {!loadingCompilation && Array.isArray(compilationData.folders) && compilationData.folders.length > 0 && (
-              <div className="table-responsive">
-                <table className="table table-sm align-middle mb-0">
-                  <thead className="table-light">
-                    <tr>
-                      <th>Folder</th>
-                      <th>Approved Files</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {compilationData.folders.map((folder) => (
-                      <tr key={`compile-${folder.folderPath || "root"}`}>
-                        <td className="small fw-semibold">{folder.folderPath || "Root"}</td>
-                        <td>
-                          <div className="d-flex flex-column gap-1">
-                            {(folder.files || []).map((file) => (
-                              <div key={`compile-file-${file._id}`} className="d-flex align-items-center justify-content-between gap-2 small border rounded px-2 py-1">
-                                <span className="text-truncate" style={{ maxWidth: "420px" }} title={file.originalName}>
-                                  {file.originalName}
-                                </span>
-                                <a
-                                  className="btn btn-sm btn-outline-primary"
-                                  href={`${BACKEND_URL}/preview/${file.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                >
-                                  <FaEye />
-                                </a>
-                              </div>
-                            ))}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {selectedProgramId && (
-        <div className="card shadow-sm mb-3" style={{ maxWidth: "560px" }}>
-          <div className="card-header bg-light py-2">
-            <div className="d-flex justify-content-between align-items-center">
-              <div className="small fw-semibold">Compliance Checklist</div>
-              <div className="d-flex align-items-center gap-2">
-                <span className="small text-muted">{checklistDone}/{CHECKLIST_ITEMS.length}</span>
-                <button
-                  className="btn btn-sm btn-outline-secondary"
-                  onClick={() => setIsChecklistCollapsed((prev) => !prev)}
-                  title={isChecklistCollapsed ? "Expand checklist" : "Collapse checklist"}
-                >
-                  {isChecklistCollapsed ? <FaChevronDown /> : <FaChevronUp />}
+              <div className="copc-review-compilation-actions">
+                <button className="btn btn-primary" onClick={runCompile} disabled={runningCompile || !selectedProgramId}>
+                  <FaFolderOpen className="me-1" />
+                  {runningCompile ? "Generating..." : "Generate COPC Package"}
+                </button>
+                <button className="btn btn-outline-dark" onClick={downloadPackage} disabled={!selectedProgramId}>
+                  <FaDownload className="me-1" />
+                  Download Package
                 </button>
               </div>
             </div>
-          </div>
-          {!isChecklistCollapsed && (
-            <div className="card-body py-2">
-              <div className="d-flex flex-column gap-1">
-                {CHECKLIST_ITEMS.map((item) => (
-                  <button
-                    key={item.key}
-                    type="button"
-                    className="btn btn-sm btn-light border d-flex align-items-center justify-content-start gap-2 text-start"
-                    onClick={() => setChecklistValue(item.key)}
-                  >
-                    {checklist[item.key] ? <FaCheckSquare className="text-success" /> : <FaRegSquare className="text-muted" />}
-                    <span className="small">{item.label}</span>
-                  </button>
-                ))}
-              </div>
+            <div className="copc-review-compilation-meta">
+              <span className="copc-review-count-pill">Approved Files: {compilationData.counts.approvedFiles || 0}</span>
+              <span className="copc-review-count-pill">Folders: {compilationData.counts.foldersWithApprovedFiles || 0}</span>
             </div>
-          )}
-        </div>
-      )}
-
-      {selectedProgramId && (
-        <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-          <div className="btn-group" role="group">
-            <button
-              className={`btn btn-sm ${statusFilter === "pending" ? "btn-primary" : "btn-outline-primary"}`}
-              onClick={() => setStatusFilter("pending")}
-            >
-              Pending
-            </button>
-            <button
-              className={`btn btn-sm ${statusFilter === "completed" ? "btn-primary" : "btn-outline-primary"}`}
-              onClick={() => setStatusFilter("completed")}
-            >
-              Completed
-            </button>
-            <button
-              className={`btn btn-sm ${statusFilter === "revision" ? "btn-primary" : "btn-outline-primary"}`}
-              onClick={() => setStatusFilter("revision")}
-            >
-              Revision
-            </button>
-            <button
-              className={`btn btn-sm ${statusFilter === "all" ? "btn-primary" : "btn-outline-primary"}`}
-              onClick={() => setStatusFilter("all")}
-            >
-              All
-            </button>
-          </div>
-          <input
-            className="form-control"
-            style={{ maxWidth: "420px" }}
-            placeholder="Search by file, folder, QA status, category"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-      )}
-
-      {loading && <div className="small text-muted mb-3">Loading QA submissions...</div>}
-
-      {!loading && selectedProgramId && filteredSubmissions.length === 0 && (
-        <div className="text-center py-5">
-          <FaFileAlt className="text-muted mb-3" size={48} />
-          <h5 className="text-muted">No documents found for QA compliance review.</h5>
-        </div>
-      )}
-
-      {!loading && filteredSubmissions.length > 0 && view === "grid" && (
-        <div className="row g-3">
-          {filteredSubmissions.map((submission) => {
-            const canAct = submission.qaStatus === "pending";
-            return (
-              <div key={submission._id} className="col-12 col-md-6 col-xl-4">
-                <div className="card shadow-sm h-100">
-                  <div className="card-body">
-                    <div className="d-flex justify-content-between align-items-start gap-2 mb-2">
-                      <div>
-                        <div className="fw-semibold text-truncate" title={submission.originalName}>{submission.originalName}</div>
-                        <div className="small text-muted">{submission.folderName}</div>
-                      </div>
-                      <span className={`badge ${normalizeQaStatusBadge(submission.qaStatus)}`}>
-                        {submission.qaStatus}
-                      </span>
-                    </div>
-                    <div className="small text-muted mb-2">
-                      Uploaded: {submission.uploadDate ? new Date(submission.uploadDate).toLocaleString() : "N/A"} | {formatSize(submission.size)}
-                    </div>
-                    <textarea
-                      className="form-control form-control-sm mb-2"
-                      rows={2}
-                      placeholder="QA notes (optional)"
-                      value={reviewNotes[submission._id] || ""}
-                      onChange={(e) => setReviewNotes((prev) => ({ ...prev, [submission._id]: e.target.value }))}
-                    />
-                    <div className="mb-2">
-                      {renderTagControls(submission)}
-                    </div>
-                    <div className="d-flex flex-wrap gap-1">
-                      <a
-                        className="btn btn-sm btn-outline-primary"
-                        href={`${BACKEND_URL}/preview/${submission.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <FaEye className="me-1" /> Preview
-                      </a>
-                      <button
-                        className="btn btn-sm btn-success"
-                        disabled={!canAct || actingId === `${submission._id}-approve`}
-                        onClick={() => handleReview(submission, "approve")}
-                      >
-                        <FaCheckCircle className="me-1" /> Approve
-                      </button>
-                      <button
-                        className="btn btn-sm btn-danger"
-                        disabled={!canAct || actingId === `${submission._id}-reject`}
-                        onClick={() => handleReview(submission, "reject")}
-                      >
-                        <FaTimesCircle className="me-1" /> Reject
-                      </button>
-                      <button
-                        className="btn btn-sm btn-warning"
-                        disabled={!canAct || actingId === `${submission._id}-request_missing_files`}
-                        onClick={() => handleReview(submission, "request_missing_files")}
-                      >
-                        <FaUndo className="me-1" /> Request Missing Files
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {!loading && filteredSubmissions.length > 0 && view === "list" && (
-        <div className="table-responsive">
-          <table className="table table-hover align-middle">
-            <thead className="table-light">
-              <tr>
-                <th>Document</th>
-                <th>Folder</th>
-                <th>QA Status</th>
-                <th>Uploaded</th>
-                <th>QA Notes</th>
-                <th>Compliance Tag</th>
-                <th className="text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredSubmissions.map((submission) => {
-                const canAct = submission.qaStatus === "pending";
-                return (
-                  <tr key={submission._id}>
-                    <td>
-                      <div className="fw-semibold">{submission.originalName}</div>
-                      <div className="small text-muted">{formatSize(submission.size)}</div>
-                    </td>
-                    <td className="small">{submission.folderName}</td>
-                    <td>
-                      <span className={`badge ${normalizeQaStatusBadge(submission.qaStatus)}`}>
-                        {submission.qaStatus}
-                      </span>
-                    </td>
-                    <td className="small">{submission.uploadDate ? new Date(submission.uploadDate).toLocaleString() : "N/A"}</td>
-                    <td style={{ minWidth: "220px" }}>
-                      <textarea
-                        className="form-control form-control-sm"
-                        rows={2}
-                        placeholder="QA notes (optional)"
-                        value={reviewNotes[submission._id] || ""}
-                        onChange={(e) => setReviewNotes((prev) => ({ ...prev, [submission._id]: e.target.value }))}
-                      />
-                    </td>
-                    <td style={{ minWidth: "250px" }}>
-                      {renderTagControls(submission)}
-                    </td>
-                    <td className="text-center">
-                      <div className="d-flex flex-wrap gap-1 justify-content-center">
+            {loadingCompilation && <div className="small text-muted">Loading approved folder structure...</div>}
+            {!loadingCompilation && Array.isArray(compilationData.folders) && compilationData.folders.length > 0 && (
+              <div className="copc-review-compilation-list">
+                {compilationData.folders.map((folder) => (
+                  <details key={`compile-${folder.folderPath || "root"}`} className="copc-review-compilation-folder">
+                    <summary>{folder.folderPath || "Root"}</summary>
+                    <div className="copc-review-compilation-files">
+                      {(folder.files || []).map((file) => (
                         <a
-                          className="btn btn-sm btn-outline-primary"
-                          href={`${BACKEND_URL}/preview/${submission.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
+                          key={`compile-file-${file._id}`}
+                          href={`${BACKEND_URL}/preview/${file.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
                           target="_blank"
                           rel="noreferrer"
                         >
-                          <FaEye />
+                          {file.originalName}
                         </a>
-                        <button
-                          className="btn btn-sm btn-success"
-                          disabled={!canAct || actingId === `${submission._id}-approve`}
-                          onClick={() => handleReview(submission, "approve")}
-                        >
-                          <FaCheckCircle />
-                        </button>
-                        <button
-                          className="btn btn-sm btn-danger"
-                          disabled={!canAct || actingId === `${submission._id}-reject`}
-                          onClick={() => handleReview(submission, "reject")}
-                        >
-                          <FaTimesCircle />
-                        </button>
-                        <button
-                          className="btn btn-sm btn-warning"
-                          disabled={!canAct || actingId === `${submission._id}-request_missing_files`}
-                          onClick={() => handleReview(submission, "request_missing_files")}
-                        >
-                          <FaUndo />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+                      ))}
+                    </div>
+                  </details>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {selectedProgramId && (
+          <div className="copc-review-filter-row">
+            <div className="btn-group" role="group">
+              <button
+                className={`btn btn-sm ${statusFilter === "pending" ? "btn-primary" : "btn-outline-primary"}`}
+                onClick={() => setStatusFilter("pending")}
+              >
+                Pending
+              </button>
+              <button
+                className={`btn btn-sm ${statusFilter === "completed" ? "btn-primary" : "btn-outline-primary"}`}
+                onClick={() => setStatusFilter("completed")}
+              >
+                Completed
+              </button>
+              <button
+                className={`btn btn-sm ${statusFilter === "revision" ? "btn-primary" : "btn-outline-primary"}`}
+                onClick={() => setStatusFilter("revision")}
+              >
+                Revision
+              </button>
+              <button
+                className={`btn btn-sm ${statusFilter === "all" ? "btn-primary" : "btn-outline-primary"}`}
+                onClick={() => setStatusFilter("all")}
+              >
+                All
+              </button>
+            </div>
+            <div className="copc-review-search">
+              <FaSearch />
+              <input
+                className="form-control"
+                placeholder="Search by file, folder, category, or status"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+          </div>
+        )}
+
+        {loading && <div className="small text-muted">Loading QA submissions...</div>}
+
+        {!loading && selectedProgramId && filteredSubmissions.length === 0 && (
+          <div className="copc-review-empty">
+            <FaFileAlt size={44} />
+            <h5>No documents found for QA compliance review.</h5>
+          </div>
+        )}
+
+        {!loading && filteredSubmissions.length > 0 && selectedSubmission && (
+          <div className="copc-review-layout">
+            <section className="copc-review-main-pane">
+              <div className="copc-review-breadcrumb">
+                EXPLORER &gt; {String(programMeta?.code || "COPC").toUpperCase()} &gt;{" "}
+                {String(selectedSubmission.originalName || "").toUpperCase()}
+              </div>
+              <div className="copc-review-document-title-row">
+                <h3>{selectedSubmission.originalName}</h3>
+                <span className={`copc-review-status-pill ${statusToneClass(selectedSubmission.qaStatus)}`}>
+                  {selectedSubmission.qaStatus === "pending" ? "UNDER REVIEW" : selectedSubmission.qaStatus.toUpperCase()}
+                </span>
+              </div>
+
+              <div className="copc-review-doc-strip">
+                {filteredSubmissions.map((item) => (
+                  <button
+                    key={item._id}
+                    type="button"
+                    className={`copc-review-doc-chip ${String(selectedSubmissionId) === String(item._id) ? "is-active" : ""}`}
+                    onClick={() => setSelectedSubmissionId(String(item._id))}
+                  >
+                    <span className="copc-review-doc-chip-name">{item.originalName}</span>
+                    <span className={`copc-review-doc-chip-status ${statusToneClass(item.qaStatus)}`}>
+                      {item.qaStatus}
+                    </span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="copc-review-viewer-card">
+                <div className="copc-review-viewer-toolbar">
+                  <div className="copc-review-file-name">
+                    <FaFileAlt />
+                    <span>{selectedSubmission.originalName}</span>
+                  </div>
+                  <div className="copc-review-viewer-actions">
+                    <span>100%</span>
+                    <a
+                      href={downloadUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Download file"
+                      aria-label="Download file"
+                    >
+                      <FaDownload />
+                    </a>
+                    <a href={previewUrl} target="_blank" rel="noreferrer" title="Open preview in new tab">
+                      <FaExternalLinkAlt />
+                    </a>
+                  </div>
+                </div>
+                <div className="copc-review-viewer-frame">
+                  <iframe title={`Preview ${selectedSubmission.originalName}`} src={previewUrl} />
+                </div>
+              </div>
+            </section>
+
+            <aside className="copc-review-side-pane">
+              <div className="copc-review-verdict-card">
+                <h5>Review Verdict</h5>
+                <button
+                  className="btn btn-primary"
+                  disabled={!canAct || actingId === `${selectedSubmission._id}-approve`}
+                  onClick={() => handleReview(selectedSubmission, "approve")}
+                >
+                  <FaCheckCircle className="me-2" />
+                  Approve Document
+                </button>
+                <button
+                  className="btn btn-outline-warning"
+                  disabled={!canAct || actingId === `${selectedSubmission._id}-request_missing_files`}
+                  onClick={() => handleReview(selectedSubmission, "request_missing_files")}
+                >
+                  <FaUndo className="me-2" />
+                  Request Missing Files
+                </button>
+                <button
+                  className="btn btn-outline-danger"
+                  disabled={!canAct || actingId === `${selectedSubmission._id}-reject`}
+                  onClick={() => handleReview(selectedSubmission, "reject")}
+                >
+                  <FaTimesCircle className="me-2" />
+                  Reject
+                </button>
+                <a
+                  className="btn btn-outline-secondary"
+                  href={downloadUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <FaDownload className="me-2" />
+                  Download File
+                </a>
+
+                <textarea
+                  className="form-control"
+                  rows={3}
+                  placeholder="QA notes (included when you submit verdict)"
+                  value={reviewNotes[selectedSubmission._id] || ""}
+                  onChange={(e) => setReviewNotes((prev) => ({ ...prev, [selectedSubmission._id]: e.target.value }))}
+                />
+
+                <div className="copc-review-tag-box">
+                  <div className="copc-review-tag-head">
+                    <FaTag />
+                    Compliance Tagging
+                  </div>
+                  <select
+                    className="form-select form-select-sm"
+                    value={categoryValue}
+                    onChange={(e) => setDraft(selectedSubmission._id, "category", e.target.value)}
+                  >
+                    <option value="">Select Compliance Category</option>
+                    {COMPLIANCE_CATEGORIES.map((item) => (
+                      <option key={`${selectedSubmission._id}-${item}`} value={item}>
+                        {item}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    className="form-control form-control-sm"
+                    placeholder="Tags (comma-separated)"
+                    value={tagsValue}
+                    onChange={(e) => setDraft(selectedSubmission._id, "tags", e.target.value)}
+                  />
+                  <button
+                    className="btn btn-sm btn-outline-secondary"
+                    disabled={actingId === `${selectedSubmission._id}-tag`}
+                    onClick={() => handleTagCategory(selectedSubmission)}
+                  >
+                    Save Category & Tags
+                  </button>
+                </div>
+              </div>
+
+            </aside>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

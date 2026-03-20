@@ -1,5 +1,10 @@
 import axios from "axios";
 import { BACKEND_URL } from "../config";
+import {
+  buildCopcFilenameFromServerError,
+  isCopcNamingError,
+  renameFileWithName,
+} from "./copcFilename";
 
 const normalizeRelativePath = (value = "") =>
   String(value || "")
@@ -144,6 +149,31 @@ export async function uploadDroppedEntries({
 
   let uploadedCount = 0;
   const total = droppedEntries.length;
+  const postDroppedFile = ({ file, parentId }) => {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("userId", userId);
+    formData.append("role", role || "faculty");
+    if (parentId) formData.append("parentFolder", parentId);
+    return axios.post(`${BACKEND_URL}/upload`, formData, {
+      headers: { "Content-Type": "multipart/form-data" },
+    });
+  };
+
+  const uploadDroppedFileWithCopcRetry = async ({ file, parentId }) => {
+    try {
+      return await postDroppedFile({ file, parentId });
+    } catch (err) {
+      if (!isCopcNamingError(err)) throw err;
+      const retryName = buildCopcFilenameFromServerError(
+        err?.response?.data?.error,
+        file?.name
+      );
+      const retryFile = renameFileWithName(file, retryName);
+      return postDroppedFile({ file: retryFile, parentId });
+    }
+  };
+
   for (let i = 0; i < droppedEntries.length; i += 1) {
     const item = droppedEntries[i];
     const relative = normalizeRelativePath(item.relativePath);
@@ -154,15 +184,7 @@ export async function uploadDroppedEntries({
       onStatus(`Uploading ${i + 1}/${total}: ${relative}`);
     }
 
-    const formData = new FormData();
-    formData.append("file", item.file);
-    formData.append("userId", userId);
-    formData.append("role", role || "faculty");
-    if (parentId) formData.append("parentFolder", parentId);
-
-    await axios.post(`${BACKEND_URL}/upload`, formData, {
-      headers: { "Content-Type": "multipart/form-data" },
-    });
+    await uploadDroppedFileWithCopcRetry({ file: item.file, parentId });
     uploadedCount += 1;
   }
 

@@ -18,7 +18,6 @@ import CopcUploadPage from "./pages/copcupload";
 import CopcDepartmentReviewPage from "./pages/copcdeptreview";
 import CopcQaReviewPage from "./pages/copcqareview";
 import CopcEvaluationPage from "./pages/copcevaluation";
-import AdminCopcDashboardPage from "./pages/admincopcdashboard";
 import UserCopcDashboardPage from "./pages/usercopcdashboard";
 import Settings from "./pages/settings"; // user settings page
 import Notifications from "./pages/notifications"; // user notifications page
@@ -283,7 +282,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<AdminCopcDashboardPage />} />
+        <Route index element={<UserCopcDashboardPage defaultTab="workflow" />} />
       </Route>
       <Route
         path="/admin/tasks"
@@ -293,7 +292,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<AdminCopcDashboardPage defaultTab="tasks" />} />
+        <Route index element={<UserCopcDashboardPage defaultTab="task_management" />} />
       </Route>
       <Route
         path="/admin/copc-programs"
@@ -303,7 +302,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<AdminCopcDashboardPage defaultTab="programs" />} />
+        <Route index element={<UserCopcDashboardPage defaultTab="programs" />} />
       </Route>
     </Routes>
   );

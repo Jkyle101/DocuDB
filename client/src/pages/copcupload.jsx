@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import axios from "axios";
 import {
   FaArrowLeft,
+  FaPlus,
   FaCheckSquare,
   FaChevronDown,
   FaChevronRight,
@@ -18,6 +19,7 @@ import {
 } from "react-icons/fa";
 import { BACKEND_URL } from "../config";
 import UploadModal from "../components/UploadModal";
+import CreateFolderModal from "../components/CreateFolderModal";
 import { isExternalFileDrag, uploadDroppedEntries } from "../utils/dropUpload";
 import { useSearchParams } from "react-router-dom";
 
@@ -84,6 +86,7 @@ export default function CopcUploadPage() {
   const requestedFolderId = String(searchParams.get("folderId") || "");
   const userId = localStorage.getItem("userId");
   const role = localStorage.getItem("role") || "faculty";
+  const normalizedRole = String(role || "").toLowerCase();
 
   const [programs, setPrograms] = useState([]);
   const [selectedProgramId, setSelectedProgramId] = useState("");
@@ -101,6 +104,7 @@ export default function CopcUploadPage() {
   const [checklistSections, setChecklistSections] = useState([]);
   const [isChecklistCollapsed, setIsChecklistCollapsed] = useState(true);
   const [uploadTarget, setUploadTarget] = useState(null);
+  const [createTarget, setCreateTarget] = useState(null);
   const [loadingFolderFiles, setLoadingFolderFiles] = useState(false);
   const [approvedFilesInFolder, setApprovedFilesInFolder] = useState([]);
   const [loadingStatuses, setLoadingStatuses] = useState(false);
@@ -123,6 +127,12 @@ export default function CopcUploadPage() {
   const checklistCardRef = useRef(null);
   const checklistDragOffsetRef = useRef({ x: 0, y: 0 });
   const checklistDraggingRef = useRef(false);
+  const checklistDragPointerIdRef = useRef(null);
+  const checklistDragHandleRef = useRef(null);
+  const checklistDragRafRef = useRef(0);
+  const [viewportWidth, setViewportWidth] = useState(
+    typeof window === "undefined" ? 0 : window.innerWidth
+  );
   const [checklistPosition, setChecklistPosition] = useState({ x: null, y: null });
   const [isChecklistDragging, setIsChecklistDragging] = useState(false);
 
@@ -155,8 +165,29 @@ export default function CopcUploadPage() {
     };
   }, []);
 
+  const endChecklistDrag = useCallback(() => {
+    if (checklistDragRafRef.current) {
+      window.cancelAnimationFrame(checklistDragRafRef.current);
+      checklistDragRafRef.current = 0;
+    }
+    const handleEl = checklistDragHandleRef.current;
+    const pointerId = checklistDragPointerIdRef.current;
+    if (handleEl && pointerId !== null && typeof handleEl.releasePointerCapture === "function") {
+      try {
+        handleEl.releasePointerCapture(pointerId);
+      } catch {}
+    }
+    checklistDragPointerIdRef.current = null;
+    checklistDragHandleRef.current = null;
+    if (!checklistDraggingRef.current) return;
+    checklistDraggingRef.current = false;
+    setIsChecklistDragging(false);
+  }, []);
+
   const beginChecklistDrag = useCallback((event) => {
-    if (typeof window === "undefined" || window.innerWidth < 1200) return;
+    if (typeof window === "undefined" || viewportWidth < 1200) return;
+    if (typeof event.button === "number" && event.button !== 0) return;
+    endChecklistDrag();
     const cardRect = checklistCardRef.current?.getBoundingClientRect();
     const fallback = getDefaultChecklistPosition();
     const originX = cardRect?.left ?? (Number.isFinite(checklistPosition.x) ? checklistPosition.x : fallback.x);
@@ -165,10 +196,23 @@ export default function CopcUploadPage() {
       x: event.clientX - originX,
       y: event.clientY - originY,
     };
+    checklistDragPointerIdRef.current =
+      typeof event.pointerId === "number" ? event.pointerId : null;
+    checklistDragHandleRef.current = event.currentTarget || null;
+    if (
+      checklistDragHandleRef.current &&
+      checklistDragPointerIdRef.current !== null &&
+      typeof checklistDragHandleRef.current.setPointerCapture === "function"
+    ) {
+      try {
+        checklistDragHandleRef.current.setPointerCapture(checklistDragPointerIdRef.current);
+      } catch {}
+    }
     checklistDraggingRef.current = true;
     setIsChecklistDragging(true);
     event.preventDefault();
-  }, [checklistPosition.x, checklistPosition.y, getDefaultChecklistPosition]);
+    event.stopPropagation();
+  }, [checklistPosition.x, checklistPosition.y, endChecklistDrag, getDefaultChecklistPosition, viewportWidth]);
 
   const buildFolderMap = (list = []) => {
     const map = new Map();
@@ -204,6 +248,16 @@ export default function CopcUploadPage() {
       flattenTasks(task?.children || [], depth + 1, output);
     });
     return output;
+  };
+
+  const markChecklistDoneFromApprovedUploads = (tasks = [], hasApprovedUpload = false) => {
+    if (!hasApprovedUpload) return tasks;
+    return (Array.isArray(tasks) ? tasks : []).map((task) => ({
+      ...task,
+      status: "approved",
+      percentage: 100,
+      autoCompletedByApproval: true,
+    }));
   };
 
   const folderMap = useMemo(() => buildFolderMap(folders), [folders]);
@@ -436,9 +490,16 @@ export default function CopcUploadPage() {
               params: { userId, role },
             });
             const normalizedTasks = Array.isArray(taskRes?.data?.tasks) ? taskRes.data.tasks : [];
+            const hasApprovedUpload =
+              normalizedRole === "faculty"
+                ? Number(folder?.approvedOwnFileCount || 0) > 0
+                : Number(folder?.approvedFileCount || 0) > 0;
             return {
               folder,
-              tasks: flattenTasks(normalizedTasks),
+              tasks: markChecklistDoneFromApprovedUploads(
+                flattenTasks(normalizedTasks),
+                hasApprovedUpload
+              ),
             };
           })
         );
@@ -604,27 +665,72 @@ export default function CopcUploadPage() {
   useEffect(() => {
     const handlePointerMove = (event) => {
       if (!checklistDraggingRef.current) return;
+      if (
+        checklistDragPointerIdRef.current !== null &&
+        typeof event.pointerId === "number" &&
+        event.pointerId !== checklistDragPointerIdRef.current
+      ) {
+        return;
+      }
+      if (checklistDragRafRef.current) return;
       const nextX = event.clientX - checklistDragOffsetRef.current.x;
       const nextY = event.clientY - checklistDragOffsetRef.current.y;
-      setChecklistPosition(clampChecklistPosition(nextX, nextY));
+      checklistDragRafRef.current = window.requestAnimationFrame(() => {
+        checklistDragRafRef.current = 0;
+        setChecklistPosition(clampChecklistPosition(nextX, nextY));
+      });
+      event.preventDefault();
     };
-    const stopChecklistDrag = () => {
+    const stopChecklistDrag = (event) => {
       if (!checklistDraggingRef.current) return;
-      checklistDraggingRef.current = false;
-      setIsChecklistDragging(false);
+      if (
+        checklistDragPointerIdRef.current !== null &&
+        typeof event?.pointerId === "number" &&
+        event.pointerId !== checklistDragPointerIdRef.current
+      ) {
+        return;
+      }
+      endChecklistDrag();
     };
     window.addEventListener("pointermove", handlePointerMove);
     window.addEventListener("pointerup", stopChecklistDrag);
     window.addEventListener("pointercancel", stopChecklistDrag);
+    window.addEventListener("blur", endChecklistDrag);
+    document.addEventListener("visibilitychange", endChecklistDrag);
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", stopChecklistDrag);
       window.removeEventListener("pointercancel", stopChecklistDrag);
+      window.removeEventListener("blur", endChecklistDrag);
+      document.removeEventListener("visibilitychange", endChecklistDrag);
+      endChecklistDrag();
     };
-  }, [clampChecklistPosition]);
+  }, [clampChecklistPosition, endChecklistDrag]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || window.innerWidth < 1200) return;
+    if (typeof window === "undefined") return undefined;
+    const handleResize = () => {
+      const width = window.innerWidth;
+      setViewportWidth(width);
+      if (width < 1200) {
+        endChecklistDrag();
+        return;
+      }
+      setChecklistPosition((prev) => {
+        const base =
+          Number.isFinite(prev.x) && Number.isFinite(prev.y)
+            ? prev
+            : getDefaultChecklistPosition();
+        return clampChecklistPosition(base.x, base.y);
+      });
+    };
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, [clampChecklistPosition, endChecklistDrag, getDefaultChecklistPosition]);
+
+  useEffect(() => {
+    if (viewportWidth < 1200) return;
     setChecklistPosition((prev) => {
       if (Number.isFinite(prev.x) && Number.isFinite(prev.y)) {
         return clampChecklistPosition(prev.x, prev.y);
@@ -632,21 +738,7 @@ export default function CopcUploadPage() {
       const defaults = getDefaultChecklistPosition();
       return clampChecklistPosition(defaults.x, defaults.y);
     });
-  }, [selectedProgramId, clampChecklistPosition, getDefaultChecklistPosition]);
-
-  useEffect(() => {
-    const handleResize = () => {
-      if (window.innerWidth < 1200) return;
-      setChecklistPosition((prev) => {
-        const base = Number.isFinite(prev.x) && Number.isFinite(prev.y)
-          ? prev
-          : getDefaultChecklistPosition();
-        return clampChecklistPosition(base.x, base.y);
-      });
-    };
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, [clampChecklistPosition, getDefaultChecklistPosition]);
+  }, [selectedProgramId, viewportWidth, clampChecklistPosition, getDefaultChecklistPosition]);
 
   useEffect(() => {
     if (!isChecklistDragging) return undefined;
@@ -657,7 +749,7 @@ export default function CopcUploadPage() {
     };
   }, [isChecklistDragging]);
 
-  const shouldFloatChecklist = typeof window !== "undefined" && window.innerWidth >= 1200;
+  const shouldFloatChecklist = viewportWidth >= 1200;
   const defaultChecklistPosition = shouldFloatChecklist ? getDefaultChecklistPosition() : { x: 0, y: 0 };
   const checklistLeft = Number.isFinite(checklistPosition.x) ? checklistPosition.x : defaultChecklistPosition.x;
   const checklistTop = Number.isFinite(checklistPosition.y) ? checklistPosition.y : defaultChecklistPosition.y;
@@ -731,6 +823,14 @@ export default function CopcUploadPage() {
               <FaList />
             </button>
           </div>
+          <button
+            className="btn btn-primary"
+            disabled={!currentFolder}
+            title={currentFolder ? `Create folder in ${currentFolder.name}` : "Open a folder first"}
+            onClick={() => currentFolder && setCreateTarget(currentFolder)}
+          >
+            <FaPlus className="me-1" /> New Folder
+          </button>
           <button
             className="btn btn-success"
             disabled={!currentFolder}
@@ -973,7 +1073,11 @@ export default function CopcUploadPage() {
                     onPointerDown={beginChecklistDrag}
                     title="Drag checklist"
                     aria-label="Drag checklist"
-                    style={{ cursor: isChecklistDragging ? "grabbing" : "grab" }}
+                    style={{
+                      cursor: isChecklistDragging ? "grabbing" : "grab",
+                      touchAction: "none",
+                      userSelect: "none",
+                    }}
                   >
                     <FaArrowsAlt />
                   </button>
@@ -1223,6 +1327,19 @@ export default function CopcUploadPage() {
             }}
             parentFolder={uploadTarget._id}
             hideDestinationFolder
+          />
+        </>
+      )}
+
+      {createTarget && (
+        <>
+          <div className="modal-backdrop fade show"></div>
+          <CreateFolderModal
+            onClose={() => setCreateTarget(null)}
+            onCreated={() => {
+              loadProgramFolders(selectedProgramId, true).catch(() => {});
+            }}
+            parentFolder={createTarget._id}
           />
         </>
       )}

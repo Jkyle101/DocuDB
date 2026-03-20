@@ -62,6 +62,7 @@ export default function Home() {
   const isAdmin = normalizeRole(role) === "superadmin";
   const isProgramChair = normalizeRole(role) === "dept_chair";
   const isQaReviewer = normalizeRole(role) === "qa_admin";
+  const isFaculty = normalizeRole(role) === "faculty";
   const canUploadByRole = ["superadmin", "qa_admin", "dept_chair", "faculty"].includes(normalizeRole(role));
   const canDeleteByRole = ["superadmin", "qa_admin"].includes(normalizeRole(role));
   const canCheckTasks = isAdmin || isProgramChair || isQaReviewer;
@@ -285,6 +286,11 @@ export default function Home() {
         const id = u?._id || u;
         if (id) output.add(String(id));
       });
+      const assignedRole = String(task?.assignedRole || "").toLowerCase();
+      if (assignedRole === "faculty" && task?.assignedTo) {
+        const assignedToId = task.assignedTo?._id || task.assignedTo;
+        if (assignedToId) output.add(String(assignedToId));
+      }
       collectAssignedUploaders(task.children || [], output);
     }
     return output;
@@ -314,15 +320,16 @@ export default function Home() {
       setFolderReviews(data?.reviews || { programChair: [], qa: [] });
       setIsCurrentFolderCopcScoped(isCopcScoped);
 
-      const assignedUploaders = new Set(
-        (assignments.uploaders || []).map((u) => String(u?._id || u))
-      );
+      const assignedUploaders = new Set();
       collectAssignedUploaders(tasks).forEach((id) => assignedUploaders.add(id));
       const hasComplianceScope = tasks.length > 0 || !!data?.profileKey;
-      const restricted = assignedUploaders.size > 0 || hasComplianceScope;
-      setCanUploadCurrentFolder(
-        canUploadByRole && (!restricted || isAdmin || assignedUploaders.has(String(userId)))
-      );
+      if (!isFaculty) {
+        setCanUploadCurrentFolder(canUploadByRole);
+      } else if (!hasComplianceScope) {
+        setCanUploadCurrentFolder(canUploadByRole);
+      } else {
+        setCanUploadCurrentFolder(canUploadByRole && assignedUploaders.has(String(userId)));
+      }
     } catch {
       setFolderTasks([]);
       setTaskProgress(0);
@@ -330,7 +337,7 @@ export default function Home() {
       setIsCurrentFolderCopcScoped(false);
       setCanUploadCurrentFolder(canUploadByRole);
     }
-  }, [collectAssignedUploaders, isAdmin, canUploadByRole, role, userId]);
+  }, [collectAssignedUploaders, canUploadByRole, isFaculty, role, userId]);
 
   useEffect(() => {
     fetchFolderTasks(currentFolder);
@@ -1041,7 +1048,8 @@ export default function Home() {
               <button
                 className="btn btn-primary"
                 onClick={() => setShowCreate(true)}
-                disabled={!canUploadByRole}
+                disabled={!canUploadByRole || !canUploadCurrentFolder}
+                title={!canUploadCurrentFolder ? "You are not assigned to create folders in this folder" : "New Folder"}
               >
                 <FaPlus className="me-1" /> New Folder
               </button>
@@ -1707,7 +1715,7 @@ export default function Home() {
             <button
               className="btn btn-outline-primary"
               onClick={() => setShowCreate(true)}
-              disabled={!canUploadByRole}
+              disabled={!canUploadByRole || !canUploadCurrentFolder}
             >
               <FaPlus className="me-1" /> New Folder
             </button>

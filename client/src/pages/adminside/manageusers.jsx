@@ -2,8 +2,8 @@ import React, { useEffect, useState, useMemo, useRef } from "react";
 import axios from "axios";
 import {
   FaEnvelope, FaSync, FaUsers, FaUserCheck, FaUserTimes, FaUserCog,
-  FaSearch, FaFilter, FaUserPlus, FaUpload, FaFileExcel, FaFileCode,
-  FaCalendarAlt, FaShieldAlt, FaUser, FaChartBar, FaCrown, FaKey, FaCheck, FaTimes, FaSave
+  FaSearch, FaFilter, FaUserPlus, FaUpload, FaFileExcel,
+  FaUser, FaChartBar, FaCrown, FaCheck, FaSave
 } from "react-icons/fa";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip
@@ -11,6 +11,7 @@ import {
 import "bootstrap/dist/css/bootstrap.min.css";
 import { BACKEND_URL } from "../../config";
 import "./admin-analytics.css";
+import "./manageusers-glass.css";
 
 const DEPARTMENT_OPTIONS = ["COED", "COT", "COHTM"];
 
@@ -35,7 +36,6 @@ export default function ManageUsers() {
   ];
   const [users, setUsers] = useState([]);
   const [userStats, setUserStats] = useState({});
-  const [passwordRequests, setPasswordRequests] = useState([]);
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -69,7 +69,7 @@ export default function ManageUsers() {
     return raw;
   };
 
-  const refreshDashboard = async ({ silent = false, includePasswordRequests = false } = {}) => {
+  const refreshDashboard = async ({ silent = false } = {}) => {
     try {
       if (silent) {
         setRefreshing(true);
@@ -77,12 +77,9 @@ export default function ManageUsers() {
         setLoading(true);
       }
 
-      const [usersRes, statsRes, passwordRes] = await Promise.all([
+      const [usersRes, statsRes] = await Promise.all([
         axios.get(`${BACKEND_URL}/users?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`),
-        axios.get(`${BACKEND_URL}/users/stats?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`),
-        includePasswordRequests
-          ? axios.get(`${BACKEND_URL}/admin/password-requests?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`)
-          : Promise.resolve(null)
+        axios.get(`${BACKEND_URL}/users/stats?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`)
       ]);
 
       const userRows = Array.isArray(usersRes.data) ? usersRes.data : [];
@@ -93,9 +90,6 @@ export default function ManageUsers() {
         }))
       );
       setUserStats(statsRes.data || {});
-      if (passwordRes) {
-        setPasswordRequests(passwordRes.data || []);
-      }
       setLastUpdated(new Date());
     } catch (err) {
       console.error("Failed to refresh user dashboard:", err);
@@ -110,37 +104,17 @@ export default function ManageUsers() {
 
   // Fetch users from backend
   const fetchUsers = async () => {
-    await refreshDashboard({ includePasswordRequests: false });
-  };
-
-  // Fetch password requests from backend
-  const fetchPasswordRequests = async () => {
-    try {
-      const response = await axios.get(`${BACKEND_URL}/admin/password-requests?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`);
-      setPasswordRequests(response.data || []);
-      setLastUpdated(new Date());
-    } catch (err) {
-      console.error("Failed to fetch password requests:", err);
-    }
+    await refreshDashboard();
   };
 
   useEffect(() => {
-    refreshDashboard({ includePasswordRequests: true });
+    refreshDashboard();
   }, []);
-
-  useEffect(() => {
-    if (activeTab === "password-requests") {
-      fetchPasswordRequests();
-    }
-  }, [activeTab]);
 
   useEffect(() => {
     const refreshWhenVisible = () => {
       if (document.visibilityState === "visible") {
-        refreshDashboard({
-          silent: true,
-          includePasswordRequests: activeTab === "password-requests"
-        });
+        refreshDashboard({ silent: true });
       }
     };
 
@@ -151,7 +125,7 @@ export default function ManageUsers() {
       clearInterval(interval);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
     };
-  }, [activeTab]);
+  }, []);
 
   // Get user initials for avatar
   const getUserInitials = (name, email) => {
@@ -228,10 +202,6 @@ export default function ManageUsers() {
     }));
   }, [users]);
 
-  const pendingPasswordRequests = useMemo(
-    () => passwordRequests.filter((request) => request.status === "pending").length,
-    [passwordRequests]
-  );
   const activeRate = userStats.totalUsers
     ? ((userStats.activeUsers || 0) / userStats.totalUsers * 100).toFixed(1)
     : "0.0";
@@ -327,38 +297,6 @@ export default function ManageUsers() {
       alert(err.response?.data?.error || "Failed to update user details.");
     } finally {
       setSavingUserId("");
-    }
-  };
-
-  // Approve password change request
-  const approvePasswordRequest = async (requestId) => {
-    if (!window.confirm("Approve this password change request?")) return;
-
-    try {
-      await axios.patch(`${BACKEND_URL}/admin/password-requests/${requestId}/approve`, {
-        adminId: userId
-      });
-      alert("Password change request approved successfully.");
-      fetchPasswordRequests();
-    } catch (err) {
-      console.error("Failed to approve password request:", err);
-      alert("Failed to approve password change request.");
-    }
-  };
-
-  // Reject password change request
-  const rejectPasswordRequest = async (requestId) => {
-    if (!window.confirm("Reject this password change request?")) return;
-
-    try {
-      await axios.patch(`${BACKEND_URL}/admin/password-requests/${requestId}/reject`, {
-        adminId: userId
-      });
-      alert("Password change request rejected.");
-      fetchPasswordRequests();
-    } catch (err) {
-      console.error("Failed to reject password request:", err);
-      alert("Failed to reject password change request.");
     }
   };
 
@@ -506,221 +444,347 @@ export default function ManageUsers() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const activeUsersCount = useMemo(
+    () => users.filter((user) => user.active !== false).length,
+    [users]
+  );
+  const inactiveUsersCount = Math.max(0, users.length - activeUsersCount);
+
+  const departmentStats = useMemo(() => {
+    const buckets = { COED: 0, COT: 0, COHTM: 0, Unassigned: 0 };
+    users.forEach((user) => {
+      const normalized = normalizeDepartment(user?.department);
+      if (normalized) {
+        buckets[normalized] += 1;
+      } else {
+        buckets.Unassigned += 1;
+      }
+    });
+
+    const total = users.length || 1;
+    return Object.entries(buckets).map(([name, count]) => ({
+      name,
+      count,
+      percent: Math.round((count / total) * 100),
+    }));
+  }, [users]);
+
+  const resetFilters = () => {
+    setSearchTerm("");
+    setRoleFilter("");
+    setStatusFilter("");
+  };
+
+  const exportUsersCsv = () => {
+    const sourceRows = filteredUsers.length > 0 ? filteredUsers : users;
+    if (!sourceRows.length) {
+      alert("No users available to export.");
+      return;
+    }
+
+    const escapeCsv = (value) => `"${String(value ?? "").replace(/"/g, '""')}"`;
+    const headers = ["Name", "Email", "Department", "Role", "Status", "Joined"];
+    const rows = sourceRows.map((user) => [
+      user?.name || "",
+      user?.email || "",
+      normalizeDepartment(user?.department) || "Unassigned",
+      normalizeRole(user?.role),
+      user?.active === false ? "Inactive" : "Active",
+      user?.createdAt ? new Date(user.createdAt).toLocaleDateString() : "",
+    ]);
+
+    const csvContent = [
+      headers.map(escapeCsv).join(","),
+      ...rows.map((row) => row.map(escapeCsv).join(",")),
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `users-${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
   return (
-    <div className="container-fluid py-3 admin-analytics-page">
-      {/* Header */}
-      <div className="analytics-hero mb-4">
-        <div className="d-flex flex-column flex-xl-row justify-content-between align-items-start align-items-xl-center gap-3">
-          <div>
-            <h4 className="fw-bold mb-1">
-              <FaUsers className="me-2 text-primary" />
-              User Management Dashboard
-            </h4>
-            <small className="text-muted">Comprehensive user administration and analytics</small>
+    <div className="container-fluid py-3 admin-analytics-page user-management-dashboard">
+      <div className="um-shell">
+        <section className="um-header">
+          <div className="um-header-top">
+            <div>
+              <p className="um-eyebrow mb-1">DIRECTORY CONTROL</p>
+              <h2 className="um-title mb-2">User Management</h2>
+              <p className="um-subtitle mb-0">
+                Manage organization roles, permissions, and directory access.
+              </p>
+            </div>
+            <div className="um-header-actions">
+              <button
+                className="btn btn-outline-primary"
+                onClick={exportUsersCsv}
+                disabled={users.length === 0}
+              >
+                <FaFileExcel className="me-2" /> Export CSV
+              </button>
+              <div className="dropdown">
+                <button
+                  className="btn btn-primary dropdown-toggle"
+                  type="button"
+                  id="headerAddUserDropdown"
+                  data-bs-toggle="dropdown"
+                  aria-expanded="false"
+                >
+                  <FaUserPlus className="me-2" /> Add User
+                </button>
+                <ul className="dropdown-menu dropdown-menu-end" aria-labelledby="headerAddUserDropdown">
+                  <li>
+                    <button className="dropdown-item" onClick={() => setShowAddUserModal(true)}>
+                      <FaUserPlus className="me-2" /> Add Single User
+                    </button>
+                  </li>
+                  <li>
+                    <button className="dropdown-item" onClick={() => setShowBulkImportModal(true)}>
+                      <FaUpload className="me-2" /> Bulk Import Users
+                    </button>
+                  </li>
+                </ul>
+              </div>
+              <button
+                className="btn btn-outline-primary"
+                onClick={() => refreshDashboard()}
+                disabled={loading || refreshing}
+              >
+                <FaSync className={loading || refreshing ? "fa-spin me-2" : "me-2"} />
+                Refresh
+              </button>
+            </div>
           </div>
-          <div className="d-flex flex-wrap align-items-center gap-2">
+
+          <div className="um-search-strip">
+            <div className="um-search-box">
+              <FaSearch className="um-search-icon" />
+              <input
+                type="text"
+                className="form-control um-search-input"
+                placeholder="Search users, roles, or departments..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <button className="btn btn-link um-reset-btn" onClick={resetFilters}>
+              Reset Filters
+            </button>
+          </div>
+
+          <div className="analytics-meta-strip mt-3">
             <span className={`analytics-live-pill ${refreshing ? "is-refreshing" : "is-live"}`}>
               {liveStateText}
             </span>
             <small className="analytics-last-updated text-muted">{lastUpdatedText}</small>
+            <span className="analytics-chip">Active rate: {activeRate}%</span>
+            <span className="analytics-chip">Inactive users: {inactiveUsersCount}</span>
+            <span className="analytics-chip">Visible users: {filteredUsers.length}</span>
+          </div>
+
+          <div className="um-tab-strip" role="tablist" aria-label="User management views">
             <button
-              className="btn btn-outline-primary"
-              onClick={() =>
-                refreshDashboard({ includePasswordRequests: activeTab === "password-requests" })
-              }
-              disabled={loading || refreshing}
+              className={`um-tab-btn ${activeTab === "overview" ? "active" : ""}`}
+              onClick={() => setActiveTab("overview")}
+              role="tab"
+              aria-selected={activeTab === "overview"}
             >
-              <FaSync className={loading || refreshing ? "fa-spin me-2" : "me-2"} />
-              Refresh
+              <FaChartBar className="me-2" /> Overview
+            </button>
+            <button
+              className={`um-tab-btn ${activeTab === "users" ? "active" : ""}`}
+              onClick={() => setActiveTab("users")}
+              role="tab"
+              aria-selected={activeTab === "users"}
+            >
+              <FaUserCog className="me-2" /> Manage Users
             </button>
           </div>
-        </div>
-        <div className="analytics-meta-strip mt-3">
-          <span className="analytics-chip">Active rate: {activeRate}%</span>
-          <span className="analytics-chip">Pending password requests: {pendingPasswordRequests}</span>
-          <span className="analytics-chip">Visible users: {filteredUsers.length}</span>
-        </div>
-      </div>
+        </section>
 
-      {/* Navigation Tabs */}
-      <ul className="nav nav-tabs mb-4">
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === "overview" ? "active" : ""}`}
-            onClick={() => setActiveTab("overview")}
-          >
-            <FaChartBar className="me-1" /> Overview
-          </button>
-        </li>
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === "users" ? "active" : ""}`}
-            onClick={() => setActiveTab("users")}
-          >
-            <FaUserCog className="me-1" /> Manage Users
-          </button>
-        </li>
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === "password-requests" ? "active" : ""}`}
-            onClick={() => setActiveTab("password-requests")}
-          >
-            <FaKey className="me-1" /> Password Requests
-          </button>
-        </li>
-      </ul>
-
-      {/* Overview Tab */}
-      {activeTab === "overview" && (
-        <>
-          {/* Key Metrics Cards */}
-          <div className="row g-4 mb-4">
-            <div className="col-md-3">
-              <div className="card shadow-sm border-primary analytics-kpi-card h-100">
-                <div className="card-body text-center">
-                  <FaUsers className="text-primary mb-2" size={32} />
-                  <h5 className="card-title mb-1">{userStats.totalUsers || 0}</h5>
-                  <small className="text-muted">Total Users</small>
-                  <div className="mt-2">
-                    <span className="badge bg-success">{userStats.activeUsers || 0} Active</span>
-                    <span className="badge bg-secondary ms-1">{userStats.inactiveUsers || 0} Inactive</span>
+        {activeTab === "overview" && (
+          <section className="um-view-stack">
+            <div className="row g-4">
+              <div className="col-xl-8">
+                <article className="um-glass-card um-snapshot-card h-100">
+                  <div className="um-card-head">
+                    <h6 className="mb-1">Directory Snapshot</h6>
+                    <small className="text-muted">Overview of account health and role coverage.</small>
                   </div>
-                </div>
-              </div>
-            </div>
-            <div className="col-md-3">
-              <div className="card shadow-sm border-warning analytics-kpi-card h-100">
-                <div className="card-body text-center">
-                  <FaShieldAlt className="text-warning mb-2" size={32} />
-                  <h5 className="card-title mb-1">{userStats.rolesCount?.superadmin || 0}</h5>
-                  <small className="text-muted">Super Admins</small>
-                </div>
-              </div>
-            </div>
-            <div className="col-md-3">
-              <div className="card shadow-sm border-info analytics-kpi-card h-100">
-                <div className="card-body text-center">
-                  <FaUser className="text-info mb-2" size={32} />
-                  <h5 className="card-title mb-1">{userStats.rolesCount?.faculty || 0}</h5>
-                  <small className="text-muted">Faculty</small>
-                  <div className="mt-2">
-                    <span className="badge bg-primary me-1">Dept Chair: {userStats.rolesCount?.dept_chair || 0}</span>
-                    <span className="badge bg-success me-1">QA Admin: {userStats.rolesCount?.qa_admin || 0}</span>
-                    <span className="badge bg-secondary">Evaluator: {userStats.rolesCount?.evaluator || 0}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="col-md-3">
-              <div className="card shadow-sm border-danger analytics-kpi-card h-100">
-                <div className="card-body text-center">
-                  <FaKey className="text-danger mb-2" size={32} />
-                  <h5 className="card-title mb-1">{pendingPasswordRequests}</h5>
-                  <small className="text-muted">Pending Password Requests</small>
-                  <div className="mt-2 small">
-                    Active rate: {activeRate}%
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Recent Registrations */}
-          <div className="row g-4 mb-4">
-            <div className="col-lg-6">
-              <div className="card shadow-sm">
-                <div className="card-header">
-                  <h6 className="mb-0">
-                    <FaCalendarAlt className="me-2" />
-                    Recent Registrations (Last 30 Days)
-                  </h6>
-                </div>
-                <div className="card-body">
-                  {userStats.recentUsers?.length > 0 ? (
-                    <div className="list-group list-group-flush">
-                      {userStats.recentUsers.slice(0, 5).map((user) => (
-                        <div key={user._id} className="list-group-item d-flex justify-content-between align-items-center">
-                          <div className="d-flex align-items-center">
-                            <div className="avatar-circle bg-primary text-white me-3 d-flex align-items-center justify-content-center" style={{width: '40px', height: '40px', borderRadius: '50%', fontSize: '14px', fontWeight: 'bold'}}>
-                              {getUserInitials(user.name, user.email)}
-                            </div>
-                            <div>
-                              <strong>{user.name || user.email.split('@')[0]}</strong>
-                              <br />
-                              <small className="text-muted">{user.email}</small>
-                            </div>
-                          </div>
-                          <small className="text-muted">
-                            {new Date(user.createdAt).toLocaleDateString()}
-                          </small>
-                        </div>
-                      ))}
+                  <div className="um-kpi-grid">
+                    <div className="um-kpi-item is-blue">
+                      <small>Total Users</small>
+                      <h4>{userStats.totalUsers || 0}</h4>
                     </div>
+                    <div className="um-kpi-item is-green">
+                      <small>Active</small>
+                      <h4>{activeUsersCount}</h4>
+                    </div>
+                    <div className="um-kpi-item is-slate">
+                      <small>Inactive</small>
+                      <h4>{inactiveUsersCount}</h4>
+                    </div>
+                    <div className="um-kpi-item is-amber">
+                      <small>Super Admins</small>
+                      <h4>{userStats.rolesCount?.superadmin || 0}</h4>
+                    </div>
+                    <div className="um-kpi-item is-cyan">
+                      <small>Dept Chairs</small>
+                      <h4>{userStats.rolesCount?.dept_chair || 0}</h4>
+                    </div>
+                    <div className="um-kpi-item is-purple">
+                      <small>QA Admins</small>
+                      <h4>{userStats.rolesCount?.qa_admin || 0}</h4>
+                    </div>
+                  </div>
+                  <div className="um-role-chip-wrap">
+                    {roleChartData.length > 0 ? (
+                      roleChartData.map((entry) => (
+                        <span
+                          key={entry.name}
+                          className="um-role-chip"
+                          style={{
+                            borderColor: `${entry.color}55`,
+                            background: `${entry.color}1A`,
+                            color: entry.color,
+                          }}
+                        >
+                          <span className="um-role-dot" style={{ background: entry.color }}></span>
+                          {entry.name}: {entry.value}
+                        </span>
+                      ))
+                    ) : (
+                      <small className="text-muted">No role data available.</small>
+                    )}
+                  </div>
+                </article>
+              </div>
+              <div className="col-xl-4">
+                <article className="um-glass-card um-donut-card h-100">
+                  <div className="um-card-head">
+                    <h6 className="mb-1">Role Distribution</h6>
+                    <small className="text-muted">Current allocation by role.</small>
+                  </div>
+                  {roleChartData.some((item) => item.value > 0) ? (
+                    <ResponsiveContainer width="100%" height={250}>
+                      <PieChart>
+                        <Pie data={roleChartData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={90}>
+                          {roleChartData.map((entry) => (
+                            <Cell key={entry.name} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                      </PieChart>
+                    </ResponsiveContainer>
                   ) : (
-                    <p className="text-muted text-center py-3">No recent registrations</p>
+                    <div className="um-empty-inline">No users yet.</div>
                   )}
-                </div>
+                </article>
               </div>
             </div>
-            <div className="col-lg-6">
-              <div className="card shadow-sm">
-                <div className="card-header">
-                  <h6 className="mb-0">
-                    <FaUsers className="me-2" />
-                    Role Distribution
-                  </h6>
-                </div>
-                <div className="card-body">
-                  <ResponsiveContainer width="100%" height={250}>
-                    <PieChart>
-                      <Pie
-                        data={roleChartData}
-                        dataKey="value"
-                        nameKey="name"
-                        outerRadius={80}
-                        fill="#8884d8"
-                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      >
-                        {roleChartData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
 
-      {/* Users Management Tab */}
-      {activeTab === "users" && (
-        <>
-          {/* Search and Filters */}
-          <div className="card shadow-sm mb-4">
-            <div className="card-header">
-              <h6 className="mb-0">
-                <FaFilter className="me-2" />
-                Search & Filter Users
-              </h6>
+            <div className="row g-4">
+              <div className="col-xl-8">
+                <article className="um-glass-card h-100">
+                  <div className="um-card-head">
+                    <h6 className="mb-1">Recent Registrations</h6>
+                    <small className="text-muted">Latest users added to the system.</small>
+                  </div>
+                  <div className="um-recent-list">
+                    {userStats.recentUsers?.length > 0 ? (
+                      userStats.recentUsers.slice(0, 6).map((user) => (
+                        <div key={user._id} className="um-recent-item">
+                          <div className="um-recent-avatar">
+                            {getUserInitials(user.name, user.email)}
+                          </div>
+                          <div className="um-recent-content">
+                            <strong>{user.name || user.email?.split("@")[0]}</strong>
+                            <p className="mb-0">{user.email}</p>
+                          </div>
+                          <small className="text-muted">{new Date(user.createdAt).toLocaleDateString()}</small>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="um-empty-inline">No recent registrations.</div>
+                    )}
+                  </div>
+                </article>
+              </div>
+              <div className="col-xl-4">
+                <article className="um-glass-card um-dept-card h-100">
+                  <div className="um-card-head">
+                    <h6 className="mb-1">Department Coverage</h6>
+                    <small className="text-muted">Distribution across departments.</small>
+                  </div>
+                  <div className="um-dept-list">
+                    {departmentStats.map((item) => (
+                      <div key={item.name} className="um-dept-item">
+                        <div className="d-flex justify-content-between">
+                          <span>{item.name}</span>
+                          <strong>{item.count}</strong>
+                        </div>
+                        <div className="progress">
+                          <div className="progress-bar" style={{ width: `${item.percent}%` }}></div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              </div>
             </div>
-            <div className="card-body">
-              <div className="row g-3">
-                <div className="col-md-4">
-                  <div className="input-group">
-                    <span className="input-group-text"><FaSearch /></span>
+
+            <div className="um-insight-grid">
+              <article className="um-insight-card">
+                <small>Growth</small>
+                <h4>{activeRate}%</h4>
+                <p className="mb-0">active users in current cycle</p>
+              </article>
+              <article className="um-insight-card">
+                <small>Security</small>
+                <h4>{userStats.rolesCount?.superadmin || 0}</h4>
+                <p className="mb-0">super admin accounts</p>
+              </article>
+              <article className="um-insight-card">
+                <small>Pending</small>
+                <h4>{bulkUsers.length}</h4>
+                <p className="mb-0">users staged for import</p>
+              </article>
+            </div>
+          </section>
+        )}
+
+        {activeTab === "users" && (
+          <section className="um-view-stack">
+            <article className="um-glass-card um-filter-card">
+              <div className="um-card-head d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h6 className="mb-0">
+                  <FaFilter className="me-2" /> Search & Filter Users
+                </h6>
+                <button className="btn btn-link um-reset-btn p-0" onClick={resetFilters}>
+                  Reset Filters
+                </button>
+              </div>
+              <div className="row g-3 mt-1">
+                <div className="col-lg-5">
+                  <div className="um-inline-search">
+                    <FaSearch className="um-search-icon" />
                     <input
                       type="text"
                       className="form-control"
-                      placeholder="Search by name, email, or department..."
+                      placeholder="Filter by name, email, or department..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
                     />
                   </div>
                 </div>
-                <div className="col-md-4">
+                <div className="col-lg-3">
                   <select
                     className="form-select"
                     value={roleFilter}
@@ -732,7 +796,7 @@ export default function ManageUsers() {
                     ))}
                   </select>
                 </div>
-                <div className="col-md-4">
+                <div className="col-lg-3">
                   <select
                     className="form-select"
                     value={statusFilter}
@@ -743,66 +807,43 @@ export default function ManageUsers() {
                     <option value="inactive">Inactive</option>
                   </select>
                 </div>
+                <div className="col-lg-1 d-flex align-items-stretch">
+                  <button className="btn btn-outline-secondary w-100" onClick={resetFilters} title="Reset filters">
+                    <FaSync />
+                  </button>
+                </div>
               </div>
-              <div className="mt-3">
-                <small className="text-muted">
-                  Showing {filteredUsers.length} of {users.length} users
-                </small>
-              </div>
-            </div>
-          </div>
+              <small className="text-muted d-block mt-3">
+                Showing {filteredUsers.length} of {users.length} users
+              </small>
+            </article>
 
-          {/* Users Table */}
-          <div className="card shadow-sm">
-            <div className="card-header d-flex justify-content-between align-items-center">
-              <h6 className="mb-0">
-                <FaUserCog className="me-2" />
-                User Management
-              </h6>
-              <div className="dropdown">
-                <button
-                  className="btn btn-sm btn-outline-primary dropdown-toggle"
-                  type="button"
-                  id="addUserDropdown"
-                  data-bs-toggle="dropdown"
-                  aria-expanded="false"
-                >
-                  <FaUserPlus className="me-1" />
-                  Add User
-                </button>
-                <ul className="dropdown-menu" aria-labelledby="addUserDropdown">
-                  <li>
-                    <button
-                      className="dropdown-item"
-                      onClick={() => setShowAddUserModal(true)}
-                    >
-                      <FaUserPlus className="me-2" />
-                      Add Single User
-                    </button>
-                  </li>
-                  <li>
-                    <button
-                      className="dropdown-item"
-                      onClick={() => setShowBulkImportModal(true)}
-                    >
-                      <FaUpload className="me-2" />
-                      Bulk Import Users
-                    </button>
-                  </li>
-                </ul>
+            <article className="um-glass-card um-table-card">
+              <div className="um-table-head">
+                <div>
+                  <h6 className="mb-1">User Directory</h6>
+                  <small className="text-muted">Edit user profiles, assign roles, and control account access.</small>
+                </div>
+                <div className="um-table-head-actions">
+                  <button className="btn btn-outline-primary" onClick={() => setShowAddUserModal(true)}>
+                    <FaUserPlus className="me-2" /> Add User
+                  </button>
+                  <button className="btn btn-outline-secondary" onClick={() => setShowBulkImportModal(true)}>
+                    <FaUpload className="me-2" /> Bulk Import
+                  </button>
+                </div>
               </div>
-            </div>
-            <div className="card-body p-0">
+
               <div className="table-responsive">
-                <table className="table table-hover align-middle mb-0">
-                  <thead className="table-light">
+                <table className="table align-middle mb-0 um-user-table">
+                  <thead>
                     <tr>
-                      <th>User</th>
-                      <th>Email</th>
+                      <th>User / Name</th>
+                      <th>Contact Info</th>
                       <th>Department</th>
                       <th>Role</th>
                       <th>Status</th>
-                      <th>Joined</th>
+                      <th>Joined Date</th>
                       <th className="text-center">Actions</th>
                     </tr>
                   </thead>
@@ -810,34 +851,27 @@ export default function ManageUsers() {
                     {filteredUsers.length === 0 ? (
                       <tr>
                         <td colSpan="7" className="text-center text-muted py-4">
-                          <FaUsers className="me-2" size={24} />
-                          No users match your filters
+                          <FaUsers className="me-2" size={22} /> No users match your filters.
                         </td>
                       </tr>
                     ) : (
                       filteredUsers.map((user) => (
                         <tr key={user._id}>
                           <td>
-                            <div className="d-flex align-items-center">
-                              <div className="avatar-circle bg-primary text-white me-3 d-flex align-items-center justify-content-center" style={{width: '40px', height: '40px', borderRadius: '50%', fontSize: '14px', fontWeight: 'bold'}}>
-                                {getUserInitials(user.name, user.email)}
-                              </div>
-                              <div>
-                                <input
-                                  type="text"
-                                  className="form-control form-control-sm"
-                                  value={user.name || ""}
-                                  onChange={(e) => updateUserFieldDraft(user._id, "name", e.target.value)}
-                                  placeholder="Full name"
-                                  style={{ minWidth: "180px" }}
-                                />
-                              </div>
+                            <div className="um-user-cell">
+                              <div className="um-user-avatar">{getUserInitials(user.name, user.email)}</div>
+                              <input
+                                type="text"
+                                className="form-control form-control-sm"
+                                value={user.name || ""}
+                                onChange={(e) => updateUserFieldDraft(user._id, "name", e.target.value)}
+                                placeholder="Full name"
+                              />
                             </div>
                           </td>
                           <td>
-                            <a href={`mailto:${user.email}`} className="text-decoration-none">
-                              <FaEnvelope className="me-1 text-muted" />
-                              {user.email}
+                            <a href={`mailto:${user.email}`} className="um-email-link">
+                              <FaEnvelope className="me-1" /> {user.email}
                             </a>
                           </td>
                           <td>
@@ -845,22 +879,18 @@ export default function ManageUsers() {
                               className="form-select form-select-sm"
                               value={user.department || ""}
                               onChange={(e) => updateUserFieldDraft(user._id, "department", e.target.value)}
-                              style={{ minWidth: "180px" }}
                             >
                               <option value="">Select department</option>
                               {DEPARTMENT_OPTIONS.map((dep) => (
-                                <option key={dep} value={dep}>
-                                  {dep}
-                                </option>
+                                <option key={dep} value={dep}>{dep}</option>
                               ))}
                             </select>
                           </td>
                           <td>
-                            <div className="d-flex align-items-center">
+                            <div className="um-role-cell">
                               {getRoleIcon(normalizeRole(user.role))}
                               <select
-                                className={`form-select form-select-sm ms-2 border-0 bg-transparent text-${getRoleColor(normalizeRole(user.role))}`}
-                                style={{width: 'auto'}}
+                                className="form-select form-select-sm um-role-select"
                                 value={normalizeRole(user.role)}
                                 onChange={(e) => updateUserRole(user._id, e.target.value)}
                               >
@@ -871,17 +901,15 @@ export default function ManageUsers() {
                             </div>
                           </td>
                           <td>
-                            <span className={`badge ${user.active === false ? 'bg-secondary' : 'bg-success'}`}>
-                              {user.active === false ? 'Inactive' : 'Active'}
+                            <span className={`um-status-pill ${user.active === false ? "inactive" : "active"}`}>
+                              {user.active === false ? "Inactive" : "Active"}
                             </span>
                           </td>
                           <td>
-                            <small className="text-muted">
-                              {new Date(user.createdAt).toLocaleDateString()}
-                            </small>
+                            <small className="text-muted">{new Date(user.createdAt).toLocaleDateString()}</small>
                           </td>
                           <td className="text-center">
-                            <div className="d-flex flex-column flex-sm-row justify-content-center gap-2">
+                            <div className="um-action-stack">
                               <button
                                 className="btn btn-sm btn-outline-primary"
                                 onClick={() => updateUserDetails(user)}
@@ -897,8 +925,7 @@ export default function ManageUsers() {
                                   onClick={() => toggleUserStatus(user)}
                                   title="Deactivate User"
                                 >
-                                  <FaUserTimes className="me-1" />
-                                  Deactivate
+                                  <FaUserTimes className="me-1" /> Deactivate
                                 </button>
                               ) : (
                                 <button
@@ -906,8 +933,7 @@ export default function ManageUsers() {
                                   onClick={() => toggleUserStatus(user)}
                                   title="Activate User"
                                 >
-                                  <FaUserCheck className="me-1" />
-                                  Activate
+                                  <FaUserCheck className="me-1" /> Activate
                                 </button>
                               )}
                             </div>
@@ -918,126 +944,13 @@ export default function ManageUsers() {
                   </tbody>
                 </table>
               </div>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Password Requests Tab */}
-      {activeTab === "password-requests" && (
-        <div className="card shadow-sm">
-          <div className="card-header d-flex justify-content-between align-items-center">
-            <h6 className="mb-0">
-              <FaKey className="me-2" />
-              Password Change Requests
-            </h6>
-            <button
-              className="btn btn-sm btn-outline-primary"
-              onClick={fetchPasswordRequests}
-            >
-              <FaSync className="me-1" />
-              Refresh
-            </button>
-          </div>
-          <div className="card-body p-0">
-            <div className="table-responsive">
-              <table className="table table-hover align-middle mb-0">
-                <thead className="table-light">
-                  <tr>
-                    <th>User</th>
-                    <th>Email</th>
-                    <th>Request Date</th>
-                    <th>Status</th>
-                    <th className="text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {passwordRequests.length === 0 ? (
-                    <tr>
-                      <td colSpan="5" className="text-center text-muted py-4">
-                        <FaKey className="me-2" size={24} />
-                        No password change requests
-                      </td>
-                    </tr>
-                  ) : (
-                    passwordRequests.map((request) => (
-                      <tr key={request._id}>
-                        <td>
-                          <div className="d-flex align-items-center">
-                            <div className="avatar-circle bg-primary text-white me-3 d-flex align-items-center justify-content-center" style={{width: '40px', height: '40px', borderRadius: '50%', fontSize: '14px', fontWeight: 'bold'}}>
-                              {getUserInitials(request.userId?.name, request.userId?.email)}
-                            </div>
-                            <div>
-                              <strong className="text-primary">{request.userId?.name || "N/A"}</strong>
-                            </div>
-                          </div>
-                        </td>
-                        <td>
-                          <a href={`mailto:${request.userId?.email}`} className="text-decoration-none">
-                            <FaEnvelope className="me-1 text-muted" />
-                            {request.userId?.email}
-                          </a>
-                        </td>
-                        <td>
-                          <small className="text-muted">
-                            {new Date(request.createdAt).toLocaleDateString()}
-                            <br />
-                            {new Date(request.createdAt).toLocaleTimeString()}
-                          </small>
-                        </td>
-                        <td>
-                          <span className={`badge ${
-                            request.status === 'pending' ? 'bg-warning' :
-                            request.status === 'approved' ? 'bg-success' :
-                            'bg-danger'
-                          }`}>
-                            {request.status.charAt(0).toUpperCase() + request.status.slice(1)}
-                          </span>
-                        </td>
-                        <td className="text-center">
-                          {request.status === 'pending' && (
-                            <div className="btn-group">
-                              <button
-                                className="btn btn-sm btn-outline-success"
-                                onClick={() => approvePasswordRequest(request._id)}
-                                title="Approve Password Change"
-                              >
-                                <FaCheck className="me-1" />
-                                Approve
-                              </button>
-                              <button
-                                className="btn btn-sm btn-outline-danger"
-                                onClick={() => rejectPasswordRequest(request._id)}
-                                title="Reject Password Change"
-                              >
-                                <FaTimes className="me-1" />
-                                Reject
-                              </button>
-                            </div>
-                          )}
-                          {request.status === 'approved' && (
-                            <span className="text-success">
-                              <FaCheck className="me-1" />
-                              Approved
-                            </span>
-                          )}
-                          {request.status === 'rejected' && (
-                            <span className="text-danger">
-                              <FaTimes className="me-1" />
-                              Rejected
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
+              <div className="um-table-footer">
+                Showing {filteredUsers.length} of {users.length} users
+              </div>
+            </article>
+          </section>
+        )}
+      </div>
       {/* Add Single User Modal */}
       {showAddUserModal && (
         <div className="modal d-block" tabIndex="-1">
@@ -1197,8 +1110,8 @@ export default function ManageUsers() {
                             <tr key={index}>
                               <td>{index + 1}</td>
                               <td>{user.email}</td>
-                              <td>••••••••</td>
-                              <td>{user.name || "—"}</td>
+                              <td>********</td>
+                              <td>{user.name || "-"}</td>
                               <td>{user.role}</td>
                               <td>{user.department || "Missing"}</td>
                             </tr>
@@ -1276,3 +1189,5 @@ export default function ManageUsers() {
     </div>
   );
 }
+
+

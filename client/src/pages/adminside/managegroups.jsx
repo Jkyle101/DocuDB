@@ -2,8 +2,8 @@ import React, { useEffect, useState, useMemo } from "react";
 import axios from "axios";
 import {
   FaUsers, FaPlus, FaEdit, FaTrash, FaShareAlt, FaBell, FaBullhorn,
-  FaTimes, FaCheck, FaSearch, FaFilter, FaChartBar, FaCrown,
-  FaShieldAlt, FaUser, FaCalendarAlt, FaSync, FaInfoCircle, FaHistory,
+  FaTimes, FaCheck, FaSearch, FaChartBar, FaCrown,
+  FaUser, FaSync, FaInfoCircle, FaHistory,
   FaFileAlt, FaFolder
 } from "react-icons/fa";
 import {
@@ -13,6 +13,7 @@ import {
 import "bootstrap/dist/css/bootstrap.min.css";
 import { BACKEND_URL } from "../../config";
 import "./admin-analytics.css";
+import "./managegroups-glass.css";
 
 export default function ManageGroups() {
   const [groups, setGroups] = useState([]);
@@ -358,661 +359,736 @@ export default function ManageGroups() {
     }
   };
 
-  return (
-    <div className="container-fluid py-3 admin-analytics-page">
-      {/* Header */}
-      <div className="analytics-hero mb-4">
-        <div className="d-flex flex-column flex-xl-row justify-content-between align-items-start align-items-xl-center gap-3">
-          <div>
-            <h4 className="fw-bold mb-1">
-              <FaUsers className="me-2 text-primary" />
-              Group Management Dashboard
-            </h4>
-            <small className="text-muted">Comprehensive group administration and analytics</small>
+  const activityTimeline = useMemo(() => {
+    const events = groups.flatMap((group) => {
+      const createdAt = new Date(group.createdAt || Date.now());
+      const safeCreatedAt = Number.isNaN(createdAt.getTime()) ? new Date() : createdAt;
+      const groupName = group.name || "Unnamed Group";
+      const groupId = group._id;
+
+      return [
+        {
+          id: `create-${groupId}`,
+          type: "group_created",
+          title: "Group Created",
+          description: `"${groupName}" was created.`,
+          timestamp: safeCreatedAt,
+          group: groupName,
+          groupId,
+        },
+        ...(group.members || []).map((member, index) => ({
+          id: `member-${groupId}-${member?._id || index}`,
+          type: "member_added",
+          title: "Member Added",
+          description: `${member?.email || member?.name || "A member"} joined "${groupName}".`,
+          timestamp: safeCreatedAt,
+          group: groupName,
+          groupId,
+        })),
+        ...(group.sharedFiles || []).map((sharedFile, index) => ({
+          id: `file-${groupId}-${sharedFile?.fileId?._id || sharedFile?._id || index}`,
+          type: "file_shared",
+          title: "File Shared",
+          description: `"${sharedFile?.fileId?.originalName || "Unknown File"}" shared with "${groupName}".`,
+          timestamp: new Date(sharedFile?.sharedAt || safeCreatedAt),
+          group: groupName,
+          groupId,
+          details: `Permission: ${(sharedFile?.permission === "editor" || sharedFile?.permission === "write") ? "Editor" : "Viewer"}`,
+        })),
+        ...(group.sharedFolders || []).map((sharedFolder, index) => ({
+          id: `folder-${groupId}-${sharedFolder?.folderId?._id || sharedFolder?._id || index}`,
+          type: "folder_shared",
+          title: "Folder Shared",
+          description: `"${sharedFolder?.folderId?.name || "Unknown Folder"}" shared with "${groupName}".`,
+          timestamp: new Date(sharedFolder?.sharedAt || safeCreatedAt),
+          group: groupName,
+          groupId,
+          details: `Permission: ${(sharedFolder?.permission === "editor" || sharedFolder?.permission === "write") ? "Editor" : "Viewer"}`,
+        })),
+        ...(group.notifications || []).map((notification, index) => ({
+          id: `notification-${groupId}-${index}`,
+          type: "notification_added",
+          title: "Notification Added",
+          description: `"${notification?.title || "Notification"}" sent to "${groupName}".`,
+          timestamp: new Date(notification?.createdAt || safeCreatedAt),
+          group: groupName,
+          groupId,
+          details: notification?.message || "",
+        })),
+        ...(group.announcements || []).map((announcement, index) => ({
+          id: `announcement-${groupId}-${index}`,
+          type: "announcement_added",
+          title: "Announcement Added",
+          description: `"${announcement?.title || "Announcement"}" posted to "${groupName}".`,
+          timestamp: new Date(announcement?.createdAt || safeCreatedAt),
+          group: groupName,
+          groupId,
+          details: announcement?.content || "",
+        })),
+      ];
+    });
+
+    return events
+      .map((event) => {
+        const normalized = new Date(event.timestamp || Date.now());
+        return {
+          ...event,
+          timestamp: Number.isNaN(normalized.getTime()) ? new Date() : normalized,
+        };
+      })
+      .sort((a, b) => b.timestamp - a.timestamp);
+  }, [groups]);
+
+  const filteredActivityTimeline = useMemo(() => {
+    if (!searchTerm.trim()) return activityTimeline;
+    const visibleGroupIds = new Set(filteredGroups.map((group) => String(group._id)));
+    return activityTimeline.filter((activity) => visibleGroupIds.has(String(activity.groupId)));
+  }, [activityTimeline, filteredGroups, searchTerm]);
+
+  const weeklyVolumeData = useMemo(() => {
+    const dayBuckets = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0 };
+    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+
+    activityTimeline.forEach((activity) => {
+      const stamp = activity.timestamp?.getTime?.() || new Date(activity.timestamp).getTime();
+      if (Number.isNaN(stamp) || stamp < sevenDaysAgo) return;
+      const day = new Date(stamp).getDay();
+      dayBuckets[day] += 1;
+    });
+
+    return [
+      { day: "Mon", value: dayBuckets[1] },
+      { day: "Tue", value: dayBuckets[2] },
+      { day: "Wed", value: dayBuckets[3] },
+      { day: "Thu", value: dayBuckets[4] },
+      { day: "Fri", value: dayBuckets[5] },
+      { day: "Sat", value: dayBuckets[6] },
+      { day: "Sun", value: dayBuckets[0] },
+    ];
+  }, [activityTimeline]);
+
+  const weeklyActivityTotal = useMemo(
+    () => weeklyVolumeData.reduce((sum, item) => sum + item.value, 0),
+    [weeklyVolumeData]
+  );
+
+  const weeklyPeakDay = useMemo(() => {
+    if (!weeklyVolumeData.length) return { day: "Mon", value: 0 };
+    return weeklyVolumeData.reduce((peak, item) => (item.value > peak.value ? item : peak), weeklyVolumeData[0]);
+  }, [weeklyVolumeData]);
+
+  const totalAssets = files.length + folders.length;
+  const storageUsedRate = totalAssets > 0
+    ? Math.min(100, Math.round(((sharedFilesCount + sharedFoldersCount) / totalAssets) * 100))
+    : 0;
+  const engagementRate = groupStats.totalMembers > 0
+    ? Math.min(100, Math.round(((groupStats.totalNotifications + groupStats.totalAnnouncements) / groupStats.totalMembers) * 100))
+    : 0;
+  const growthIndex = Math.max(
+    0,
+    Math.round((groupStats.totalMembers * 0.5) + (groupStats.totalNotifications * 1.4) + (groupStats.totalAnnouncements * 1.2))
+  );
+
+  const topGroupsByMembers = useMemo(
+    () => [...groups].sort((a, b) => (b.members?.length || 0) - (a.members?.length || 0)).slice(0, 3),
+    [groups]
+  );
+
+  const kpiCards = [
+    { label: "Total Groups", value: groupStats.totalGroups, note: "Active departments", tone: "is-blue" },
+    { label: "Total Members", value: groupStats.totalMembers, note: `Avg ${groupStats.avgMembersPerGroup}/group`, tone: "is-teal" },
+    { label: "Notifications", value: groupStats.totalNotifications, note: "Operational updates", tone: "is-amber" },
+    { label: "Announcements", value: groupStats.totalAnnouncements, note: "Broadcast posts", tone: "is-slate" },
+  ];
+
+  const tabOptions = [
+    { key: "overview", label: "Overview", icon: <FaChartBar /> },
+    { key: "manage", label: "Members", icon: <FaUsers /> },
+    { key: "shared", label: "Analytics", icon: <FaShareAlt /> },
+    { key: "history", label: "Activity", icon: <FaHistory /> },
+  ];
+
+  const getActivityBadgeLabel = (type) => {
+    if (type === "group_created") return "SYSTEM";
+    if (type === "member_added") return "SUCCESSFUL";
+    if (type === "notification_added") return "NOTICE";
+    if (type === "announcement_added") return "UPDATE";
+    if (type === "file_shared" || type === "folder_shared") return "SHARED";
+    return "EVENT";
+  };
+
+  const getActivityIcon = (type) => {
+    if (type === "group_created") return <FaUsers />;
+    if (type === "member_added") return <FaUser />;
+    if (type === "file_shared") return <FaFileAlt />;
+    if (type === "folder_shared") return <FaFolder />;
+    if (type === "notification_added") return <FaBell />;
+    if (type === "announcement_added") return <FaBullhorn />;
+    return <FaInfoCircle />;
+  };
+
+  const getLatestGroupPulse = (group) => {
+    const updates = [
+      ...(group.notifications || []).map((item) => ({
+        title: item?.title || "Notification",
+        summary: item?.message || "No message content",
+        stamp: new Date(item?.createdAt || group.createdAt || Date.now()),
+      })),
+      ...(group.announcements || []).map((item) => ({
+        title: item?.title || "Announcement",
+        summary: item?.content || "No announcement content",
+        stamp: new Date(item?.createdAt || group.createdAt || Date.now()),
+      })),
+    ]
+      .map((entry) => ({
+        ...entry,
+        stamp: Number.isNaN(entry.stamp.getTime()) ? new Date() : entry.stamp,
+      }))
+      .sort((a, b) => b.stamp - a.stamp);
+
+    return updates[0] || null;
+  };
+
+  const formatTimestamp = (value) => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "No timestamp";
+    return date.toLocaleString();
+  };
+
+  const renderGroupCard = (group, index, { withDelete = false } = {}) => {
+    const pulse = getLatestGroupPulse(group);
+    const memberList = group.members || [];
+    const accentClass = ["is-ocean", "is-teal", "is-charcoal"][index % 3];
+    const primaryLeader = group.leaders?.[0]?.email || null;
+
+    return (
+      <div key={group._id} className="col-12 col-md-6 col-xxl-4">
+        <article className={`gm-group-card ${accentClass}`}>
+          <header className="gm-group-card-top">
+            <div>
+              <h5 className="mb-1">{group.name}</h5>
+              <p className="mb-0">{group.description || "No description yet."}</p>
+              <small className="gm-card-created">
+                Created {new Date(group.createdAt).toLocaleDateString()}
+              </small>
+            </div>
+            <div className="gm-group-tools">
+              <button
+                className="btn btn-sm gm-icon-btn"
+                onClick={() => {
+                  setSelectedGroup(group);
+                  setShowEditModal(true);
+                }}
+                title="Edit Group"
+              >
+                <FaEdit />
+              </button>
+              {withDelete && (
+                <button
+                  className="btn btn-sm gm-icon-btn danger"
+                  onClick={() => handleDeleteGroup(group._id)}
+                  title="Delete Group"
+                >
+                  <FaTrash />
+                </button>
+              )}
+            </div>
+          </header>
+
+          <div className="gm-group-card-body">
+            {primaryLeader && (
+              <div className="gm-leader-badge">
+                <FaCrown className="me-1" />
+                Leader: {primaryLeader}
+              </div>
+            )}
+            <div className="gm-member-strip">
+              <div className="gm-member-stack">
+                {memberList.slice(0, 4).map((member, memberIndex) => (
+                  <span
+                    key={member?._id || memberIndex}
+                    className="gm-member-avatar"
+                    style={{ zIndex: 5 - memberIndex }}
+                  >
+                    {(member?.email?.charAt(0) || member?.name?.charAt(0) || "U").toUpperCase()}
+                  </span>
+                ))}
+                {memberList.length > 4 && (
+                  <span className="gm-member-overflow">+{memberList.length - 4}</span>
+                )}
+                {memberList.length === 0 && <span className="gm-member-empty">No members yet</span>}
+              </div>
+              <div className="gm-member-count">{memberList.length} Members</div>
+            </div>
+
+            <div className="gm-group-pulse">
+              <div className="gm-pulse-title">{pulse ? pulse.title : "No recent activity"}</div>
+              <p className="mb-0">{pulse ? pulse.summary : "Publish updates to keep this group informed."}</p>
+            </div>
+
+            <div className="gm-stat-pill-row">
+              <span className="gm-stat-pill">{group.notifications?.length || 0} Notifications</span>
+              <span className="gm-stat-pill">{group.announcements?.length || 0} Announcements</span>
+              <span className="gm-stat-pill">{(group.sharedFiles?.length || 0) + (group.sharedFolders?.length || 0)} Shared</span>
+            </div>
+
+            <div className="gm-card-actions-grid">
+              <button
+                className="btn btn-sm btn-outline-primary"
+                onClick={() => {
+                  setSelectedGroup(group);
+                  setShowMembersModal(true);
+                }}
+              >
+                <FaUsers className="me-1" /> Manage Members
+              </button>
+              <button
+                className="btn btn-sm btn-outline-info"
+                onClick={() => {
+                  setSelectedGroup(group);
+                  setShowShareModal(true);
+                  refreshDashboard({ silent: true, includeAssets: true });
+                }}
+              >
+                <FaShareAlt className="me-1" /> Share Files
+              </button>
+              <button
+                className="btn btn-sm btn-outline-warning"
+                onClick={() => {
+                  setSelectedGroup(group);
+                  setShowNotificationModal(true);
+                }}
+              >
+                <FaBell className="me-1" /> Notify
+              </button>
+              <button
+                className="btn btn-sm btn-outline-success"
+                onClick={() => {
+                  setSelectedGroup(group);
+                  setShowAnnouncementModal(true);
+                }}
+              >
+                <FaBullhorn className="me-1" /> Announce
+              </button>
+            </div>
           </div>
-          <div className="d-flex flex-wrap align-items-center gap-2">
+        </article>
+      </div>
+    );
+  };
+
+  return (
+    <div className="container-fluid py-3 admin-analytics-page group-management-dashboard">
+      <div className="gm-dashboard-shell">
+        <section className="gm-dashboard-header">
+          <div className="gm-header-top">
+            <div>
+              <p className="gm-eyebrow mb-1">
+                {activeTab === "history" ? "SYSTEM LOGS" : "INSTITUTIONAL OVERVIEW"}
+              </p>
+              <h2 className="gm-title mb-2">
+                {activeTab === "history" ? "Group Activity Timeline" : "Manage Departments"}
+              </h2>
+              <p className="gm-subtitle mb-0">
+                {activeTab === "history"
+                  ? "A chronological record of group activity, collaboration events, and administrative actions."
+                  : "A clear command center for departments, membership health, and cross-group collaboration."}
+              </p>
+            </div>
+            <div className="gm-top-kpis">
+              <div className="gm-mini-kpi">
+                <small>Total Members</small>
+                <strong>{groupStats.totalMembers.toLocaleString()}</strong>
+              </div>
+              <div className="gm-mini-kpi">
+                <small>Total Files</small>
+                <strong>{Math.max(files.length, sharedFilesCount).toLocaleString()}</strong>
+              </div>
+            </div>
+          </div>
+
+          <div className="gm-toolbar">
+            <div className="gm-search-box">
+              <FaSearch className="gm-search-icon" />
+              <input
+                type="text"
+                className="form-control gm-search-input"
+                placeholder="Search and filter groups..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+            </div>
+            <div className="gm-toolbar-actions">
+              <button
+                className="btn btn-outline-primary"
+                onClick={() =>
+                  refreshDashboard({
+                    includeAssets: activeTab === "shared" || showShareModal,
+                  })
+                }
+                disabled={loading || refreshing}
+              >
+                <FaSync className={loading || refreshing ? "fa-spin me-2" : "me-2"} />
+                Refresh
+              </button>
+              <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
+                <FaPlus className="me-2" /> Create Group
+              </button>
+            </div>
+          </div>
+
+          <div className="gm-tab-strip" role="tablist" aria-label="Group management views">
+            {tabOptions.map((tab) => (
+              <button
+                key={tab.key}
+                className={`gm-tab-btn ${activeTab === tab.key ? "active" : ""}`}
+                onClick={() => setActiveTab(tab.key)}
+                role="tab"
+                aria-selected={activeTab === tab.key}
+              >
+                <span className="me-2">{tab.icon}</span>
+                {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="analytics-meta-strip mt-3">
             <span className={`analytics-live-pill ${refreshing ? "is-refreshing" : "is-live"}`}>
               {refreshing ? "Syncing..." : `Live every ${Math.round(REFRESH_INTERVAL_MS / 1000)}s`}
             </span>
             <small className="analytics-last-updated text-muted">
               {lastUpdated ? `Last updated ${lastUpdated.toLocaleTimeString()}` : "Fetching data..."}
             </small>
-            <button
-              className="btn btn-outline-primary"
-              onClick={() =>
-                refreshDashboard({
-                  includeAssets: activeTab === "shared" || showShareModal
-                })
-              }
-              disabled={loading || refreshing}
-            >
-              <FaSync className={loading || refreshing ? "fa-spin me-2" : "me-2"} />
-              Refresh
-            </button>
-            <button
-              className="btn btn-primary"
-              onClick={() => setShowCreateModal(true)}
-            >
-              <FaPlus className="me-2" /> Create Group
-            </button>
+            <span className="analytics-chip">Leader coverage: {leaderCoverage}%</span>
+            <span className="analytics-chip">Collaboration density: {collaborationDensity}</span>
+            <span className="analytics-chip">Shared assets: {sharedFilesCount + sharedFoldersCount}</span>
           </div>
-        </div>
-        <div className="analytics-meta-strip mt-3">
-          <span className="analytics-chip">Leader coverage: {leaderCoverage}%</span>
-          <span className="analytics-chip">Collaboration density: {collaborationDensity}</span>
-          <span className="analytics-chip">Shared assets: {sharedFilesCount + sharedFoldersCount}</span>
-        </div>
-      </div>
+        </section>
 
-      {/* Navigation Tabs */}
-      <ul className="nav nav-tabs mb-4">
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === "overview" ? "active" : ""}`}
-            onClick={() => setActiveTab("overview")}
-          >
-            <FaChartBar className="me-1" /> Overview
-          </button>
-        </li>
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === "manage" ? "active" : ""}`}
-            onClick={() => setActiveTab("manage")}
-          >
-            <FaUsers className="me-1" /> Manage Groups
-          </button>
-        </li>
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === "shared" ? "active" : ""}`}
-            onClick={() => setActiveTab("shared")}
-          >
-            <FaShareAlt className="me-1" /> Shared Items
-          </button>
-        </li>
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === "history" ? "active" : ""}`}
-            onClick={() => setActiveTab("history")}
-          >
-            <FaHistory className="me-1" /> Activity History
-          </button>
-        </li>
-      </ul>
-
-      {/* Overview Tab */}
-      {activeTab === "overview" && (
-        <>
-          {/* Key Metrics Cards */}
-          <div className="row g-4 mb-4">
-            <div className="col-md-6 col-lg-3">
-              <div className="card shadow-sm border-primary analytics-kpi-card h-100">
-                <div className="card-body text-center">
-                  <FaUsers className="text-primary mb-2" size={32} />
-                  <h5 className="card-title mb-1">{groupStats.totalGroups}</h5>
-                  <small className="text-muted">Total Groups</small>
-                </div>
-              </div>
-            </div>
-            <div className="col-md-6 col-lg-3">
-              <div className="card shadow-sm border-success analytics-kpi-card h-100">
-                <div className="card-body text-center">
-                  <FaUser className="text-success mb-2" size={32} />
-                  <h5 className="card-title mb-1">{groupStats.totalMembers}</h5>
-                  <small className="text-muted">Total Members</small>
-                  <div className="mt-2 small">
-                    Avg: {groupStats.avgMembersPerGroup} per group
+        {activeTab === "overview" && (
+          <section className="gm-view-stack">
+            <div className="row g-4">
+              <div className="col-xl-8">
+                <article className="gm-glass-card h-100">
+                  <div className="gm-card-heading">
+                    <h6 className="mb-1">Activity Volume (7 Days)</h6>
+                    <small className="text-muted">{weeklyActivityTotal} events logged this week</small>
                   </div>
-                </div>
-              </div>
-            </div>
-            <div className="col-md-6 col-lg-3">
-              <div className="card shadow-sm border-warning analytics-kpi-card h-100">
-                <div className="card-body text-center">
-                  <FaBell className="text-warning mb-2" size={32} />
-                  <h5 className="card-title mb-1">{groupStats.totalNotifications}</h5>
-                  <small className="text-muted">Notifications</small>
-                </div>
-              </div>
-            </div>
-            <div className="col-md-6 col-lg-3">
-              <div className="card shadow-sm border-info analytics-kpi-card h-100">
-                <div className="card-body text-center">
-                  <FaBullhorn className="text-info mb-2" size={32} />
-                  <h5 className="card-title mb-1">{groupStats.totalAnnouncements}</h5>
-                  <small className="text-muted">Announcements</small>
-                </div>
-              </div>
-            </div>
-            <div className="col-md-6 col-lg-3">
-              <div className="card shadow-sm border-secondary analytics-kpi-card h-100">
-                <div className="card-body text-center">
-                  <FaShareAlt className="text-secondary mb-2" size={32} />
-                  <h5 className="card-title mb-1">{sharedFilesCount + sharedFoldersCount}</h5>
-                  <small className="text-muted">Shared Assets</small>
-                  <div className="mt-2 small">
-                    Files: {sharedFilesCount} | Folders: {sharedFoldersCount}
+                  <div className="gm-chart-wrap">
+                    <ResponsiveContainer width="100%" height={260}>
+                      <BarChart data={weeklyVolumeData}>
+                        <XAxis dataKey="day" axisLine={false} tickLine={false} />
+                        <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
+                        <Tooltip
+                          cursor={{ fill: "rgba(10, 102, 255, 0.08)" }}
+                          contentStyle={{ borderRadius: "12px", borderColor: "rgba(148, 163, 184, 0.4)" }}
+                        />
+                        <Legend />
+                        <Bar dataKey="value" name="Activity" fill="#0a66ff" radius={[10, 10, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
-                </div>
+                </article>
+              </div>
+              <div className="col-xl-4">
+                <article className="gm-growth-card h-100">
+                  <div className="gm-growth-icon">
+                    <FaChartBar />
+                  </div>
+                  <h5 className="mb-2">Growth Index</h5>
+                  <p>
+                    Group momentum is strongest on {weeklyPeakDay.day} with {weeklyPeakDay.value} tracked events.
+                  </p>
+                  <div className="gm-growth-number">+{growthIndex}</div>
+                  <small>Composite activity score</small>
+                </article>
               </div>
             </div>
-          </div>
 
-          {/* Charts Row */}
-          <div className="row g-4 mb-4">
-            <div className="col-lg-6">
-              <div className="card shadow-sm">
-                <div className="card-header">
-                  <h6 className="mb-0">
-                    <FaChartBar className="me-2" />
-                    Group Activity Distribution
-                  </h6>
-                </div>
-                <div className="card-body">
-                  <ResponsiveContainer width="100%" height={250}>
-                    <PieChart>
-                      <Pie
-                        data={activityData}
-                        dataKey="value"
-                        nameKey="name"
-                        outerRadius={80}
-                        fill="#8884d8"
-                        label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                      >
-                        {activityData.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={entry.color} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
+            <div className="gm-kpi-grid">
+              {kpiCards.map((kpi) => (
+                <article key={kpi.label} className={`gm-kpi-card ${kpi.tone}`}>
+                  <small>{kpi.label}</small>
+                  <h4>{Number(kpi.value).toLocaleString()}</h4>
+                  <p className="mb-0">{kpi.note}</p>
+                </article>
+              ))}
+            </div>
+
+            <div className="gm-section-header">
+              <h5 className="mb-1">Department Groups</h5>
+              <small className="text-muted">
+                Showing {Math.min(filteredGroups.length, 3)} of {filteredGroups.length} filtered groups
+              </small>
+            </div>
+
+            <div className="row g-4">
+              {filteredGroups.slice(0, 3).map((group, index) => renderGroupCard(group, index))}
+              <div className="col-12 col-md-6 col-xxl-4">
+                <article className="gm-create-card">
+                  <div className="gm-create-icon">
+                    <FaPlus />
+                  </div>
+                  <h5>Create New Group</h5>
+                  <p>Initialize a new organization unit and bring members, files, and notifications into one workspace.</p>
+                  <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
+                    Get Started
+                  </button>
+                </article>
               </div>
             </div>
-            <div className="col-lg-6">
-              <div className="card shadow-sm">
-                <div className="card-header">
-                  <h6 className="mb-0">
-                    <FaCalendarAlt className="me-2" />
-                    Recent Group Activity
-                  </h6>
-                </div>
-                <div className="card-body">
-                  <div className="list-group list-group-flush">
-                    {groups.slice(0, 5).map((group) => (
-                      <div key={group._id} className="list-group-item d-flex justify-content-between align-items-center">
-                        <div className="d-flex align-items-center">
-                          <div className="avatar-circle bg-primary text-white me-3 d-flex align-items-center justify-content-center" style={{width: '35px', height: '35px', borderRadius: '50%', fontSize: '14px', fontWeight: 'bold'}}>
-                            {group.name.charAt(0).toUpperCase()}
-                          </div>
-                          <div>
-                            <strong>{group.name}</strong>
-                            <br />
-                            <small className="text-muted">
-                              {group.members?.length || 0} members •
-                              {group.notifications?.length || 0} notifications •
-                              {group.announcements?.length || 0} announcements
-                            </small>
-                          </div>
+
+            <div className="row g-4">
+              <div className="col-xl-8">
+                <article className="gm-glass-card h-100">
+                  <div className="gm-card-heading d-flex justify-content-between align-items-center">
+                    <h6 className="mb-0">Recent Group Activity</h6>
+                    <button className="btn btn-link p-0 gm-link-btn" onClick={() => setActiveTab("history")}>
+                      View Global Log
+                    </button>
+                  </div>
+                  <div className="gm-feed-list">
+                    {filteredActivityTimeline.slice(0, 4).map((activity) => (
+                      <div key={activity.id} className="gm-feed-item">
+                        <span className={`gm-feed-icon type-${activity.type}`}>
+                          {getActivityIcon(activity.type)}
+                        </span>
+                        <div className="gm-feed-content">
+                          <strong>{activity.title}</strong>
+                          <p className="mb-0">{activity.description}</p>
+                          <small className="text-muted">{formatTimestamp(activity.timestamp)}</small>
                         </div>
-                        <small className="text-muted">
-                          {new Date(group.createdAt).toLocaleDateString()}
-                        </small>
                       </div>
                     ))}
-                    {groups.length === 0 && (
-                      <div className="text-center py-3 text-muted">
-                        <FaInfoCircle className="me-2" />
-                        No groups available
+                    {filteredActivityTimeline.length === 0 && (
+                      <div className="gm-empty-state-inline">
+                        <FaInfoCircle className="me-2" /> No activity in the selected view.
                       </div>
                     )}
                   </div>
-                </div>
+                </article>
+              </div>
+              <div className="col-xl-4">
+                <article className="gm-insights-card h-100">
+                  <h5>Group Insights</h5>
+                  <div className="gm-progress-row">
+                    <div className="d-flex justify-content-between">
+                      <small>Storage Used</small>
+                      <strong>{storageUsedRate}%</strong>
+                    </div>
+                    <div className="progress">
+                      <div className="progress-bar" style={{ width: `${storageUsedRate}%` }} />
+                    </div>
+                  </div>
+                  <div className="gm-progress-row">
+                    <div className="d-flex justify-content-between">
+                      <small>Engagement</small>
+                      <strong>{engagementRate}%</strong>
+                    </div>
+                    <div className="progress">
+                      <div className="progress-bar secondary" style={{ width: `${engagementRate}%` }} />
+                    </div>
+                  </div>
+                  <div className="gm-insight-chart">
+                    {activityData.some((item) => item.value > 0) ? (
+                      <ResponsiveContainer width="100%" height={150}>
+                        <PieChart>
+                          <Pie data={activityData} dataKey="value" innerRadius={38} outerRadius={58}>
+                            {activityData.map((entry) => (
+                              <Cell key={entry.name} fill={entry.color} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <div className="gm-empty-state-inline">No activity distribution yet.</div>
+                    )}
+                  </div>
+                  <div className="gm-top-groups">
+                    <small className="gm-top-groups-label">Top Member Groups</small>
+                    {topGroupsByMembers.length > 0 ? (
+                      topGroupsByMembers.map((group) => (
+                        <div key={group._id} className="gm-top-group-row">
+                          <span>{group.name}</span>
+                          <strong>{group.members?.length || 0}</strong>
+                        </div>
+                      ))
+                    ) : (
+                      <small className="text-muted">No member data yet.</small>
+                    )}
+                  </div>
+                  <p className="gm-tip mb-0">
+                    Groups with frequent updates and shared assets typically see stronger participation and retention.
+                  </p>
+                </article>
               </div>
             </div>
-          </div>
-        </>
-      )}
+          </section>
+        )}
 
-      {/* Manage Groups Tab */}
-      {activeTab === "manage" && (
-        <>
-          {/* Search Bar */}
-          <div className="card shadow-sm mb-4">
-            <div className="card-header">
-              <h6 className="mb-0">
-                <FaSearch className="me-2" />
-                Search & Filter Groups
-              </h6>
+        {activeTab === "manage" && (
+          <section className="gm-view-stack">
+            <div className="gm-section-header">
+              <h5 className="mb-1">Group Directory</h5>
+              <small className="text-muted">
+                {filteredGroups.length} of {groups.length} groups match your search
+              </small>
             </div>
-            <div className="card-body">
-              <div className="row g-3">
-                <div className="col-md-8">
-                  <div className="input-group">
-                    <span className="input-group-text"><FaSearch /></span>
-                    <input
-                      type="text"
-                      className="form-control"
-                      placeholder="Search groups by name or description..."
-                      value={searchTerm}
-                      onChange={(e) => setSearchTerm(e.target.value)}
-                    />
-                  </div>
-                </div>
-                <div className="col-md-4">
-                  <button
-                    className="btn btn-outline-primary w-100"
-                    onClick={() =>
-                      refreshDashboard({
-                        includeAssets: activeTab === "shared" || showShareModal
-                      })
-                    }
-                    disabled={loading || refreshing}
-                  >
-                    <FaSync className={loading || refreshing ? "fa-spin me-2" : "me-2"} />
-                    Refresh
+
+            {filteredGroups.length > 0 ? (
+              <div className="row g-4">
+                {filteredGroups.map((group, index) => renderGroupCard(group, index, { withDelete: true }))}
+              </div>
+            ) : (
+              <article className="gm-empty-state-panel">
+                <FaUsers size={54} />
+                <h5 className="mt-3">No groups found</h5>
+                <p>{searchTerm ? "Try a different keyword." : "Create your first group to get started."}</p>
+                {!searchTerm && (
+                  <button className="btn btn-primary" onClick={() => setShowCreateModal(true)}>
+                    <FaPlus className="me-2" /> Create Group
                   </button>
-                </div>
-              </div>
-              <div className="mt-3">
-                <small className="text-muted">
-                  Showing {filteredGroups.length} of {groups.length} groups
-                </small>
-              </div>
-            </div>
-          </div>
-
-          {/* Groups Grid */}
-          <div className="row g-4">
-            {filteredGroups.map((group) => (
-              <div key={group._id} className="col-md-6 col-lg-4 mb-4">
-                <div className="card h-100 shadow-sm hover-card">
-                  <div className="card-header d-flex justify-content-between align-items-center bg-light">
-                    <div className="d-flex align-items-center">
-                      <div className="avatar-circle bg-primary text-white me-3 d-flex align-items-center justify-content-center" style={{width: '40px', height: '40px', borderRadius: '50%', fontSize: '16px', fontWeight: 'bold'}}>
-                        {group.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <h6 className="mb-0 fw-bold">{group.name}</h6>
-                        <small className="text-muted">
-                          Created {new Date(group.createdAt).toLocaleDateString()}
-                        </small>
-                      </div>
-                    </div>
-                    <div className="btn-group">
-                      <button
-                        className="btn btn-sm btn-outline-primary"
-                        onClick={() => {
-                          setSelectedGroup(group);
-                          setShowEditModal(true);
-                        }}
-                        title="Edit Group"
-                      >
-                        <FaEdit />
-                      </button>
-                      <button
-                        className="btn btn-sm btn-outline-danger"
-                        onClick={() => handleDeleteGroup(group._id)}
-                        title="Delete Group"
-                      >
-                        <FaTrash />
-                      </button>
-                    </div>
-                  </div>
-                  <div className="card-body">
-                    <p className="text-muted small mb-3">{group.description || "No description provided"}</p>
-                {group.leaders?.length > 0 && (
-                  <div className="mb-3">
-                    <span className="badge bg-warning text-dark">
-                      <FaCrown className="me-1" size={12} />
-                      Leader: {group.leaders[0]?.email || "Assigned"}
-                    </span>
-                  </div>
                 )}
+              </article>
+            )}
+          </section>
+        )}
 
-                    <div className="row text-center mb-3">
-                      <div className="col-4">
-                        <div className="p-2 bg-light rounded">
-                          <h6 className="mb-0 text-primary">{group.members?.length || 0}</h6>
-                          <small className="text-muted">Members</small>
+        {activeTab === "shared" && (
+          <section className="gm-view-stack">
+            {filteredGroups.length > 0 ? (
+              <div className="row g-4">
+                {filteredGroups.map((group) => (
+                  <div key={group._id} className="col-12">
+                    <article className="gm-glass-card">
+                      <div className="gm-shared-header">
+                        <div>
+                          <h6 className="mb-1">{group.name}</h6>
+                          <small className="text-muted">
+                            {group.sharedFiles?.length || 0} files and {group.sharedFolders?.length || 0} folders shared
+                          </small>
                         </div>
+                        <button
+                          className="btn btn-sm btn-outline-primary"
+                          onClick={() => {
+                            setSelectedGroup(group);
+                            setShowShareModal(true);
+                            refreshDashboard({ silent: true, includeAssets: true });
+                          }}
+                        >
+                          <FaPlus className="me-1" /> Add Share
+                        </button>
                       </div>
-                      <div className="col-4">
-                        <div className="p-2 bg-light rounded">
-                          <h6 className="mb-0 text-warning">{group.notifications?.length || 0}</h6>
-                          <small className="text-muted">Notifications</small>
-                        </div>
-                      </div>
-                      <div className="col-4">
-                        <div className="p-2 bg-light rounded">
-                          <h6 className="mb-0 text-info">{group.announcements?.length || 0}</h6>
-                          <small className="text-muted">Announcements</small>
-                        </div>
-                      </div>
-                    </div>
 
-                    <div className="d-grid gap-2">
-                      <button
-                        className="btn btn-sm btn-outline-secondary"
-                        onClick={() => {
-                          setSelectedGroup(group);
-                          setShowMembersModal(true);
-                        }}
-                      >
-                        <FaUsers className="me-2" /> Manage Members
-                      </button>
-                      <button
-                        className="btn btn-sm btn-outline-info"
-                        onClick={() => {
-                          setSelectedGroup(group);
-                          setShowShareModal(true);
-                          refreshDashboard({ silent: true, includeAssets: true });
-                        }}
-                      >
-                        <FaShareAlt className="me-2" /> Share Files/Folders
-                      </button>
-                      <div className="row g-1">
-                        <div className="col-6">
-                          <button
-                            className="btn btn-sm btn-outline-warning w-100"
-                            onClick={() => {
-                              setSelectedGroup(group);
-                              setShowNotificationModal(true);
-                            }}
-                          >
-                            <FaBell className="me-1" /> Notify
-                          </button>
-                        </div>
-                        <div className="col-6">
-                          <button
-                            className="btn btn-sm btn-outline-success w-100"
-                            onClick={() => {
-                              setSelectedGroup(group);
-                              setShowAnnouncementModal(true);
-                            }}
-                          >
-                            <FaBullhorn className="me-1" /> Announce
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {/* Empty State */}
-          {filteredGroups.length === 0 && (
-            <div className="text-center py-5">
-              <FaUsers className="text-muted mb-3" size={64} />
-              <h5 className="text-muted">No groups found</h5>
-              <p className="text-muted mb-3">
-                {searchTerm ? "Try adjusting your search terms" : "Create your first group to get started"}
-              </p>
-              {!searchTerm && (
-                <button
-                  className="btn btn-primary"
-                  onClick={() => setShowCreateModal(true)}
-                >
-                  <FaPlus className="me-2" /> Create Group
-                </button>
-              )}
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Shared Items Tab */}
-      {activeTab === "shared" && (
-        <>
-          <div className="row">
-            {groups.map((group) => (
-              <div key={group._id} className="col-12 mb-4">
-                <div className="card shadow-sm">
-                  <div className="card-header d-flex justify-content-between align-items-center">
-                    <div className="d-flex align-items-center">
-                      <div className="avatar-circle bg-primary text-white me-3 d-flex align-items-center justify-content-center" style={{width: '40px', height: '40px', borderRadius: '50%', fontSize: '16px', fontWeight: 'bold'}}>
-                        {group.name.charAt(0).toUpperCase()}
-                      </div>
-                      <div>
-                        <h6 className="mb-0 fw-bold">{group.name}</h6>
-                        <small className="text-muted">
-                          {group.sharedFiles?.length || 0} files, {group.sharedFolders?.length || 0} folders shared
-                        </small>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="card-body">
-                    {/* Shared Files */}
-                    {group.sharedFiles && group.sharedFiles.length > 0 && (
-                      <div className="mb-4">
-                        <h6 className="text-primary mb-3">
-                          <FaFileAlt className="me-2" />
-                          Shared Files ({group.sharedFiles.length})
-                        </h6>
-                        <div className="row g-3">
-                          {group.sharedFiles.map((sharedFile, index) => (
-                            <div key={index} className="col-md-6 col-lg-4">
-                              <div className="card border-light shadow-sm">
-                                <div className="card-body">
-                                  <div className="d-flex align-items-start justify-content-between">
-                                    <div className="flex-grow-1">
-                                      <h6 className="card-title mb-1 text-truncate">
-                                        {sharedFile.fileId?.originalName || 'Unknown File'}
-                                      </h6>
-                                      <p className="card-text small text-muted mb-2">
-                                        Permission: <span className={`badge ${(sharedFile.permission === 'editor' || sharedFile.permission === 'write') ? 'bg-success' : 'bg-info'}`}>
-                                          {(sharedFile.permission === 'editor' || sharedFile.permission === 'write') ? 'Editor' : 'Viewer'}
-                                        </span>
-                                      </p>
-                                      <small className="text-muted">
-                                        Shared by: {sharedFile.sharedBy?.email || 'Unknown'}<br/>
-                                        {new Date(sharedFile.sharedAt).toLocaleDateString()}
-                                      </small>
-                                    </div>
-                                    <button
-                                      className="btn btn-sm btn-outline-danger ms-2"
-                                      onClick={() => handleUnshareFromGroup(group._id, 'file', sharedFile._id)}
-                                      title="Remove from group"
-                                    >
-                                      <FaTimes />
-                                    </button>
-                                  </div>
-                                </div>
+                      <div className="row g-3 mt-1">
+                        {(group.sharedFiles || []).map((sharedFile, index) => (
+                          <div key={`file-${index}`} className="col-md-6 col-xl-4">
+                            <div className="gm-shared-item">
+                              <div>
+                                <strong>{sharedFile?.fileId?.originalName || "Unknown File"}</strong>
+                                <p className="mb-0 text-muted small">
+                                  {sharedFile?.permission === "editor" || sharedFile?.permission === "write" ? "Editor" : "Viewer"} permission
+                                </p>
+                                <small className="text-muted d-block">Shared by {sharedFile?.sharedBy?.email || "Unknown"}</small>
+                                <small className="text-muted">{formatTimestamp(sharedFile?.sharedAt)}</small>
                               </div>
+                              <button
+                                className="btn btn-sm btn-outline-danger"
+                                onClick={() => handleUnshareFromGroup(group._id, "file", sharedFile._id)}
+                                title="Remove file share"
+                              >
+                                <FaTimes />
+                              </button>
                             </div>
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                          </div>
+                        ))}
 
-                    {/* Shared Folders */}
-                    {group.sharedFolders && group.sharedFolders.length > 0 && (
-                      <div>
-                        <h6 className="text-success mb-3">
-                          <FaFolder className="me-2" />
-                          Shared Folders ({group.sharedFolders.length})
-                        </h6>
-                        <div className="row g-3">
-                          {group.sharedFolders.map((sharedFolder, index) => (
-                            <div key={index} className="col-md-6 col-lg-4">
-                              <div className="card border-light shadow-sm">
-                                <div className="card-body">
-                                  <div className="d-flex align-items-start justify-content-between">
-                                    <div className="flex-grow-1">
-                                      <h6 className="card-title mb-1 text-truncate">
-                                        {sharedFolder.folderId?.name || 'Unknown Folder'}
-                                      </h6>
-                                      <p className="card-text small text-muted mb-2">
-                                        Permission: <span className={`badge ${(sharedFolder.permission === 'editor' || sharedFolder.permission === 'write') ? 'bg-success' : 'bg-info'}`}>
-                                          {(sharedFolder.permission === 'editor' || sharedFolder.permission === 'write') ? 'Editor' : 'Viewer'}
-                                        </span>
-                                      </p>
-                                      <small className="text-muted">
-                                        Shared by: {sharedFolder.sharedBy?.email || 'Unknown'}<br/>
-                                        {new Date(sharedFolder.sharedAt).toLocaleDateString()}
-                                      </small>
-                                    </div>
-                                    <button
-                                      className="btn btn-sm btn-outline-danger ms-2"
-                                      onClick={() => handleUnshareFromGroup(group._id, 'folder', sharedFolder._id)}
-                                      title="Remove from group"
-                                    >
-                                      <FaTimes />
-                                    </button>
-                                  </div>
-                                </div>
+                        {(group.sharedFolders || []).map((sharedFolder, index) => (
+                          <div key={`folder-${index}`} className="col-md-6 col-xl-4">
+                            <div className="gm-shared-item">
+                              <div>
+                                <strong>{sharedFolder?.folderId?.name || "Unknown Folder"}</strong>
+                                <p className="mb-0 text-muted small">
+                                  {sharedFolder?.permission === "editor" || sharedFolder?.permission === "write" ? "Editor" : "Viewer"} permission
+                                </p>
+                                <small className="text-muted d-block">Shared by {sharedFolder?.sharedBy?.email || "Unknown"}</small>
+                                <small className="text-muted">{formatTimestamp(sharedFolder?.sharedAt)}</small>
                               </div>
+                              <button
+                                className="btn btn-sm btn-outline-danger"
+                                onClick={() => handleUnshareFromGroup(group._id, "folder", sharedFolder._id)}
+                                title="Remove folder share"
+                              >
+                                <FaTimes />
+                              </button>
                             </div>
-                          ))}
-                        </div>
+                          </div>
+                        ))}
                       </div>
-                    )}
 
-                    {/* No shared items */}
-                    {(!group.sharedFiles || group.sharedFiles.length === 0) &&
-                     (!group.sharedFolders || group.sharedFolders.length === 0) && (
-                      <div className="text-center py-4">
-                        <FaShareAlt className="text-muted mb-3" size={48} />
-                        <p className="text-muted mb-0">No files or folders are currently shared with this group.</p>
-                      </div>
-                    )}
+                      {(!group.sharedFiles || group.sharedFiles.length === 0) &&
+                        (!group.sharedFolders || group.sharedFolders.length === 0) && (
+                          <div className="gm-empty-state-inline mt-3">
+                            <FaShareAlt className="me-2" />
+                            No files or folders are currently shared with this group.
+                          </div>
+                        )}
+                    </article>
                   </div>
-                </div>
+                ))}
               </div>
-            ))}
-          </div>
+            ) : (
+              <article className="gm-empty-state-panel">
+                <FaShareAlt size={54} />
+                <h5 className="mt-3">No shared items</h5>
+                <p>Create and populate groups first to manage shared content.</p>
+              </article>
+            )}
+          </section>
+        )}
 
-          {/* Empty State for Shared Items */}
-          {groups.length === 0 && (
-            <div className="text-center py-5">
-              <FaShareAlt className="text-muted mb-3" size={64} />
-              <h5 className="text-muted">No Groups Available</h5>
-              <p className="text-muted">Create groups first to manage shared items.</p>
-            </div>
-          )}
-        </>
-      )}
-
-      {/* Activity History Tab */}
-      {activeTab === "history" && (
-        <>
-          <div className="card shadow-sm">
-            <div className="card-header">
-              <h6 className="mb-0">
-                <FaHistory className="me-2" />
-                Group Activity Timeline
-              </h6>
-            </div>
-            <div className="card-body">
-              <div className="timeline">
-                {groups.length > 0 ? (
-                  groups.flatMap(group => [
-                    // Group creation activity
-                    {
-                      id: `create-${group._id}`,
-                      type: 'group_created',
-                      title: 'Group Created',
-                      description: `"${group.name}" was created`,
-                      timestamp: group.createdAt,
-                      group: group.name,
-                      icon: <FaUsers className="text-success" />
-                    },
-                    // Member activities
-                    ...(group.members?.map(member => ({
-                      id: `member-${group._id}-${member._id}`,
-                      type: 'member_added',
-                      title: 'Member Added',
-                      description: `${member.email || member._id} joined "${group.name}"`,
-                      timestamp: group.createdAt, // Using group creation as approximation
-                      group: group.name,
-                      icon: <FaUser className="text-primary" />
-                    })) || []),
-                    // Shared file activities
-                    ...(group.sharedFiles?.map((sharedFile, index) => ({
-                      id: `file-${group._id}-${sharedFile.fileId?._id || index}`,
-                      type: 'file_shared',
-                      title: 'File Shared',
-                      description: `"${sharedFile.fileId?.originalName || 'Unknown File'}" shared with "${group.name}"`,
-                      timestamp: sharedFile.sharedAt,
-                      group: group.name,
-                      icon: <FaFileAlt className="text-info" />,
-                      details: `Permission: ${(sharedFile.permission === 'editor' || sharedFile.permission === 'write') ? 'Editor' : 'Viewer'}`
-                    })) || []),
-                    // Shared folder activities
-                    ...(group.sharedFolders?.map((sharedFolder, index) => ({
-                      id: `folder-${group._id}-${sharedFolder.folderId?._id || index}`,
-                      type: 'folder_shared',
-                      title: 'Folder Shared',
-                      description: `"${sharedFolder.folderId?.name || 'Unknown Folder'}" shared with "${group.name}"`,
-                      timestamp: sharedFolder.sharedAt,
-                      group: group.name,
-                      icon: <FaFolder className="text-warning" />,
-                      details: `Permission: ${(sharedFolder.permission === 'editor' || sharedFolder.permission === 'write') ? 'Editor' : 'Viewer'}`
-                    })) || []),
-                    // Notification activities
-                    ...(group.notifications?.map((notification, index) => ({
-                      id: `notification-${group._id}-${index}`,
-                      type: 'notification_added',
-                      title: 'Notification Added',
-                      description: `"${notification.title}" sent to "${group.name}"`,
-                      timestamp: notification.createdAt,
-                      group: group.name,
-                      icon: <FaBell className="text-warning" />,
-                      details: notification.message
-                    })) || []),
-                    // Announcement activities
-                    ...(group.announcements?.map((announcement, index) => ({
-                      id: `announcement-${group._id}-${index}`,
-                      type: 'announcement_added',
-                      title: 'Announcement Added',
-                      description: `"${announcement.title}" posted to "${group.name}"`,
-                      timestamp: announcement.createdAt,
-                      group: group.name,
-                      icon: <FaBullhorn className="text-danger" />,
-                      details: announcement.content
-                    })) || [])
-                  ])
-                  .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-                  .slice(0, 50) // Limit to 50 most recent activities
-                  .map(activity => (
-                    <div key={activity.id} className="timeline-item">
-                      <div className="timeline-marker">
-                        {activity.icon}
+        {activeTab === "history" && (
+          <section className="gm-view-stack">
+            <article className="gm-glass-card">
+              <div className="gm-card-heading">
+                <h6 className="mb-1">Group Activity Timeline</h6>
+                <small className="text-muted">Latest 50 chronological group events</small>
+              </div>
+              <div className="gm-timeline">
+                {filteredActivityTimeline.length > 0 ? (
+                  filteredActivityTimeline.slice(0, 50).map((activity) => (
+                    <div key={activity.id} className="gm-timeline-item">
+                      <div className={`gm-timeline-marker type-${activity.type}`}>
+                        {getActivityIcon(activity.type)}
                       </div>
-                      <div className="timeline-content">
-                        <div className="d-flex justify-content-between align-items-start">
+                      <div className="gm-timeline-content">
+                        <div className="gm-timeline-head">
                           <div>
                             <h6 className="mb-1">{activity.title}</h6>
-                            <p className="mb-1 text-muted">{activity.description}</p>
-                            {activity.details && (
-                              <p className="mb-1 small text-muted">{activity.details}</p>
-                            )}
-                            <small className="text-muted">
-                              Group: {activity.group}
-                            </small>
+                            <p className="mb-1">{activity.description}</p>
+                            {activity.details && <small className="text-muted">{activity.details}</small>}
+                            <small className="d-block text-muted">Group: {activity.group}</small>
                           </div>
-                          <small className="text-muted timeline-date">
-                            {new Date(activity.timestamp).toLocaleString()}
-                          </small>
+                          <div className="text-end">
+                            <small className="d-block text-muted">{formatTimestamp(activity.timestamp)}</small>
+                            <span className="gm-status-pill">{getActivityBadgeLabel(activity.type)}</span>
+                          </div>
                         </div>
                       </div>
                     </div>
                   ))
                 ) : (
-                  <div className="text-center py-4">
-                    <FaHistory className="text-muted mb-3" size={48} />
-                    <h6 className="text-muted">No Activity Yet</h6>
-                    <p className="text-muted mb-0">Group activities will appear here as they occur.</p>
+                  <div className="gm-empty-state-inline">
+                    <FaHistory className="me-2" />
+                    No timeline activity for the current filter.
                   </div>
                 )}
               </div>
-            </div>
-          </div>
-        </>
-      )}
-
+            </article>
+          </section>
+        )}
+      </div>
       {/* Modals */}
       {showCreateModal && (
         <CreateGroupModal
@@ -1564,3 +1640,4 @@ function AnnouncementModal({ group, onClose, onSubmit }) {
     </div>
   );
 }
+

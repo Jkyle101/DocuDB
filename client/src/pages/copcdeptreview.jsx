@@ -4,42 +4,20 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   FaArrowLeft,
   FaCheckCircle,
-  FaCheckSquare,
-  FaChevronDown,
-  FaChevronUp,
-  FaEye,
+  FaDownload,
+  FaExternalLinkAlt,
   FaFileAlt,
-  FaList,
-  FaRegSquare,
-  FaTh,
+  FaSearch,
   FaTimesCircle,
   FaUndo,
 } from "react-icons/fa";
 import { BACKEND_URL } from "../config";
+import "./copc-review-workspace.css";
 
-const CHECKLIST_ITEMS = [
-  { key: "completeness", label: "Verify document completeness" },
-  { key: "credentials", label: "Check faculty credentials" },
-  { key: "validity", label: "Ensure documents are valid" },
-];
-
-const normalizeStatusBadge = (status) => {
-  if (status === "approved") return "bg-success";
-  if (status === "rejected") return "bg-danger";
-  return "bg-warning text-dark";
-};
-
-const formatSize = (bytes) => {
-  const value = Number(bytes || 0);
-  if (!value || Number.isNaN(value)) return "0 B";
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let size = value;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024;
-    unit += 1;
-  }
-  return `${size.toFixed(size >= 10 || unit === 0 ? 0 : 1)} ${units[unit]}`;
+const statusToneClass = (status) => {
+  if (status === "approved") return "status-approved";
+  if (status === "rejected") return "status-rejected";
+  return "status-pending";
 };
 
 export default function CopcDepartmentReviewPage() {
@@ -58,18 +36,7 @@ export default function CopcDepartmentReviewPage() {
   const [actingId, setActingId] = useState("");
   const [reviewNotes, setReviewNotes] = useState({});
   const [query, setQuery] = useState("");
-  const [view, setView] = useState("list");
-  const [checklist, setChecklist] = useState({
-    completeness: false,
-    credentials: false,
-    validity: false,
-  });
-  const [isChecklistCollapsed, setIsChecklistCollapsed] = useState(true);
-
-  const checklistDone = useMemo(
-    () => Object.values(checklist).filter(Boolean).length,
-    [checklist]
-  );
+  const [selectedSubmissionId, setSelectedSubmissionId] = useState("");
 
   const loadPrograms = async () => {
     const { data } = await axios.get(`${BACKEND_URL}/copc/programs`, { params: { userId, role } });
@@ -80,9 +47,9 @@ export default function CopcDepartmentReviewPage() {
       return;
     }
     const queryProgramId = String(searchParams.get("programId") || "");
-    const hasQueryProgram = queryProgramId && list.some((p) => String(p._id) === queryProgramId);
+    const hasQueryProgram = queryProgramId && list.some((item) => String(item._id) === queryProgramId);
     setSelectedProgramId((prev) => {
-      if (prev && list.some((p) => String(p._id) === String(prev))) return prev;
+      if (prev && list.some((item) => String(item._id) === String(prev))) return prev;
       if (hasQueryProgram) return queryProgramId;
       return String(list[0]._id);
     });
@@ -136,20 +103,26 @@ export default function CopcDepartmentReviewPage() {
     return submissions.filter((item) => {
       const name = String(item.originalName || "").toLowerCase();
       const folder = String(item.folderName || "").toLowerCase();
-      const classification = String(item.classification || "").toLowerCase();
+      const category = String(item.classification?.category || item.classification || "").toLowerCase();
       const status = String(item.programChairStatus || "").toLowerCase();
-      return (
-        name.includes(q) ||
-        folder.includes(q) ||
-        classification.includes(q) ||
-        status.includes(q)
-      );
+      return name.includes(q) || folder.includes(q) || category.includes(q) || status.includes(q);
     });
   }, [query, submissions]);
 
-  const setChecklistValue = (key) => {
-    setChecklist((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
+  useEffect(() => {
+    if (!filteredSubmissions.length) {
+      setSelectedSubmissionId("");
+      return;
+    }
+    if (!filteredSubmissions.some((item) => String(item._id) === String(selectedSubmissionId))) {
+      setSelectedSubmissionId(String(filteredSubmissions[0]._id));
+    }
+  }, [filteredSubmissions, selectedSubmissionId]);
+
+  const selectedSubmission = useMemo(
+    () => filteredSubmissions.find((item) => String(item._id) === String(selectedSubmissionId)) || null,
+    [filteredSubmissions, selectedSubmissionId]
+  );
 
   const handleReview = async (submission, action) => {
     if (!submission?._id) return;
@@ -158,9 +131,7 @@ export default function CopcDepartmentReviewPage() {
 
     if (action === "request_revision") {
       normalizedAction = "reject";
-      notes = notes
-        ? `Revision requested: ${notes}`
-        : "Revision requested by Department Chair.";
+      notes = notes ? `Revision requested: ${notes}` : "Revision requested by Department Chair.";
     }
 
     if (action === "reject" && !notes) {
@@ -192,19 +163,29 @@ export default function CopcDepartmentReviewPage() {
     navigate(`/copc-dashboard?${params.toString()}`);
   };
 
+  const previewUrl = selectedSubmission
+    ? `${BACKEND_URL}/preview/${selectedSubmission.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`
+    : "";
+  const downloadUrl = selectedSubmission
+    ? `${BACKEND_URL}/download/${selectedSubmission.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`
+    : "";
+  const canAct = selectedSubmission?.programChairStatus === "pending";
+
   return (
     <div className="container-fluid py-3 file-manager-container">
-      <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-        <div className="d-flex align-items-center gap-2">
-          <button className="btn btn-outline-secondary" onClick={goBackToDashboard}>
-            <FaArrowLeft className="me-1" /> Back
-          </button>
-          <h4 className="mb-0">Department Chair Review</h4>
-        </div>
-        <div className="d-flex align-items-center gap-2 flex-wrap">
+      <div className="copc-review-shell">
+        <div className="copc-review-page-header">
+          <div className="copc-review-heading">
+            <button className="btn btn-outline-secondary" onClick={goBackToDashboard}>
+              <FaArrowLeft className="me-1" /> Back
+            </button>
+            <div>
+              <div className="copc-review-kicker">Explorer / Department Review</div>
+              <h4 className="mb-0">Department Chair File Review</h4>
+            </div>
+          </div>
           <select
-            className="form-select"
-            style={{ minWidth: "260px", width: "100%", maxWidth: "460px" }}
+            className="form-select copc-review-program-select"
             value={selectedProgramId}
             onChange={(e) => setSelectedProgramId(e.target.value)}
           >
@@ -215,280 +196,184 @@ export default function CopcDepartmentReviewPage() {
               </option>
             ))}
           </select>
-          <div className="btn-group" role="group">
-            <button
-              className={`btn ${view === "grid" ? "btn-primary" : "btn-outline-primary"}`}
-              onClick={() => setView("grid")}
-              title="Grid View"
-            >
-              <FaTh />
-            </button>
-            <button
-              className={`btn ${view === "list" ? "btn-primary" : "btn-outline-primary"}`}
-              onClick={() => setView("list")}
-              title="List View"
-            >
-              <FaList />
-            </button>
-          </div>
         </div>
-      </div>
 
-      {!selectedProgramId && (
-        <div className="alert alert-info">Select a COPC program to review faculty submissions.</div>
-      )}
+        {!selectedProgramId && (
+          <div className="alert alert-info mb-0">Select a COPC program to review faculty submissions.</div>
+        )}
 
-      {selectedProgramId && programMeta && (
-        <div className="card shadow-sm mb-3">
-          <div className="card-body">
-            <div className="d-flex justify-content-between align-items-start flex-wrap gap-2">
-              <div>
-                <div className="fw-semibold">{programMeta.code} - {programMeta.name}</div>
-                <div className="small text-muted">{programMeta.description || "No description"} | AY {programMeta.year || "N/A"}</div>
-              </div>
-              <div className="d-flex gap-2 flex-wrap">
-                <span className="badge text-bg-light border">Pending: {overallCounts.pending}</span>
-                <span className="badge text-bg-light border">Approved: {overallCounts.approved}</span>
-                <span className="badge text-bg-light border">Rejected: {overallCounts.rejected}</span>
+        {selectedProgramId && programMeta && (
+          <div className="copc-review-program-card">
+            <div>
+              <div className="copc-review-program-title">{programMeta.code} - {programMeta.name}</div>
+              <div className="copc-review-program-subtitle">
+                {programMeta.description || "No description"} | AY {programMeta.year || "N/A"}
               </div>
             </div>
-          </div>
-        </div>
-      )}
-
-      {selectedProgramId && (
-        <div className="card shadow-sm mb-3" style={{ maxWidth: "520px" }}>
-          <div className="card-header bg-light py-2">
-            <div className="d-flex justify-content-between align-items-center">
-              <div className="small fw-semibold">Review Checklist</div>
-              <div className="d-flex align-items-center gap-2">
-                <span className="small text-muted">{checklistDone}/{CHECKLIST_ITEMS.length}</span>
-                <button
-                  className="btn btn-sm btn-outline-secondary"
-                  onClick={() => setIsChecklistCollapsed((prev) => !prev)}
-                  title={isChecklistCollapsed ? "Expand checklist" : "Collapse checklist"}
-                >
-                  {isChecklistCollapsed ? <FaChevronDown /> : <FaChevronUp />}
-                </button>
-              </div>
+            <div className="copc-review-counts">
+              <span className="copc-review-count-pill">Pending: {overallCounts.pending}</span>
+              <span className="copc-review-count-pill">Approved: {overallCounts.approved}</span>
+              <span className="copc-review-count-pill">Rejected: {overallCounts.rejected}</span>
             </div>
           </div>
-          {!isChecklistCollapsed && (
-            <div className="card-body py-2">
-              <div className="d-flex flex-column gap-1">
-                {CHECKLIST_ITEMS.map((item) => (
+        )}
+
+        {selectedProgramId && (
+          <div className="copc-review-filter-row">
+            <div className="btn-group" role="group">
+              <button
+                className={`btn btn-sm ${statusFilter === "pending" ? "btn-primary" : "btn-outline-primary"}`}
+                onClick={() => setStatusFilter("pending")}
+              >
+                Pending
+              </button>
+              <button
+                className={`btn btn-sm ${statusFilter === "completed" ? "btn-primary" : "btn-outline-primary"}`}
+                onClick={() => setStatusFilter("completed")}
+              >
+                Completed
+              </button>
+              <button
+                className={`btn btn-sm ${statusFilter === "revision" ? "btn-primary" : "btn-outline-primary"}`}
+                onClick={() => setStatusFilter("revision")}
+              >
+                Revision
+              </button>
+              <button
+                className={`btn btn-sm ${statusFilter === "all" ? "btn-primary" : "btn-outline-primary"}`}
+                onClick={() => setStatusFilter("all")}
+              >
+                All
+              </button>
+            </div>
+            <div className="copc-review-search">
+              <FaSearch />
+              <input
+                className="form-control"
+                placeholder="Search by file, folder, category, or status"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+            </div>
+          </div>
+        )}
+
+        {loading && <div className="small text-muted">Loading submissions...</div>}
+
+        {!loading && selectedProgramId && filteredSubmissions.length === 0 && (
+          <div className="copc-review-empty">
+            <FaFileAlt size={44} />
+            <h5>No faculty submissions found in this view.</h5>
+          </div>
+        )}
+
+        {!loading && filteredSubmissions.length > 0 && selectedSubmission && (
+          <div className="copc-review-layout">
+            <section className="copc-review-main-pane">
+              <div className="copc-review-breadcrumb">
+                EXPLORER &gt; {String(programMeta?.code || "COPC").toUpperCase()} &gt;{" "}
+                {String(selectedSubmission.originalName || "").toUpperCase()}
+              </div>
+              <div className="copc-review-document-title-row">
+                <h3>{selectedSubmission.originalName}</h3>
+                <span className={`copc-review-status-pill ${statusToneClass(selectedSubmission.programChairStatus)}`}>
+                  {selectedSubmission.programChairStatus === "pending" ? "UNDER REVIEW" : selectedSubmission.programChairStatus.toUpperCase()}
+                </span>
+              </div>
+
+              <div className="copc-review-doc-strip">
+                {filteredSubmissions.map((item) => (
                   <button
-                    key={item.key}
+                    key={item._id}
                     type="button"
-                    className="btn btn-sm btn-light border d-flex align-items-center justify-content-start gap-2 text-start"
-                    onClick={() => setChecklistValue(item.key)}
+                    className={`copc-review-doc-chip ${String(selectedSubmissionId) === String(item._id) ? "is-active" : ""}`}
+                    onClick={() => setSelectedSubmissionId(String(item._id))}
                   >
-                    {checklist[item.key] ? <FaCheckSquare className="text-success" /> : <FaRegSquare className="text-muted" />}
-                    <span className="small">{item.label}</span>
+                    <span className="copc-review-doc-chip-name">{item.originalName}</span>
+                    <span className={`copc-review-doc-chip-status ${statusToneClass(item.programChairStatus)}`}>
+                      {item.programChairStatus}
+                    </span>
                   </button>
                 ))}
               </div>
-            </div>
-          )}
-        </div>
-      )}
 
-      {selectedProgramId && (
-        <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-          <div className="btn-group" role="group">
-            <button
-              className={`btn btn-sm ${statusFilter === "pending" ? "btn-primary" : "btn-outline-primary"}`}
-              onClick={() => setStatusFilter("pending")}
-            >
-              Pending
-            </button>
-            <button
-              className={`btn btn-sm ${statusFilter === "completed" ? "btn-primary" : "btn-outline-primary"}`}
-              onClick={() => setStatusFilter("completed")}
-            >
-              Completed
-            </button>
-            <button
-              className={`btn btn-sm ${statusFilter === "revision" ? "btn-primary" : "btn-outline-primary"}`}
-              onClick={() => setStatusFilter("revision")}
-            >
-              Revision
-            </button>
-            <button
-              className={`btn btn-sm ${statusFilter === "all" ? "btn-primary" : "btn-outline-primary"}`}
-              onClick={() => setStatusFilter("all")}
-            >
-              All
-            </button>
-          </div>
-          <input
-            className="form-control"
-            style={{ maxWidth: "380px" }}
-            placeholder="Search by file, folder, status, classification"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-      )}
-
-      {loading && <div className="small text-muted mb-3">Loading submissions...</div>}
-
-      {!loading && selectedProgramId && filteredSubmissions.length === 0 && (
-        <div className="text-center py-5">
-          <FaFileAlt className="text-muted mb-3" size={48} />
-          <h5 className="text-muted">No faculty submissions found in this view.</h5>
-        </div>
-      )}
-
-      {!loading && filteredSubmissions.length > 0 && view === "grid" && (
-        <div className="row g-3">
-          {filteredSubmissions.map((submission) => {
-            const canAct = submission.programChairStatus === "pending";
-            return (
-              <div key={submission._id} className="col-12 col-md-6 col-xl-4">
-                <div className="card shadow-sm h-100">
-                  <div className="card-body">
-                    <div className="d-flex justify-content-between align-items-start gap-2 mb-2">
-                      <div>
-                        <div className="fw-semibold text-truncate" title={submission.originalName}>{submission.originalName}</div>
-                        <div className="small text-muted">{submission.folderName}</div>
-                      </div>
-                      <span className={`badge ${normalizeStatusBadge(submission.programChairStatus)}`}>
-                        {submission.programChairStatus}
-                      </span>
-                    </div>
-                    <div className="small text-muted mb-2">
-                      Uploaded: {submission.uploadDate ? new Date(submission.uploadDate).toLocaleString() : "N/A"} | {formatSize(submission.size)}
-                    </div>
-                    <textarea
-                      className="form-control form-control-sm mb-2"
-                      rows={2}
-                      placeholder="Review notes (optional)"
-                      value={reviewNotes[submission._id] || ""}
-                      onChange={(e) => setReviewNotes((prev) => ({ ...prev, [submission._id]: e.target.value }))}
-                    />
-                    <div className="d-flex flex-wrap gap-1">
-                      <a
-                        className="btn btn-sm btn-outline-primary"
-                        href={`${BACKEND_URL}/preview/${submission.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
-                        target="_blank"
-                        rel="noreferrer"
-                      >
-                        <FaEye className="me-1" /> Preview
-                      </a>
-                      <button
-                        className="btn btn-sm btn-success"
-                        disabled={!canAct || actingId === `${submission._id}-approve`}
-                        onClick={() => handleReview(submission, "approve")}
-                      >
-                        <FaCheckCircle className="me-1" /> Approve
-                      </button>
-                      <button
-                        className="btn btn-sm btn-danger"
-                        disabled={!canAct || actingId === `${submission._id}-reject`}
-                        onClick={() => handleReview(submission, "reject")}
-                      >
-                        <FaTimesCircle className="me-1" /> Reject
-                      </button>
-                      <button
-                        className="btn btn-sm btn-warning"
-                        disabled={!canAct || actingId === `${submission._id}-request_revision`}
-                        onClick={() => handleReview(submission, "request_revision")}
-                      >
-                        <FaUndo className="me-1" /> Request Revision
-                      </button>
-                    </div>
-                    {!canAct && (
-                      <div className="small text-muted mt-2">
-                        Already reviewed. Add note and switch to pending only if a new upload is needed.
-                      </div>
-                    )}
+              <div className="copc-review-viewer-card">
+                <div className="copc-review-viewer-toolbar">
+                  <div className="copc-review-file-name">
+                    <FaFileAlt />
+                    <span>{selectedSubmission.originalName}</span>
+                  </div>
+                  <div className="copc-review-viewer-actions">
+                    <span>100%</span>
+                    <a
+                      href={downloadUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      title="Download file"
+                      aria-label="Download file"
+                    >
+                      <FaDownload />
+                    </a>
+                    <a href={previewUrl} target="_blank" rel="noreferrer" title="Open preview in new tab">
+                      <FaExternalLinkAlt />
+                    </a>
                   </div>
                 </div>
+                <div className="copc-review-viewer-frame">
+                  <iframe title={`Preview ${selectedSubmission.originalName}`} src={previewUrl} />
+                </div>
               </div>
-            );
-          })}
-        </div>
-      )}
+            </section>
 
-      {!loading && filteredSubmissions.length > 0 && view === "list" && (
-        <div className="table-responsive">
-          <table className="table table-hover align-middle">
-            <thead className="table-light">
-              <tr>
-                <th>Document</th>
-                <th>Folder</th>
-                <th>Status</th>
-                <th>Uploaded</th>
-                <th>Notes</th>
-                <th className="text-center">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredSubmissions.map((submission) => {
-                const canAct = submission.programChairStatus === "pending";
-                return (
-                  <tr key={submission._id}>
-                    <td>
-                      <div className="fw-semibold">{submission.originalName}</div>
-                      <div className="small text-muted">{formatSize(submission.size)}</div>
-                    </td>
-                    <td className="small">{submission.folderName}</td>
-                    <td>
-                      <span className={`badge ${normalizeStatusBadge(submission.programChairStatus)}`}>
-                        {submission.programChairStatus}
-                      </span>
-                    </td>
-                    <td className="small">{submission.uploadDate ? new Date(submission.uploadDate).toLocaleString() : "N/A"}</td>
-                    <td style={{ minWidth: "220px" }}>
-                      <textarea
-                        className="form-control form-control-sm"
-                        rows={2}
-                        placeholder="Review notes (optional)"
-                        value={reviewNotes[submission._id] || ""}
-                        onChange={(e) => setReviewNotes((prev) => ({ ...prev, [submission._id]: e.target.value }))}
-                      />
-                    </td>
-                    <td className="text-center">
-                      <div className="d-flex flex-wrap gap-1 justify-content-center">
-                        <a
-                          className="btn btn-sm btn-outline-primary"
-                          href={`${BACKEND_URL}/preview/${submission.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
-                          target="_blank"
-                          rel="noreferrer"
-                        >
-                          <FaEye />
-                        </a>
-                        <button
-                          className="btn btn-sm btn-success"
-                          disabled={!canAct || actingId === `${submission._id}-approve`}
-                          onClick={() => handleReview(submission, "approve")}
-                        >
-                          <FaCheckCircle />
-                        </button>
-                        <button
-                          className="btn btn-sm btn-danger"
-                          disabled={!canAct || actingId === `${submission._id}-reject`}
-                          onClick={() => handleReview(submission, "reject")}
-                        >
-                          <FaTimesCircle />
-                        </button>
-                        <button
-                          className="btn btn-sm btn-warning"
-                          disabled={!canAct || actingId === `${submission._id}-request_revision`}
-                          onClick={() => handleReview(submission, "request_revision")}
-                        >
-                          <FaUndo />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
+            <aside className="copc-review-side-pane">
+              <div className="copc-review-verdict-card">
+                <h5>Review Verdict</h5>
+                <button
+                  className="btn btn-primary"
+                  disabled={!canAct || actingId === `${selectedSubmission._id}-approve`}
+                  onClick={() => handleReview(selectedSubmission, "approve")}
+                >
+                  <FaCheckCircle className="me-2" />
+                  Approve Document
+                </button>
+                <button
+                  className="btn btn-outline-warning"
+                  disabled={!canAct || actingId === `${selectedSubmission._id}-request_revision`}
+                  onClick={() => handleReview(selectedSubmission, "request_revision")}
+                >
+                  <FaUndo className="me-2" />
+                  Request Revisions
+                </button>
+                <button
+                  className="btn btn-outline-danger"
+                  disabled={!canAct || actingId === `${selectedSubmission._id}-reject`}
+                  onClick={() => handleReview(selectedSubmission, "reject")}
+                >
+                  <FaTimesCircle className="me-2" />
+                  Reject
+                </button>
+                <a
+                  className="btn btn-outline-secondary"
+                  href={downloadUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <FaDownload className="me-2" />
+                  Download File
+                </a>
+                <textarea
+                  className="form-control"
+                  rows={3}
+                  placeholder="Review notes (included when you submit verdict)"
+                  value={reviewNotes[selectedSubmission._id] || ""}
+                  onChange={(e) => setReviewNotes((prev) => ({ ...prev, [selectedSubmission._id]: e.target.value }))}
+                />
+              </div>
+
+            </aside>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
