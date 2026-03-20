@@ -1,14 +1,27 @@
 import React, { useState, useEffect } from "react";
 import { FaBell, FaShareAlt, FaComment, FaKey, FaFile, FaFolder, FaUsers, FaCheckCircle, FaTimesCircle, FaClock, FaEye, FaExclamationTriangle } from "react-icons/fa";
 import axios from "axios";
+import { useNavigate } from "react-router-dom";
 import { BACKEND_URL } from "../config";
+
+const normalizeRole = (value) => {
+  const raw = String(value || "").toLowerCase();
+  if (raw === "admin") return "superadmin";
+  if (raw === "user") return "faculty";
+  if (["program_chair", "department_chair", "program_head"].includes(raw)) return "dept_chair";
+  if (["qa_officer", "quality_assurance_admin", "copc_reviewer"].includes(raw)) return "qa_admin";
+  if (raw === "reviewer") return "evaluator";
+  return raw;
+};
 
 function Notifications() {
   const [notifications, setNotifications] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState("all");
+  const navigate = useNavigate();
 
   const userId = localStorage.getItem("userId");
+  const userRole = normalizeRole(localStorage.getItem("role") || "faculty");
 
   useEffect(() => {
     fetchNotifications();
@@ -42,8 +55,10 @@ function Notifications() {
           notif._id === notificationId ? { ...notif, isRead: true } : notif
         )
       );
+      return true;
     } catch (error) {
       console.error("Failed to mark notification as read:", error);
+      return false;
     }
   };
 
@@ -91,6 +106,139 @@ function Notifications() {
       message: `${actorPrefix}${message}`,
       details,
     };
+  };
+
+  const normalizeId = (value) => {
+    if (!value) return "";
+    if (typeof value === "string" || typeof value === "number") {
+      return String(value).trim();
+    }
+    if (typeof value === "object") {
+      return String(value._id || value.id || "").trim();
+    }
+    return "";
+  };
+
+  const appendQuery = (basePath, params = {}) => {
+    const search = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      const normalized = String(value || "").trim();
+      if (normalized) search.set(key, normalized);
+    });
+    const query = search.toString();
+    return query ? `${basePath}?${query}` : basePath;
+  };
+
+  const getNotificationTargetPath = (notification) => {
+    const type = String(notification?.type || "").toUpperCase();
+    const title = String(notification?.title || "").toLowerCase();
+    const message = String(notification?.message || "").toLowerCase();
+    const details = String(notification?.details || "").toLowerCase();
+    const combinedText = `${title} ${message} ${details}`;
+    const relatedModel = String(notification?.relatedModel || "").toLowerCase();
+    const relatedId = normalizeId(notification?.relatedId);
+    const metadata =
+      notification?.metadata && typeof notification.metadata === "object" && !Array.isArray(notification.metadata)
+        ? notification.metadata
+        : {};
+
+    const metadataTargetPath = String(metadata?.targetPath || "").trim();
+    if (metadataTargetPath) return metadataTargetPath;
+
+    const metadataProgramId = normalizeId(metadata?.programId || metadata?.copcProgramId || metadata?.rootProgramId);
+    const metadataFolderId = normalizeId(metadata?.folderId);
+    const metadataFileId = normalizeId(metadata?.fileId);
+    const metadataTaskId = normalizeId(metadata?.taskId);
+
+    const programId =
+      metadataProgramId ||
+      (relatedModel === "folder" && (type.startsWith("COPC_") || type === "DOCUMENT_REQUEST") ? relatedId : "");
+    const folderId = metadataFolderId || (relatedModel === "folder" ? relatedId : "");
+    const fileId = metadataFileId || (relatedModel === "file" ? relatedId : "");
+
+    const copcBasePath = userRole === "superadmin" ? "/admin/copc-dashboard" : "/copc-dashboard";
+    const buildCopcPath = (tab = "workflow") =>
+      appendQuery(copcBasePath, {
+        tab,
+        programId,
+      });
+    const buildUploadPath = () =>
+      appendQuery("/copc-workflow/upload", {
+        programId,
+        folderId,
+      });
+    const buildTaskPath = () => {
+      if (userRole === "superadmin") {
+        return appendQuery("/admin/tasks", {
+          tab: "task_management",
+          programId,
+          folderId,
+        });
+      }
+      const tab = userRole === "dept_chair" ? "task_management" : "tasks";
+      return buildCopcPath(tab);
+    };
+
+    const hasQaSignal = combinedText.includes("qa");
+    const hasDeptSignal = combinedText.includes("department") || combinedText.includes("chair review");
+    const hasEvaluationSignal = combinedText.includes("evaluation");
+    const hasTaskSignal = !!metadataTaskId || combinedText.includes("task");
+    const hasUploadSignal = combinedText.includes("upload");
+    const hasCopcSignal = combinedText.includes("copc") || combinedText.includes("workflow");
+
+    if (type === "WELCOME") return "/";
+
+    if (type === "PASSWORD_CHANGE_REQUEST") return "/admin/manageusers";
+    if (type === "PASSWORD_CHANGE_APPROVED" || type === "PASSWORD_CHANGE_REJECTED") return "/settings";
+
+    if (type === "SHARE_FILE" || type === "SHARE_FOLDER") return "/shared";
+    if (type === "FILE_UPDATED") return fileId ? `/editor/${fileId}` : "/shared";
+
+    if (type === "COMMENT") {
+      if (fileId) return `/editor/${fileId}`;
+      return "/shared";
+    }
+
+    if (type.startsWith("GROUP_") || relatedModel === "group") return "/groups";
+
+    if (type === "DOCUMENT_REQUEST") return buildUploadPath();
+    if (type === "DEADLINE_ALERT") return buildTaskPath();
+    if (type === "DUPLICATE_ALERT") return "/recent";
+
+    if (type === "REVIEW_REQUIRED") {
+      if (hasQaSignal) return buildCopcPath("qa_review");
+      if (hasDeptSignal) return buildCopcPath("department_review");
+      if (hasTaskSignal) return buildTaskPath();
+      return buildCopcPath("workflow");
+    }
+
+    if (type === "ACTION_REQUIRED") {
+      if (hasTaskSignal) return buildTaskPath();
+      if (hasUploadSignal) return buildUploadPath();
+      if (hasQaSignal) return buildCopcPath("qa_review");
+      if (hasDeptSignal) return buildCopcPath("department_review");
+      if (hasEvaluationSignal) return buildCopcPath("evaluation");
+      if (hasCopcSignal || folderId || programId) return buildCopcPath("workflow");
+    }
+
+    if (type === "COPC_REVIEW_APPROVED" || type === "COPC_REVIEW_REJECTED") return buildCopcPath("workflow");
+    if (type === "COPC_OBSERVATION" || type === "COPC_WORKFLOW_ACTION") return buildCopcPath("workflow");
+
+    if (fileId) return `/editor/${fileId}`;
+    if (folderId && hasCopcSignal) return buildCopcPath("workflow");
+    if (folderId) return "/shared";
+    return "/";
+  };
+
+  const handleNotificationClick = async (notification) => {
+    if (!notification?._id) return;
+    const targetPath = getNotificationTargetPath(notification);
+    if (!notification.isRead) {
+      await markAsRead(notification._id);
+    }
+    if (targetPath) {
+      navigate(targetPath);
+    }
   };
 
   const matchesFilter = (notification) => {
@@ -203,13 +351,27 @@ function Notifications() {
               ) : (
                 <div className="list-group list-group-flush">
                   {filteredNotifications.map((notification) => (
+                    (() => {
+                      const summary = getNotificationSummary(notification);
+                      const targetPath = getNotificationTargetPath(notification);
+                      const isClickable = !!targetPath;
+                      return (
                     <div
                       key={notification._id}
                       className={`list-group-item d-flex align-items-start p-3 ${
                         !notification.isRead ? 'bg-light' : ''
                       }`}
-                      style={{ cursor: !notification.isRead ? 'pointer' : 'default' }}
-                      onClick={() => !notification.isRead && markAsRead(notification._id)}
+                      style={{ cursor: isClickable ? 'pointer' : 'default' }}
+                      onClick={() => isClickable && handleNotificationClick(notification)}
+                      role={isClickable ? "button" : undefined}
+                      tabIndex={isClickable ? 0 : -1}
+                      onKeyDown={(e) => {
+                        if (!isClickable) return;
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          handleNotificationClick(notification);
+                        }
+                      }}
                     >
                       {/* Icon */}
                       <div className="me-3 mt-1">
@@ -220,12 +382,12 @@ function Notifications() {
                       <div className="flex-grow-1">
                         <div className="d-flex justify-content-between align-items-start">
                           <div className="flex-grow-1">
-                            <div className="fw-semibold mb-1">{getNotificationSummary(notification).title}</div>
+                            <div className="fw-semibold mb-1">{summary.title}</div>
                             <p className="mb-1">
-                              {getNotificationSummary(notification).message}
+                              {summary.message}
                             </p>
-                            {getNotificationSummary(notification).details && (
-                              <div className="small text-muted mb-1">{getNotificationSummary(notification).details}</div>
+                            {summary.details && (
+                              <div className="small text-muted mb-1">{summary.details}</div>
                             )}
                             <small className="text-muted d-flex align-items-center">
                               <FaClock className="me-1" size={10} />
@@ -252,6 +414,8 @@ function Notifications() {
                         </div>
                       </div>
                     </div>
+                      );
+                    })()
                   ))}
                 </div>
               )}

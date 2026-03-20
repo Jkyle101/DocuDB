@@ -259,6 +259,8 @@
 }
 
 .group-management-dashboard .gm-group-card {
+  --gm-card-header-bg: linear-gradient(160deg, #0a66ff 0%, #1d4cc5 100%);
+  --gm-card-body-bg: color-mix(in srgb, var(--glass-bg-strong, rgba(255, 255, 255, 0.74)) 88%, #ffffff);
   border-radius: 20px;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--glass-stroke, rgba(148, 163, 184, 0.34)) 88%, #ffffff);
@@ -275,6 +277,7 @@
   justify-content: space-between;
   gap: 0.62rem;
   color: #edf4ff;
+  background: var(--gm-card-header-bg);
 }
 
 .group-management-dashboard .gm-group-card-top h5 {
@@ -297,16 +300,37 @@
   color: rgba(235, 245, 255, 0.92);
 }
 
-.group-management-dashboard .gm-group-card.is-ocean .gm-group-card-top {
-  background: linear-gradient(160deg, #0a66ff 0%, #1d4cc5 100%);
+.group-management-dashboard .gm-group-card.is-ocean {
+  --gm-card-header-bg: linear-gradient(160deg, #0a66ff 0%, #1d4cc5 100%);
 }
 
-.group-management-dashboard .gm-group-card.is-teal .gm-group-card-top {
-  background: linear-gradient(160deg, #0f8fa7 0%, #13628d 100%);
+.group-management-dashboard .gm-group-card.is-teal {
+  --gm-card-header-bg: linear-gradient(160deg, #0f8fa7 0%, #13628d 100%);
 }
 
-.group-management-dashboard .gm-group-card.is-charcoal .gm-group-card-top {
-  background: linear-gradient(160deg, #49505f 0%, #323b49 100%);
+.group-management-dashboard .gm-group-card.is-charcoal {
+  --gm-card-header-bg: linear-gradient(160deg, #49505f 0%, #323b49 100%);
+}
+
+.group-management-dashboard .gm-group-card.is-cot {
+  --gm-card-header-bg: linear-gradient(155deg, #5a1125 0%, #8f1f38 48%, #d6a71b 100%);
+  --gm-card-body-bg:
+    linear-gradient(155deg, rgba(90, 17, 37, 0.08) 0%, rgba(214, 167, 27, 0.18) 100%),
+    color-mix(in srgb, var(--glass-bg-strong, rgba(255, 255, 255, 0.74)) 88%, #ffffff);
+}
+
+.group-management-dashboard .gm-group-card.is-coed {
+  --gm-card-header-bg: linear-gradient(155deg, #0b4fa8 0%, #1a7be0 52%, #73ceff 100%);
+  --gm-card-body-bg:
+    linear-gradient(155deg, rgba(11, 79, 168, 0.08) 0%, rgba(115, 206, 255, 0.2) 100%),
+    color-mix(in srgb, var(--glass-bg-strong, rgba(255, 255, 255, 0.74)) 88%, #ffffff);
+}
+
+.group-management-dashboard .gm-group-card.is-cohtm {
+  --gm-card-header-bg: linear-gradient(155deg, #dc6a11 0%, #f08c2b 48%, #1ca15e 100%);
+  --gm-card-body-bg:
+    linear-gradient(155deg, rgba(220, 106, 17, 0.08) 0%, rgba(28, 161, 94, 0.2) 100%),
+    color-mix(in srgb, var(--glass-bg-strong, rgba(255, 255, 255, 0.74)) 88%, #ffffff);
 }
 
 .group-management-dashboard .gm-group-tools {
@@ -337,7 +361,7 @@
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
-  background: color-mix(in srgb, var(--glass-bg-strong, rgba(255, 255, 255, 0.74)) 88%, #ffffff);
+  background: var(--gm-card-body-bg);
 }
 
 .group-management-dashboard .gm-leader-badge {
@@ -777,8 +801,29 @@ body.dark-mode .group-management-dashboard .gm-leader-badge {
   background: rgba(180, 83, 9, 0.28);
 }
 
-body.dark-mode .group-management-dashboard .gm-group-card.is-charcoal .gm-group-card-top {
-  background: linear-gradient(160deg, #364459 0%, #1f2a3a 100%);
+body.dark-mode .group-management-dashboard .gm-group-card.is-charcoal {
+  --gm-card-header-bg: linear-gradient(160deg, #364459 0%, #1f2a3a 100%);
+  --gm-card-body-bg:
+    linear-gradient(155deg, rgba(83, 102, 128, 0.15) 0%, rgba(26, 37, 53, 0.22) 100%),
+    color-mix(in srgb, var(--glass-bg-strong, rgba(15, 23, 42, 0.78)) 90%, #0b1526);
+}
+
+body.dark-mode .group-management-dashboard .gm-group-card.is-cot {
+  --gm-card-body-bg:
+    linear-gradient(155deg, rgba(144, 38, 67, 0.28) 0%, rgba(173, 138, 24, 0.28) 100%),
+    color-mix(in srgb, var(--glass-bg-strong, rgba(15, 23, 42, 0.78)) 90%, #0b1526);
+}
+
+body.dark-mode .group-management-dashboard .gm-group-card.is-coed {
+  --gm-card-body-bg:
+    linear-gradient(155deg, rgba(29, 90, 179, 0.28) 0%, rgba(97, 173, 230, 0.26) 100%),
+    color-mix(in srgb, var(--glass-bg-strong, rgba(15, 23, 42, 0.78)) 90%, #0b1526);
+}
+
+body.dark-mode .group-management-dashboard .gm-group-card.is-cohtm {
+  --gm-card-body-bg:
+    linear-gradient(155deg, rgba(191, 96, 26, 0.28) 0%, rgba(35, 143, 87, 0.26) 100%),
+    color-mix(in srgb, var(--glass-bg-strong, rgba(15, 23, 42, 0.78)) 90%, #0b1526);
 }
 
 body.dark-mode .group-management-dashboard .gm-growth-card {

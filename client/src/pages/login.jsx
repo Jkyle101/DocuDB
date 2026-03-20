@@ -71,8 +71,10 @@ function Login() {
     localStorage.setItem("department", result.department || "");
     if (result.profilePicture) {
       localStorage.setItem("profilePicture", result.profilePicture);
+      localStorage.setItem("profilePictureUpdatedAt", String(Date.now()));
     } else {
       localStorage.removeItem("profilePicture");
+      localStorage.setItem("profilePictureUpdatedAt", String(Date.now()));
     }
 
     if (result.role === "superadmin") navigate("/admin");

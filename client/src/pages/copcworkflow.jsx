@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { FaCheckCircle, FaCog, FaDownload, FaFolderOpen, FaTimes } from "react-icons/fa";
+import { createPortal } from "react-dom";
 import { BACKEND_URL } from "../config";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 
 const DEPARTMENT_CODES = ["COED", "COT", "COHTM"];
 
@@ -20,6 +21,7 @@ const toDisplayFolderLabel = (value) =>
 
 export default function CopcWorkflowPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
   const requestedProgramId = String(searchParams.get("programId") || "");
   const userId = localStorage.getItem("userId");
@@ -414,6 +416,19 @@ export default function CopcWorkflowPage() {
     openDashboardTab("upload", { folderId: targetFolderId });
   };
 
+  const openSubmissionTracker = (status = "all") => {
+    if (!selectedProgramId) return;
+    const params = new URLSearchParams({ programId: String(selectedProgramId) });
+    const normalizedStatus = String(status || "all").toLowerCase();
+    if (normalizedStatus && normalizedStatus !== "all") {
+      params.set("status", normalizedStatus);
+    }
+    const basePath = location.pathname.startsWith("/admin/")
+      ? "/admin/copc-workflow/submissions"
+      : "/copc-workflow/submissions";
+    navigate(`${basePath}?${params.toString()}`);
+  };
+
   return (
     <div className="container-fluid py-2">
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
@@ -696,10 +711,51 @@ export default function CopcWorkflowPage() {
           </div>
 
           <div className="row g-3 mb-3">
-            <div className="col-xl-3 col-md-6"><div className="card shadow-sm h-100"><div className="card-body"><div className="small text-muted">Submitted Docs</div><div className="fw-bold fs-4">{workflow.counts.submitted}</div></div></div></div>
-            <div className="col-xl-3 col-md-6"><div className="card shadow-sm h-100"><div className="card-body"><div className="small text-muted">Pending Dept Review</div><div className="fw-bold fs-4">{workflow.counts.pendingProgramChair}</div></div></div></div>
-            <div className="col-xl-3 col-md-6"><div className="card shadow-sm h-100"><div className="card-body"><div className="small text-muted">Pending QA</div><div className="fw-bold fs-4">{workflow.counts.pendingQa}</div></div></div></div>
-            <div className="col-xl-3 col-md-6"><div className="card shadow-sm h-100"><div className="card-body"><div className="small text-muted">Rejected / For Revision</div><div className="fw-bold fs-4 text-danger">{workflow.counts.rejected}</div></div></div></div>
+            {[
+              {
+                key: "all",
+                label: "Submitted Docs",
+                value: workflow.counts.submitted,
+                valueClass: "text-primary",
+              },
+              {
+                key: "pending_program_chair",
+                label: "Pending Dept Review",
+                value: workflow.counts.pendingProgramChair,
+                valueClass: "text-warning",
+              },
+              {
+                key: "pending_qa",
+                label: "Pending QA",
+                value: workflow.counts.pendingQa,
+                valueClass: "text-info",
+              },
+              {
+                key: "rejected",
+                label: "Rejected / For Revision",
+                value: workflow.counts.rejected,
+                valueClass: "text-danger",
+              },
+            ].map((card) => (
+              <div key={card.key} className="col-xl-3 col-md-6">
+                <div className="card shadow-sm h-100">
+                  <button
+                    type="button"
+                    className="btn text-start w-100 h-100 p-0 border-0"
+                    onClick={() => openSubmissionTracker(card.key)}
+                    disabled={!selectedProgramId}
+                    title="Open submitted documents"
+                    style={{ cursor: selectedProgramId ? "pointer" : "default" }}
+                  >
+                    <div className="card-body">
+                      <div className="small text-muted">{card.label}</div>
+                      <div className={`fw-bold fs-4 ${card.valueClass}`}>{card.value}</div>
+                      <div className="small text-primary">Open submissions</div>
+                    </div>
+                  </button>
+                </div>
+              </div>
+            ))}
           </div>
 
           {isSuperAdmin && workflow.finalApprovalChecklist && (
@@ -801,77 +857,80 @@ export default function CopcWorkflowPage() {
           </div>
         </>
       )}
-      {assignModal.open && (
-        <div className="modal d-block" tabIndex="-1" role="dialog" style={{ background: "rgba(0,0,0,0.2)" }}>
-          <div className="modal-dialog modal-dialog-centered" role="document" style={{ maxWidth: "460px" }}>
-            <div className="modal-content" style={{ borderRadius: "8px" }}>
-              <div className="modal-header py-2 px-3">
-                <div className="small fw-semibold">{assignModal.title}</div>
-                <button type="button" className="btn-close" onClick={closeAssignModal} />
-              </div>
-              <div className="modal-body p-2">
-                <input
-                  className="form-control form-control-sm mb-2"
-                  placeholder={assignModal.candidateType === "group" ? "Search department group" : "Enter name to find member"}
-                  value={assignModal.search}
-                  onChange={(e) => setAssignModal((prev) => ({ ...prev, search: e.target.value }))}
-                />
-                <div style={{ maxHeight: "230px", overflowY: "auto" }}>
-                  {modalCandidates.map((item) => {
-                    const selected = assignModal.selectedIds.includes(String(item._id));
-                    const initials = String(
-                      assignModal.candidateType === "group"
-                        ? item.code || item.name || "G"
-                        : item.name || item.email || "U"
-                    )
-                      .slice(0, 1)
-                      .toUpperCase();
-                    const primaryText =
-                      assignModal.candidateType === "group" ? item.name || item.code : item.name || item.email;
-                    const secondaryText =
-                      assignModal.candidateType === "group"
-                        ? `${Number(item.memberCount || 0)} member${Number(item.memberCount || 0) === 1 ? "" : "s"}`
-                        : roleLabel(item.role);
-                    return (
-                      <div key={item._id} className="d-flex align-items-center justify-content-between px-1 py-1 border-bottom">
-                        <div className="d-flex align-items-center gap-2">
-                          <div
-                            className="rounded-circle d-flex align-items-center justify-content-center text-white small"
-                            style={{
-                              width: "28px",
-                              height: "28px",
-                              background: assignModal.candidateType === "group" ? "#0d6efd" : "#6c757d",
-                            }}
+      {assignModal.open &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="modal d-block app-modal-overlay" tabIndex="-1" role="dialog" aria-modal="true">
+            <div className="modal-dialog modal-dialog-centered" role="document" style={{ maxWidth: "460px" }}>
+              <div className="modal-content" style={{ borderRadius: "8px" }}>
+                <div className="modal-header py-2 px-3">
+                  <div className="small fw-semibold">{assignModal.title}</div>
+                  <button type="button" className="btn-close" onClick={closeAssignModal} />
+                </div>
+                <div className="modal-body p-2">
+                  <input
+                    className="form-control form-control-sm mb-2"
+                    placeholder={assignModal.candidateType === "group" ? "Search department group" : "Enter name to find member"}
+                    value={assignModal.search}
+                    onChange={(e) => setAssignModal((prev) => ({ ...prev, search: e.target.value }))}
+                  />
+                  <div style={{ maxHeight: "230px", overflowY: "auto" }}>
+                    {modalCandidates.map((item) => {
+                      const selected = assignModal.selectedIds.includes(String(item._id));
+                      const initials = String(
+                        assignModal.candidateType === "group"
+                          ? item.code || item.name || "G"
+                          : item.name || item.email || "U"
+                      )
+                        .slice(0, 1)
+                        .toUpperCase();
+                      const primaryText =
+                        assignModal.candidateType === "group" ? item.name || item.code : item.name || item.email;
+                      const secondaryText =
+                        assignModal.candidateType === "group"
+                          ? `${Number(item.memberCount || 0)} member${Number(item.memberCount || 0) === 1 ? "" : "s"}`
+                          : roleLabel(item.role);
+                      return (
+                        <div key={item._id} className="d-flex align-items-center justify-content-between px-1 py-1 border-bottom">
+                          <div className="d-flex align-items-center gap-2">
+                            <div
+                              className="rounded-circle d-flex align-items-center justify-content-center text-white small"
+                              style={{
+                                width: "28px",
+                                height: "28px",
+                                background: assignModal.candidateType === "group" ? "#0d6efd" : "#6c757d",
+                              }}
+                            >
+                              {initials}
+                            </div>
+                            <div className="small">
+                              <div>{primaryText}</div>
+                              <div className="text-muted" style={{ fontSize: "11px" }}>{secondaryText}</div>
+                            </div>
+                          </div>
+                          <button
+                            className={`btn btn-sm ${selected ? "btn-success" : "btn-outline-primary"}`}
+                            onClick={() => toggleModalSelection(item._id)}
                           >
-                            {initials}
-                          </div>
-                          <div className="small">
-                            <div>{primaryText}</div>
-                            <div className="text-muted" style={{ fontSize: "11px" }}>{secondaryText}</div>
-                          </div>
+                            {selected ? "Added" : "Add"}
+                          </button>
                         </div>
-                        <button
-                          className={`btn btn-sm ${selected ? "btn-success" : "btn-outline-primary"}`}
-                          onClick={() => toggleModalSelection(item._id)}
-                        >
-                          {selected ? "Added" : "Add"}
-                        </button>
-                      </div>
-                    );
-                  })}
-                  {modalCandidates.length === 0 && (
-                    <div className="small text-muted px-1 py-2">No matching entries found.</div>
-                  )}
+                      );
+                    })}
+                    {modalCandidates.length === 0 && (
+                      <div className="small text-muted px-1 py-2">No matching entries found.</div>
+                    )}
+                  </div>
+                </div>
+                <div className="modal-footer py-2 px-3">
+                  <button className="btn btn-sm btn-outline-secondary" onClick={closeAssignModal}>Cancel</button>
+                  <button className="btn btn-sm btn-primary" onClick={saveAssignModal}>Save</button>
                 </div>
               </div>
-              <div className="modal-footer py-2 px-3">
-                <button className="btn btn-sm btn-outline-secondary" onClick={closeAssignModal}>Cancel</button>
-                <button className="btn btn-sm btn-primary" onClick={saveAssignModal}>Save</button>
-              </div>
             </div>
-          </div>
-        </div>
-      )}
+          </div>,
+          document.body
+        )}
     </div>
   );
 }

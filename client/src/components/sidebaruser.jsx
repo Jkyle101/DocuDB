@@ -14,10 +14,16 @@ import "bootstrap/dist/css/bootstrap.min.css";
 import "./sidebar.css";
 import { BACKEND_URL } from "../config";
 
+const PROFILE_PICTURE_EVENT = "profile-picture-updated";
+
 function Sidebar({ onClose }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
-  const email = localStorage.getItem("email");
-  const role = localStorage.getItem("role") || "faculty";
+  const [email, setEmail] = useState(localStorage.getItem("email") || "");
+  const [role, setRole] = useState(localStorage.getItem("role") || "faculty");
+  const [profilePicture, setProfilePicture] = useState(localStorage.getItem("profilePicture") || "");
+  const [profilePictureVersion, setProfilePictureVersion] = useState(
+    Number(localStorage.getItem("profilePictureUpdatedAt") || 0)
+  );
 
   useEffect(() => {
     const handleResize = () => {
@@ -27,6 +33,48 @@ function Sidebar({ onClose }) {
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
+
+  useEffect(() => {
+    const syncProfile = () => {
+      setEmail(localStorage.getItem("email") || "");
+      setRole(localStorage.getItem("role") || "faculty");
+      setProfilePicture(localStorage.getItem("profilePicture") || "");
+      const updatedAt = Number(localStorage.getItem("profilePictureUpdatedAt") || 0);
+      setProfilePictureVersion(Number.isFinite(updatedAt) ? updatedAt : 0);
+    };
+
+    const handleProfilePictureEvent = (event) => {
+      const nextProfilePicture = String(event?.detail?.profilePicture || "");
+      const nextUpdatedAt = Number(event?.detail?.updatedAt || Date.now());
+      setProfilePicture(nextProfilePicture);
+      setProfilePictureVersion(Number.isFinite(nextUpdatedAt) ? nextUpdatedAt : Date.now());
+      setEmail(localStorage.getItem("email") || "");
+      setRole(localStorage.getItem("role") || "faculty");
+    };
+
+    const handleStorageEvent = (event) => {
+      if (
+        event.key === "email" ||
+        event.key === "role" ||
+        event.key === "profilePicture" ||
+        event.key === "profilePictureUpdatedAt"
+      ) {
+        syncProfile();
+      }
+    };
+
+    syncProfile();
+    window.addEventListener(PROFILE_PICTURE_EVENT, handleProfilePictureEvent);
+    window.addEventListener("storage", handleStorageEvent);
+    return () => {
+      window.removeEventListener(PROFILE_PICTURE_EVENT, handleProfilePictureEvent);
+      window.removeEventListener("storage", handleStorageEvent);
+    };
+  }, []);
+
+  const profilePictureUrl = profilePicture
+    ? `${BACKEND_URL}/uploads/${profilePicture}${profilePictureVersion ? `?v=${profilePictureVersion}` : ""}`
+    : "";
 
   const handleLinkClick = () => {
     if (isMobile && onClose) {
@@ -57,9 +105,9 @@ function Sidebar({ onClose }) {
         <div className="p-3 border-bottom flex-shrink-0">
           <div className="d-flex align-items-center">
             <div className="profile-picture-sidebar me-3">
-              {localStorage.getItem("profilePicture") ? (
+              {profilePicture ? (
                 <img
-                  src={`${BACKEND_URL}/uploads/${localStorage.getItem("profilePicture")}`}
+                  src={profilePictureUrl}
                   alt="Profile"
                   className="profile-picture-img"
                 />

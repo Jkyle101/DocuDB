@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import axios from "axios";
+import { createPortal } from "react-dom";
 import { BACKEND_URL } from "../config";
 
 export default function CreateFolderModal({ onClose, onCreated, parentFolder }) {
@@ -27,9 +28,9 @@ export default function CreateFolderModal({ onClose, onCreated, parentFolder }) 
     }
   };
 
-  return (
-    <div className="modal d-block" tabIndex="-1">
-      <div className="modal-dialog modal-dialog-centered ">
+  const modalMarkup = (
+    <div className="modal d-block app-modal-overlay" tabIndex="-1" role="dialog" aria-modal="true">
+      <div className="modal-dialog modal-dialog-centered">
         <div className="modal-content">
           <div className="modal-header">
             <h5 className="modal-title">New Folder</h5>
@@ -57,4 +58,9 @@ export default function CreateFolderModal({ onClose, onCreated, parentFolder }) 
       </div>
     </div>
   );
+
+  if (typeof document !== "undefined") {
+    return createPortal(modalMarkup, document.body);
+  }
+  return modalMarkup;
 }

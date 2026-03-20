@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
+import { createPortal } from "react-dom";
 import { BACKEND_URL } from "../config";
 import {
   buildCopcFilename,
@@ -605,9 +606,9 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
     return () => stopCamera();
   }, []);
 
-  return (
-    <div className="modal d-block " tabIndex="-1">
-      <div className="modal-dialog modal-dialog-centered ">
+  const modalMarkup = (
+    <div className="modal d-block app-modal-overlay" tabIndex="-1" role="dialog" aria-modal="true">
+      <div className="modal-dialog modal-dialog-centered">
         <div className="modal-content">
           <div className="modal-header">
             <h5 className="modal-title">Upload File or Folder</h5>
@@ -944,4 +945,9 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
       </div>
     </div>
   );
+
+  if (typeof document !== "undefined") {
+    return createPortal(modalMarkup, document.body);
+  }
+  return modalMarkup;
 }

@@ -1,10 +1,8 @@
-import React from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import {
   FaArchive,
   FaArrowRight,
-  FaBook,
-  FaCodeBranch,
   FaLayerGroup,
   FaListUl,
   FaShieldAlt,
@@ -12,6 +10,7 @@ import {
 import AdminTasksPage from "./admintasks";
 import CopcWorkflowPage from "./copcworkflow";
 import AdminCopcProgramsPage from "./admincopcprograms";
+import { fetchCopcHealthSnapshot } from "../utils/copcHealth";
 import "./admincopcdashboard.css";
 
 const TAB_CONFIG = {
@@ -39,6 +38,15 @@ export default function AdminCopcDashboardPage({ defaultTab = "workflow" }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [searchParams] = useSearchParams();
+  const userId = localStorage.getItem("userId");
+  const role = localStorage.getItem("role") || "superadmin";
+  const selectedProgramId = String(searchParams.get("programId") || "");
+  const [healthSnapshot, setHealthSnapshot] = useState({
+    score: 0,
+    status: "Syncing...",
+    note: "Fetching live COPC metrics...",
+    loading: true,
+  });
 
   const fallbackTab = TAB_CONFIG[defaultTab] ? defaultTab : "workflow";
   const rawTab = String(searchParams.get("tab") || fallbackTab);
@@ -54,44 +62,85 @@ export default function AdminCopcDashboardPage({ defaultTab = "workflow" }) {
   const isCanonicalRoute = location.pathname === "/admin/copc-dashboard";
   const title = isCanonicalRoute ? "COPC Admin Dashboard" : "COPC Dashboard";
   const activeTabLabel = TAB_CONFIG[activeTab]?.label || "COPC Workflow";
-  const activeIndex = Math.max(
-    0,
-    tabEntries.findIndex(([tabKey]) => tabKey === activeTab)
-  );
-  const healthScore = Math.min(
-    98,
-    70 + Math.round(((activeIndex + 1) / Math.max(tabEntries.length, 1)) * 24)
-  );
+  const healthToneClass = useMemo(() => {
+    const rawScore = Number(healthSnapshot.score);
+    const score = Number.isFinite(rawScore) ? Math.max(0, Math.min(100, rawScore)) : 0;
+    if (healthSnapshot.loading) return "is-syncing";
+    if (score <= 20) return "is-battery-empty";
+    if (score <= 40) return "is-battery-low";
+    if (score <= 60) return "is-battery-mid";
+    if (score <= 80) return "is-battery-high";
+    return "is-battery-full";
+  }, [healthSnapshot.loading, healthSnapshot.score]);
+
+  const refreshHealth = useCallback(async () => {
+    try {
+      const snapshot = await fetchCopcHealthSnapshot({
+        userId,
+        role,
+        preferredProgramId: selectedProgramId,
+      });
+      setHealthSnapshot({
+        ...snapshot,
+        loading: false,
+      });
+    } catch {
+      setHealthSnapshot({
+        score: 0,
+        status: "Unavailable",
+        note: "Failed to load live COPC metrics.",
+        loading: false,
+      });
+    }
+  }, [role, selectedProgramId, userId]);
+
+  useEffect(() => {
+    setHealthSnapshot((prev) => ({
+      ...prev,
+      loading: true,
+    }));
+    refreshHealth();
+
+    const timer = setInterval(refreshHealth, 10000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refreshHealth();
+    };
+    const onFocus = () => refreshHealth();
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [refreshHealth]);
 
   return (
     <div className="container-fluid py-3 copc-dashboard-gh">
       <div className="copc-glass-shell">
         <header className="copc-glass-hero">
           <div className="copc-glass-hero-main">
-            <div className="copc-glass-kicker">
-              <FaBook />
-              <span>Azure Ledger / admin / copc-dashboard</span>
-            </div>
             <h1 className="copc-glass-title">{title}</h1>
             <p className="copc-glass-subtitle">
               Manage COPC workflow, task management, and program management in one place.
             </p>
             <div className="copc-glass-meta">
-              <span className="copc-glass-pill">
-                <FaCodeBranch className="me-1" />
-                main
-              </span>
               <span className="copc-glass-pill copc-glass-pill-active">{activeTabLabel}</span>
             </div>
           </div>
-          <aside className="copc-health-card" aria-label="Compliance health score">
-            <div className="copc-health-ring" style={{ "--copc-health": `${healthScore}%` }}>
-              <span>{healthScore}%</span>
+          <aside className={`copc-health-card ${healthToneClass}`} aria-label="Compliance health score">
+            <div className="copc-health-ring" style={{ "--copc-health": `${healthSnapshot.score}%` }}>
+              <span>{healthSnapshot.score}%</span>
             </div>
             <div>
               <div className="copc-health-label">Archival Health Score</div>
-              <div className="copc-health-status">Ready to Audit</div>
-              <div className="copc-health-note">Admin controls and workflow actions available.</div>
+              <div className="copc-health-status">
+                {healthSnapshot.loading ? "Syncing..." : healthSnapshot.status}
+              </div>
+              <div className="copc-health-note">
+                {healthSnapshot.loading ? "Fetching live COPC metrics..." : healthSnapshot.note}
+              </div>
             </div>
           </aside>
         </header>

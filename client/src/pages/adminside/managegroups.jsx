@@ -15,6 +15,18 @@ import { BACKEND_URL } from "../../config";
 import "./admin-analytics.css";
 import "./managegroups-glass.css";
 
+const getGroupAccentClass = (groupName, fallbackIndex) => {
+  const normalizedTokens = String(groupName || "")
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter(Boolean);
+
+  if (normalizedTokens.includes("COT")) return "is-cot";
+  if (normalizedTokens.includes("COED")) return "is-coed";
+  if (normalizedTokens.includes("COHTM")) return "is-cohtm";
+  return ["is-ocean", "is-teal", "is-charcoal"][fallbackIndex % 3];
+};
+
 export default function ManageGroups() {
   const [groups, setGroups] = useState([]);
   const [users, setUsers] = useState([]);
@@ -558,7 +570,7 @@ export default function ManageGroups() {
   const renderGroupCard = (group, index, { withDelete = false } = {}) => {
     const pulse = getLatestGroupPulse(group);
     const memberList = group.members || [];
-    const accentClass = ["is-ocean", "is-teal", "is-charcoal"][index % 3];
+    const accentClass = getGroupAccentClass(group.name, index);
     const primaryLeader = group.leaders?.[0]?.email || null;
 
     return (

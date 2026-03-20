@@ -1954,8 +1954,13 @@ const HOST = process.env.HOST || "0.0.0.0";
 // Multer storage config
 const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadsDir),
-  filename: (req, file, cb) =>
-    cb(null, Date.now() + path.extname(file.originalname)),
+  filename: (req, file, cb) => {
+    const mimeExt = extByMime[String(file?.mimetype || "").toLowerCase()] || "";
+    const originalExt = path.extname(String(file?.originalname || "")).toLowerCase();
+    const ext = mimeExt || originalExt || "";
+    const uniqueSuffix = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    cb(null, `${uniqueSuffix}${ext}`);
+  },
 });
 const upload = multer({ storage });
 const mimeByExt = {
@@ -2005,6 +2010,22 @@ const getContentType = (name, mime) => {
   if (normalizedMime && normalizedMime !== "application/octet-stream") return normalizedMime;
   return mimeByExt[ext] || normalizedMime || "application/octet-stream";
 };
+
+function deleteUploadedFileIfExists(filename) {
+  const safeName = String(filename || "").trim();
+  if (!safeName) return;
+
+  try {
+    const uploadsRoot = path.resolve(uploadsDir);
+    const targetPath = path.resolve(uploadsDir, safeName);
+    if (!targetPath.startsWith(uploadsRoot)) return;
+    if (fs.existsSync(targetPath)) {
+      fs.unlinkSync(targetPath);
+    }
+  } catch (err) {
+    console.error("Failed to delete uploaded file:", err);
+  }
+}
 
 const CLASSIFICATION_VERSION = "v1";
 const MAX_CLASSIFICATION_TEXT = 15000;
@@ -3229,32 +3250,43 @@ app.post("/upload-profile-picture", upload.single("profilePicture"), async (req,
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
     const { userId } = req.body;
-    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    if (!userId) {
+      deleteUploadedFileIfExists(req.file.filename);
+      return res.status(400).json({ error: "Missing userId" });
+    }
 
     // Validate file type (only images)
     const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif'];
     if (!allowedTypes.includes(req.file.mimetype)) {
+      deleteUploadedFileIfExists(req.file.filename);
       return res.status(400).json({ error: "Only image files are allowed" });
     }
 
     // Validate file size (max 5MB)
     if (req.file.size > 5 * 1024 * 1024) {
+      deleteUploadedFileIfExists(req.file.filename);
       return res.status(400).json({ error: "File size must be less than 5MB" });
     }
 
-    // Update user profile picture
-    const user = await UserModel.findByIdAndUpdate(
-      userId,
-      { profilePicture: req.file.filename },
-      { new: true }
-    );
+    // Update user profile picture and remove the previous avatar file when replaced.
+    const user = await UserModel.findById(userId).select("profilePicture");
+    if (!user) {
+      deleteUploadedFileIfExists(req.file.filename);
+      return res.status(404).json({ error: "User not found" });
+    }
 
-    if (!user) return res.status(404).json({ error: "User not found" });
+    const previousProfilePicture = String(user.profilePicture || "").trim();
+    user.profilePicture = req.file.filename;
+    await user.save();
+
+    if (previousProfilePicture && previousProfilePicture !== req.file.filename) {
+      deleteUploadedFileIfExists(previousProfilePicture);
+    }
 
     // Log the action
     createLog("PROFILE_PICTURE_UPDATE", userId, `Updated profile picture`);
 
-    res.json({ success: true, profilePicture: req.file.filename });
+    res.json({ success: true, profilePicture: user.profilePicture });
   } catch (err) {
     console.error("Profile picture upload error:", err);
     res.status(500).json({ error: "Profile picture upload failed" });
@@ -3285,9 +3317,21 @@ app.patch("/users/:id", async (req, res) => {
     const shouldSyncDepartment =
       Object.prototype.hasOwnProperty.call(requestBody, "department") ||
       typeof req.query?.department !== "undefined";
+    const existingUser = await UserModel.findById(id)
+      .select("_id email department profilePicture")
+      .lean();
+    if (!existingUser) return res.status(404).json({ error: "User not found" });
+
+    const previousProfilePicture = String(existingUser.profilePicture || "").trim();
     const update = {};
     if (typeof profilePicture !== "undefined") {
-      update.profilePicture = profilePicture;
+      if (profilePicture === null) {
+        update.profilePicture = null;
+      } else if (typeof profilePicture === "string") {
+        update.profilePicture = String(profilePicture || "").trim() || null;
+      } else {
+        return res.status(400).json({ error: "Invalid profile picture value" });
+      }
     }
     if (typeof name === "string") {
       const normalizedName = String(name || "").trim();
@@ -3308,7 +3352,16 @@ app.patch("/users/:id", async (req, res) => {
     }
     const user = await UserModel.findByIdAndUpdate(id, update, { new: true })
       .select("_id name email department role active profilePicture createdAt");
-    if (!user) return res.status(404).json({ error: "User not found" });
+
+    const nextProfilePicture = String(user?.profilePicture || "").trim();
+    if (
+      Object.prototype.hasOwnProperty.call(update, "profilePicture") &&
+      previousProfilePicture &&
+      previousProfilePicture !== nextProfilePicture
+    ) {
+      deleteUploadedFileIfExists(previousProfilePicture);
+    }
+
     if (shouldSyncDepartment) {
       await applyDepartmentGroupMembership(user._id, user.department, { actorId });
     }
@@ -7452,6 +7505,131 @@ app.get("/copc/programs/:id/workflow", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch COPC workflow details" });
+  }
+});
+
+// Program submission tracker used by workflow submission cards
+app.get("/copc/programs/:id/submissions", async (req, res) => {
+  try {
+    const { userId, role, status = "all" } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = actorRole === "superadmin";
+
+    const root = await Folder.findById(req.params.id).select("name copc complianceProfileKey folderAssignments owner");
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+    if (!isAdmin && !(await canUserAccessCopcProgram(root, userId, actorRole))) {
+      return res.status(403).json({ error: "Not authorized to view this COPC program submissions" });
+    }
+
+    const normalizedStatusInput = String(status || "all").toLowerCase();
+    const normalizedStatus = (() => {
+      if (normalizedStatusInput === "submitted") return "all";
+      if (["rejected_revision", "rejected/revision", "revision", "rejected_for_revision"].includes(normalizedStatusInput)) {
+        return "rejected";
+      }
+      return normalizedStatusInput;
+    })();
+
+    const matchesSelectedStatus = (workflowStatus) => {
+      const key = String(workflowStatus || "").toLowerCase();
+      if (normalizedStatus === "all") return true;
+      if (normalizedStatus === "rejected") return key === "rejected_program_chair" || key === "rejected_qa";
+      return key === normalizedStatus;
+    };
+
+    const folderIds = await getDescendantFolderIds(root._id);
+    const submissionQuery = {
+      parentFolder: { $in: folderIds },
+      deletedAt: null,
+    };
+    // User-facing submitted-docs view should only show uploads made by the current user.
+    // Super admins keep full program visibility.
+    if (!isAdmin) {
+      submissionQuery.userId = String(userId || "");
+    }
+
+    const files = await File.find(submissionQuery)
+      .select("originalName filename mimetype size uploadDate parentFolder reviewWorkflow classification userId owner")
+      .populate("parentFolder", "name")
+      .sort({ uploadDate: -1 });
+
+    const ownerIds = Array.from(
+      new Set(
+        files
+          .map((file) => file?.owner?._id?.toString?.() || file?.owner?.toString?.() || "")
+          .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      )
+    );
+    const owners = ownerIds.length
+      ? await UserModel.find({ _id: { $in: ownerIds } }).select("name email").lean()
+      : [];
+    const ownerById = new Map(owners.map((owner) => [String(owner?._id || ""), owner]));
+
+    const workflowCache = new Map();
+    const allSubmissions = [];
+    const counts = {
+      submitted: 0,
+      pendingProgramChair: 0,
+      pendingQa: 0,
+      rejected: 0,
+      approved: 0,
+    };
+
+    for (const file of files) {
+      const wf = await ensureFileReviewWorkflow(file, workflowCache);
+      const workflowStatus = wf?.requiresReview ? String(wf?.status || "pending_program_chair") : "approved";
+
+      counts.submitted += 1;
+      if (workflowStatus === "pending_program_chair") counts.pendingProgramChair += 1;
+      if (workflowStatus === "pending_qa") counts.pendingQa += 1;
+      if (workflowStatus === "rejected_program_chair" || workflowStatus === "rejected_qa") counts.rejected += 1;
+      if (workflowStatus === "approved") counts.approved += 1;
+
+      const ownerId = file?.owner?._id?.toString?.() || file?.owner?.toString?.() || "";
+      const ownerProfile = ownerById.get(String(ownerId || ""));
+      const uploaderName = ownerProfile?.name || ownerProfile?.email || file?.userId || "Unknown uploader";
+      const uploaderEmail = ownerProfile?.email || "";
+
+      allSubmissions.push({
+        _id: file._id,
+        originalName: file.originalName,
+        filename: file.filename,
+        mimetype: file.mimetype,
+        size: file.size,
+        uploadDate: file.uploadDate,
+        folderId: file?.parentFolder?._id || file?.parentFolder || null,
+        folderName: file?.parentFolder?.name || "Unknown Folder",
+        workflowStatus,
+        programChairStatus: wf?.programChair?.status || "not_required",
+        programChairNotes: wf?.programChair?.notes || "",
+        qaStatus: wf?.qaOfficer?.status || "not_required",
+        qaNotes: wf?.qaOfficer?.notes || "",
+        uploaderName,
+        uploaderEmail,
+        uploaderId: ownerId || file?.userId || "",
+        classification: file?.classification || null,
+      });
+    }
+
+    const submissions = allSubmissions.filter((row) => matchesSelectedStatus(row.workflowStatus));
+
+    res.json({
+      program: {
+        _id: root._id,
+        code: root?.copc?.programCode || root.name,
+        name: root?.copc?.programName || root.name,
+        description: root?.copc?.description || root?.copc?.departmentName || "",
+        department: root?.copc?.description || root?.copc?.departmentName || "",
+        year: root?.copc?.year || null,
+      },
+      status: normalizedStatus,
+      counts,
+      submissions,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load COPC submissions" });
   }
 });
 

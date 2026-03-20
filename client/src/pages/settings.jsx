@@ -4,6 +4,7 @@ import axios from "axios";
 import { BACKEND_URL } from "../config";
 
 const DEPARTMENT_OPTIONS = ["COED", "COT", "COHTM"];
+const PROFILE_PICTURE_EVENT = "profile-picture-updated";
 
 const normalizeDepartment = (value) => {
   const raw = String(value || "").trim().toUpperCase();
@@ -14,6 +15,28 @@ const normalizeDepartment = (value) => {
   if (collapsed.includes("COHTM") || collapsed.includes("HOSPITALITY") || collapsed.includes("TOURISM")) return "COHTM";
   if (collapsed.includes("COT") || collapsed.includes("TECHNOLOGY")) return "COT";
   return "";
+};
+
+const buildProfilePictureUrl = (filename, version = 0) => {
+  const safeName = String(filename || "").trim();
+  if (!safeName) return "";
+  const query = Number(version) > 0 ? `?v=${Number(version)}` : "";
+  return `${BACKEND_URL}/uploads/${safeName}${query}`;
+};
+
+const dispatchProfilePictureUpdated = (profilePicture, updatedAt = Date.now()) => {
+  try {
+    window.dispatchEvent(
+      new CustomEvent(PROFILE_PICTURE_EVENT, {
+        detail: {
+          profilePicture: profilePicture || null,
+          updatedAt,
+        },
+      })
+    );
+  } catch (err) {
+    console.error("Failed to dispatch profile picture event:", err);
+  }
 };
 
 function Settings() {
@@ -34,6 +57,9 @@ function Settings() {
   });
   const [activeTab, setActiveTab] = useState("profile");
   const [loading, setLoading] = useState(false);
+  const [profilePictureVersion, setProfilePictureVersion] = useState(
+    Number(localStorage.getItem("profilePictureUpdatedAt") || 0)
+  );
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState("");
   const [showPasswords, setShowPasswords] = useState({
@@ -51,7 +77,9 @@ function Settings() {
     const name = localStorage.getItem("name") || email?.split('@')[0] || "";
     const department = normalizeDepartment(localStorage.getItem("department"));
     const profilePicture = localStorage.getItem("profilePicture");
+    const storedVersion = Number(localStorage.getItem("profilePictureUpdatedAt") || 0);
     setUserData(prev => ({ ...prev, email, name, department, profilePicture: profilePicture || null }));
+    setProfilePictureVersion(Number.isFinite(storedVersion) ? storedVersion : 0);
 
     let ignore = false;
     const loadProfile = async () => {
@@ -75,10 +103,18 @@ function Settings() {
         localStorage.setItem("name", safeName);
         localStorage.setItem("email", safeEmail);
         localStorage.setItem("department", safeDepartment || "Unassigned");
+        const previousProfilePicture = String(localStorage.getItem("profilePicture") || "");
         if (safeProfilePicture) {
           localStorage.setItem("profilePicture", safeProfilePicture);
         } else {
           localStorage.removeItem("profilePicture");
+        }
+
+        const currentProfilePicture = String(safeProfilePicture || "");
+        if (previousProfilePicture !== currentProfilePicture) {
+          const updatedAt = Date.now();
+          localStorage.setItem("profilePictureUpdatedAt", String(updatedAt));
+          setProfilePictureVersion(updatedAt);
         }
       } catch (err) {
         console.error("Failed to load user profile:", err);
@@ -100,6 +136,30 @@ function Settings() {
       ignore = true;
     };
   }, [role, userId]);
+
+  useEffect(() => {
+    const handleProfilePictureEvent = (event) => {
+      const nextProfilePicture = event?.detail?.profilePicture || null;
+      const nextUpdatedAt = Number(event?.detail?.updatedAt || Date.now());
+      setUserData((prev) => ({ ...prev, profilePicture: nextProfilePicture }));
+      setProfilePictureVersion(Number.isFinite(nextUpdatedAt) ? nextUpdatedAt : Date.now());
+    };
+
+    const handleStorageEvent = (event) => {
+      if (event.key !== "profilePicture" && event.key !== "profilePictureUpdatedAt") return;
+      const nextProfilePicture = localStorage.getItem("profilePicture");
+      const nextUpdatedAt = Number(localStorage.getItem("profilePictureUpdatedAt") || 0);
+      setUserData((prev) => ({ ...prev, profilePicture: nextProfilePicture || null }));
+      setProfilePictureVersion(Number.isFinite(nextUpdatedAt) ? nextUpdatedAt : 0);
+    };
+
+    window.addEventListener(PROFILE_PICTURE_EVENT, handleProfilePictureEvent);
+    window.addEventListener("storage", handleStorageEvent);
+    return () => {
+      window.removeEventListener(PROFILE_PICTURE_EVENT, handleProfilePictureEvent);
+      window.removeEventListener("storage", handleStorageEvent);
+    };
+  }, []);
 
   useEffect(() => {
     document.body.classList.toggle("dark-mode", !!preferences.darkMode);
@@ -305,7 +365,11 @@ function Settings() {
       }
 
       const formData = new FormData();
-      formData.append('profilePicture', uploadBlob || profilePictureFile);
+      if (uploadBlob instanceof Blob && uploadBlob !== profilePictureFile) {
+        formData.append('profilePicture', uploadBlob, 'profile.jpg');
+      } else {
+        formData.append('profilePicture', profilePictureFile, profilePictureFile.name || 'profile.jpg');
+      }
       formData.append('userId', userId);
 
       const response = await axios.post(`${BACKEND_URL}/upload-profile-picture`, formData, {
@@ -316,13 +380,15 @@ function Settings() {
 
       if (response.data.success) {
         // Update local storage with new profile picture
+        const updatedAt = Date.now();
         localStorage.setItem('profilePicture', response.data.profilePicture);
+        localStorage.setItem('profilePictureUpdatedAt', String(updatedAt));
         setUserData(prev => ({ ...prev, profilePicture: response.data.profilePicture }));
+        setProfilePictureVersion(updatedAt);
         setProfilePictureFile(null);
         setProfilePicturePreview(null);
+        dispatchProfilePictureUpdated(response.data.profilePicture, updatedAt);
         showMessage("Profile picture updated successfully!");
-        // Refresh the page to update all components
-        window.location.reload();
       }
     } catch (error) {
       console.error("Profile picture upload failed:", error);
@@ -348,11 +414,15 @@ function Settings() {
       );
 
       if (response.data) {
+        const updatedAt = Date.now();
         localStorage.removeItem('profilePicture');
+        localStorage.setItem('profilePictureUpdatedAt', String(updatedAt));
         setUserData(prev => ({ ...prev, profilePicture: null }));
+        setProfilePictureVersion(updatedAt);
         setProfilePicturePreview(null);
+        setProfilePictureFile(null);
+        dispatchProfilePictureUpdated(null, updatedAt);
         showMessage("Profile picture removed successfully!");
-        window.location.reload();
       }
     } catch (error) {
       console.error("Profile picture removal failed:", error);
@@ -430,7 +500,7 @@ function Settings() {
                             />
                           ) : userData.profilePicture ? (
                             <img
-                              src={`${BACKEND_URL}/uploads/${userData.profilePicture}`}
+                              src={buildProfilePictureUrl(userData.profilePicture, profilePictureVersion)}
                               alt="Current Profile"
                               className="profile-picture-preview"
                             />

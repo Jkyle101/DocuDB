@@ -47,6 +47,10 @@ function SidebarSuperAdmin({ onClose }) {
     localStorage.removeItem("email");
     localStorage.removeItem("userId");
     localStorage.removeItem("role");
+    localStorage.removeItem("name");
+    localStorage.removeItem("department");
+    localStorage.removeItem("profilePicture");
+    localStorage.removeItem("profilePictureUpdatedAt");
     navigate("/login");
   };
 

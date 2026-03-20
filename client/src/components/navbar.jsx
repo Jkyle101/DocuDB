@@ -7,6 +7,8 @@ import { BACKEND_URL } from "../config";
 import logo from "../assets/docudbllcc.png";
 import "./navbar.css";
 
+const PROFILE_PICTURE_EVENT = "profile-picture-updated";
+
 // Debounce utility function
 function debounce(func, wait) {
   let timeout;
@@ -35,6 +37,11 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
   const [isMobileSearchExpanded, setIsMobileSearchExpanded] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(false);
+  const [userEmail, setUserEmail] = useState(localStorage.getItem("email") || "");
+  const [userProfilePicture, setUserProfilePicture] = useState(localStorage.getItem("profilePicture") || "");
+  const [profilePictureVersion, setProfilePictureVersion] = useState(
+    Number(localStorage.getItem("profilePictureUpdatedAt") || 0)
+  );
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [advancedFilters, setAdvancedFilters] = useState({
     entityTypes: ["file", "folder"],
@@ -60,6 +67,48 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
   const suggestionsRef = useRef(null);
   const advancedFiltersRef = useRef(null);
   const notificationAudioRef = useRef(null);
+
+  const buildProfilePictureUrl = useCallback((filename) => {
+    const safeName = String(filename || "").trim();
+    if (!safeName) return "";
+    const cacheBust = Number(profilePictureVersion) > 0 ? `?v=${Number(profilePictureVersion)}` : "";
+    return `${BACKEND_URL}/uploads/${safeName}${cacheBust}`;
+  }, [profilePictureVersion]);
+
+  useEffect(() => {
+    const syncProfile = () => {
+      setUserEmail(localStorage.getItem("email") || "");
+      setUserProfilePicture(localStorage.getItem("profilePicture") || "");
+      const updatedAt = Number(localStorage.getItem("profilePictureUpdatedAt") || 0);
+      setProfilePictureVersion(Number.isFinite(updatedAt) ? updatedAt : 0);
+    };
+
+    const handleProfilePictureEvent = (event) => {
+      const nextProfilePicture = String(event?.detail?.profilePicture || "");
+      const nextUpdatedAt = Number(event?.detail?.updatedAt || Date.now());
+      setUserProfilePicture(nextProfilePicture);
+      setProfilePictureVersion(Number.isFinite(nextUpdatedAt) ? nextUpdatedAt : Date.now());
+      setUserEmail(localStorage.getItem("email") || "");
+    };
+
+    const handleStorageEvent = (event) => {
+      if (
+        event.key === "email" ||
+        event.key === "profilePicture" ||
+        event.key === "profilePictureUpdatedAt"
+      ) {
+        syncProfile();
+      }
+    };
+
+    syncProfile();
+    window.addEventListener(PROFILE_PICTURE_EVENT, handleProfilePictureEvent);
+    window.addEventListener("storage", handleStorageEvent);
+    return () => {
+      window.removeEventListener(PROFILE_PICTURE_EVENT, handleProfilePictureEvent);
+      window.removeEventListener("storage", handleStorageEvent);
+    };
+  }, []);
 
   useEffect(() => {
     const savedPrefs = localStorage.getItem(`userPreferences_${userId}`);
@@ -847,9 +896,17 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
                   id="mobileUserDropdown"
                   data-bs-toggle="dropdown"
                   aria-expanded="false"
-                  title={localStorage.getItem("email")}
+                  title={userEmail}
                 >
-                  <FaUser size={16} />
+                  {userProfilePicture ? (
+                    <img
+                      src={buildProfilePictureUrl(userProfilePicture)}
+                      alt="Profile"
+                      style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
+                    />
+                  ) : (
+                    <FaUser size={16} />
+                  )}
                 </button>
 
                 <ul className="dropdown-menu dropdown-menu-google" aria-labelledby="mobileUserDropdown">
@@ -857,10 +914,18 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
                     <div className="dropdown-header-google">
                       <div className="user-info-google">
                         <div className="user-avatar-dropdown-google">
-                          <FaUser size={16} />
+                          {userProfilePicture ? (
+                            <img
+                              src={buildProfilePictureUrl(userProfilePicture)}
+                              alt="Profile"
+                              style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: "50%" }}
+                            />
+                          ) : (
+                            <FaUser size={16} />
+                          )}
                         </div>
                         <div className="user-details-google">
-                          <div className="user-email-google">{localStorage.getItem("email")}</div>
+                          <div className="user-email-google">{userEmail}</div>
                           <div className="user-role-google">{role}</div>
                         </div>
                       </div>
@@ -1022,9 +1087,9 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
               <div className="modal-body">
                 <div className="text-center mb-4">
                   <div className="user-avatar-modal mb-3">
-                    {localStorage.getItem('profilePicture') ? (
+                    {userProfilePicture ? (
                       <img
-                        src={`${BACKEND_URL}/uploads/${localStorage.getItem('profilePicture')}`}
+                        src={buildProfilePictureUrl(userProfilePicture)}
                         alt="Profile"
                         className="user-avatar-img-modal"
                       />
@@ -1032,7 +1097,7 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
                       <FaUser size={40} />
                     )}
                   </div>
-                  <h6>{localStorage.getItem("email")}</h6>
+                  <h6>{userEmail}</h6>
                   <small className="text-muted">{role}</small>
                 </div>
 
