@@ -67,6 +67,13 @@ function Login() {
     localStorage.setItem("role", result.role);
     localStorage.setItem("userId", result.userId);
     localStorage.setItem("email", result.email || fallbackEmail || "");
+    localStorage.setItem("name", result.name || "");
+    localStorage.setItem("department", result.department || "");
+    if (result.profilePicture) {
+      localStorage.setItem("profilePicture", result.profilePicture);
+    } else {
+      localStorage.removeItem("profilePicture");
+    }
 
     if (result.role === "superadmin") navigate("/admin");
     else navigate("/");

@@ -1,0 +1,198 @@
+.copc-dashboard-gh {
+  --copc-gh-border: color-mix(in srgb, var(--glass-stroke) 82%, #ffffff);
+  --copc-gh-border-strong: color-mix(in srgb, var(--glass-stroke-strong) 86%, #ffffff);
+  --copc-gh-text-secondary: color-mix(in srgb, var(--text-muted) 92%, #2f3f56);
+  --copc-gh-tab-active: var(--brand);
+}
+
+.copc-dashboard-gh .copc-gh-shell {
+  border: 1px solid var(--copc-gh-border-strong);
+  border-radius: 16px;
+  background: var(--glass-bg-strong);
+  /* Keep this container free of filter/transform so child fixed overlays
+     (like the floating COPC task checklist) stay anchored to the viewport. */
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.12);
+  overflow: hidden;
+}
+
+.copc-dashboard-gh .copc-gh-repo-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  padding: 1rem 1.2rem;
+  border-bottom: 1px solid var(--copc-gh-border);
+  background: color-mix(in srgb, var(--glass-bg-soft) 74%, #ffffff);
+}
+
+.copc-dashboard-gh .copc-gh-repo-main {
+  min-width: 0;
+}
+
+.copc-dashboard-gh .copc-gh-repo-path {
+  display: flex;
+  align-items: center;
+  color: var(--copc-gh-text-secondary);
+  font-size: 0.9rem;
+  font-weight: 650;
+  margin-bottom: 0.35rem;
+}
+
+.copc-dashboard-gh .copc-gh-owner {
+  opacity: 0.88;
+}
+
+.copc-dashboard-gh .copc-gh-sep {
+  margin: 0 0.4rem;
+  opacity: 0.7;
+}
+
+.copc-dashboard-gh .copc-gh-repo {
+  color: var(--text-strong);
+}
+
+.copc-dashboard-gh .copc-gh-title {
+  letter-spacing: -0.02em;
+}
+
+.copc-dashboard-gh .copc-gh-subtitle {
+  color: var(--copc-gh-text-secondary);
+}
+
+.copc-dashboard-gh .copc-gh-repo-meta {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.copc-dashboard-gh .copc-gh-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid var(--copc-gh-border-strong);
+  padding: 0.3rem 0.65rem;
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--copc-gh-text-secondary);
+  background: color-mix(in srgb, var(--glass-bg-soft) 80%, #ffffff);
+}
+
+.copc-dashboard-gh .copc-gh-pill-active {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--brand-soft) 30%, var(--glass-bg-soft));
+  border-color: color-mix(in srgb, var(--brand) 28%, var(--copc-gh-border-strong));
+}
+
+.copc-dashboard-gh .copc-gh-tabbar {
+  border-bottom: 1px solid var(--copc-gh-border);
+  background: color-mix(in srgb, var(--glass-bg) 75%, #ffffff);
+  padding: 0 0.9rem;
+}
+
+.copc-dashboard-gh .copc-gh-tabs {
+  display: flex;
+  gap: 0.3rem;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.copc-dashboard-gh .copc-gh-tab {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--copc-gh-text-secondary);
+  font-weight: 650;
+  font-size: 0.88rem;
+  line-height: 1;
+  white-space: nowrap;
+  padding: 0.82rem 0.64rem 0.74rem;
+  margin-bottom: -1px;
+  transition: color 0.16s ease, border-color 0.16s ease, background-color 0.16s ease;
+}
+
+.copc-dashboard-gh .copc-gh-tab:hover {
+  color: var(--text-strong);
+  background: color-mix(in srgb, var(--brand-soft) 18%, transparent);
+}
+
+.copc-dashboard-gh .copc-gh-tab.is-active {
+  color: var(--text-strong);
+  border-bottom-color: var(--copc-gh-tab-active);
+  background: color-mix(in srgb, var(--brand-soft) 16%, transparent);
+}
+
+.copc-dashboard-gh .copc-gh-content {
+  padding: 0.8rem;
+}
+
+.copc-dashboard-gh .container-fluid.py-2,
+.copc-dashboard-gh .container-fluid.py-3 {
+  padding: 0.6rem !important;
+}
+
+.copc-dashboard-gh .card {
+  border-radius: 12px !important;
+  border: 1px solid var(--copc-gh-border) !important;
+  background: color-mix(in srgb, var(--glass-bg-soft) 76%, #ffffff) !important;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08) !important;
+}
+
+.copc-dashboard-gh .card-header {
+  background: color-mix(in srgb, var(--glass-bg-strong) 85%, #ffffff) !important;
+  border-bottom: 1px solid var(--copc-gh-border) !important;
+  font-weight: 700;
+}
+
+.copc-dashboard-gh .btn {
+  border-radius: 8px;
+}
+
+.copc-dashboard-gh .btn.btn-primary {
+  background: linear-gradient(180deg, #2f81f7 0%, #1f6feb 100%);
+  border-color: #1f6feb;
+  box-shadow: none;
+}
+
+.copc-dashboard-gh .btn.btn-primary:hover,
+.copc-dashboard-gh .btn.btn-primary:focus {
+  background: linear-gradient(180deg, #1f6feb 0%, #1a62d0 100%);
+  border-color: #1a62d0;
+}
+
+.copc-dashboard-gh .btn-outline-primary,
+.copc-dashboard-gh .btn-outline-secondary,
+.copc-dashboard-gh .btn-outline-success,
+.copc-dashboard-gh .btn-outline-danger,
+.copc-dashboard-gh .btn-outline-warning,
+.copc-dashboard-gh .btn-outline-dark,
+.copc-dashboard-gh .btn-outline-info {
+  border-color: var(--copc-gh-border-strong);
+  background: color-mix(in srgb, var(--glass-bg-soft) 78%, #ffffff);
+}
+
+.copc-dashboard-gh .table thead th,
+.copc-dashboard-gh .table-light th {
+  background: color-mix(in srgb, var(--glass-bg-strong) 88%, #ffffff) !important;
+  border-bottom: 1px solid var(--copc-gh-border) !important;
+  color: var(--copc-gh-text-secondary) !important;
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.8rem;
+}
+
+.copc-dashboard-gh .table td,
+.copc-dashboard-gh .table th {
+  border-color: var(--copc-gh-border) !important;
+}
+
+@media (max-width: 991.98px) {
+  .copc-dashboard-gh .copc-gh-repo-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .copc-dashboard-gh .copc-gh-repo-meta {
+    justify-content: flex-start;
+  }
+}

@@ -62,7 +62,7 @@ const TASK_TEMPLATE_SETS = {
   ],
 };
 
-export default function AdminOwnedPage() {
+export default function AdminOwnedPage({ defaultScope = "owned" }) {
   const role = localStorage.getItem("role") || "superadmin";
   const userId = localStorage.getItem("userId");
   const userEmail = localStorage.getItem("email");
@@ -76,6 +76,13 @@ export default function AdminOwnedPage() {
     return raw;
   };
   const isAdmin = normalizeRole(role) === "superadmin";
+  const LEGACY_TASK_STATUS_MAP = { not_started: "pending", complete: "approved" };
+  const normalizeTaskStatusValue = (value) => {
+    const key = String(value || "").toLowerCase();
+    return LEGACY_TASK_STATUS_MAP[key] || key || "pending";
+  };
+  const isTaskDone = (task) =>
+    normalizeTaskStatusValue(task?.status) === "approved" || Number(task?.percentage || 0) >= 100;
   const [currentFolderId, setCurrentFolderId] = useState(null);
   const [folders, setFolders] = useState([]);
   const [files, setFiles] = useState([]);
@@ -111,6 +118,9 @@ export default function AdminOwnedPage() {
   const [selectedUploaderId, setSelectedUploaderId] = useState("");
   const [selectedChairId, setSelectedChairId] = useState("");
   const [selectedQaId, setSelectedQaId] = useState("");
+  const normalizedDefaultScope = defaultScope === "all" ? "all" : "owned";
+  const [contentScope, setContentScope] = useState(normalizedDefaultScope);
+  const isOwnedScope = contentScope === "owned";
   const { searchResults } = useOutletContext();
   const navigate = useNavigate();
   const CHECKLIST_PANEL_WIDTH = 420;
@@ -167,7 +177,7 @@ export default function AdminOwnedPage() {
     event.preventDefault();
   }, [checklistPosition.x, checklistPosition.y, getDefaultChecklistPosition]);
 
-  const fetchOwnedContents = useCallback(async (folderId) => {
+  const fetchContents = useCallback(async (folderId) => {
     try {
       const params = { role, parentFolder: folderId || "" };
       const [fdrRes, filRes, bcRes] = await Promise.all([
@@ -176,15 +186,14 @@ export default function AdminOwnedPage() {
         axios.get(`${BACKEND_URL}/breadcrumbs`, { params: { folderId } }),
       ]);
 
-      const isOwned = (owner) => (owner?._id || owner)?.toString?.() === userId?.toString();
       const foldersData = Array.isArray(fdrRes.data) ? fdrRes.data : [];
       const filesData = Array.isArray(filRes.data) ? filRes.data : [];
       const breadcrumbData = Array.isArray(bcRes.data) ? bcRes.data : [];
-      setFolders(foldersData.filter((f) => isOwned(f.owner)));
-      setFiles(filesData.filter((f) => isOwned(f.owner)));
+      setFolders(foldersData);
+      setFiles(filesData);
       setBreadcrumbs(breadcrumbData);
     } catch (err) {
-      console.error("Failed to fetch admin-owned contents:", err);
+      console.error("Failed to fetch admin contents:", err);
     }
   }, [role, userId]);
 
@@ -213,7 +222,7 @@ export default function AdminOwnedPage() {
           })
         )
       );
-      await fetchOwnedContents(currentFolderId);
+      await fetchContents(currentFolderId);
       setShowPresetModal(false);
       alert(`Created ${toCreate.length} predefined folder(s).`);
     } catch (err) {
@@ -224,12 +233,21 @@ export default function AdminOwnedPage() {
   };
 
   useEffect(() => {
-    fetchOwnedContents(currentFolderId);
-  }, [fetchOwnedContents, currentFolderId]);
+    fetchContents(currentFolderId);
+  }, [fetchContents, currentFolderId]);
+
+  useEffect(() => {
+    setContentScope(normalizedDefaultScope);
+  }, [normalizedDefaultScope]);
 
   useEffect(() => {
     setFolderQuery("");
   }, [currentFolderId]);
+
+  useEffect(() => {
+    setCurrentFolderId(null);
+    setFolderQuery("");
+  }, [contentScope]);
 
   useEffect(() => {
     const handlePointerMove = (event) => {
@@ -335,7 +353,7 @@ export default function AdminOwnedPage() {
           title: newTaskTitle.trim(),
           checks: ["complete", "updated", "aligned with CHED standards"],
           percentage: 0,
-          status: "not_started",
+          status: "pending",
         },
       });
       setFolderTasks(Array.isArray(data?.tasks) ? data.tasks : []);
@@ -368,7 +386,7 @@ export default function AdminOwnedPage() {
                 "curriculum standards",
               ],
               percentage: 0,
-              status: "not_started",
+              status: "pending",
             },
           })
         )
@@ -384,11 +402,23 @@ export default function AdminOwnedPage() {
   const setTaskStatus = async (taskId, status) => {
     if (!currentFolderId || !taskId) return;
     try {
+      const normalizedStatus = normalizeTaskStatusValue(status);
+      let note = "";
+      if (normalizedStatus === "rejected") {
+        const promptValue = window.prompt("Add rejection comment:", "");
+        if (promptValue === null) return;
+        note = String(promptValue || "").trim();
+        if (!note) {
+          alert("Rejection comment is required.");
+          return;
+        }
+      }
       const { data } = await axios.patch(`${BACKEND_URL}/folders/${currentFolderId}/tasks/${taskId}/check`, {
         userId,
         role,
-        status,
-        percentage: status === "complete" ? 100 : undefined,
+        status: normalizedStatus,
+        notes: note,
+        comment: note,
       });
       setFolderTasks(Array.isArray(data?.tasks) ? data.tasks : []);
       setTaskProgress(Number(data?.progress || 0));
@@ -433,12 +463,14 @@ export default function AdminOwnedPage() {
             <select
               className="form-select form-select-sm"
               style={{ width: "130px" }}
-              value={task.status}
+              value={normalizeTaskStatusValue(task.status)}
               onChange={(e) => setTaskStatus(task._id, e.target.value)}
             >
-              <option value="not_started">Not Started</option>
+              <option value="pending">Pending</option>
               <option value="in_progress">In Progress</option>
-              <option value="complete">Complete</option>
+              <option value="for_review">For Review</option>
+              <option value="approved">Approved</option>
+              <option value="rejected">Rejected</option>
             </select>
           </div>
           {(task.children || []).length > 0 && <div className="ms-3 mt-1">{renderTasks(task.children)}</div>}
@@ -457,8 +489,8 @@ export default function AdminOwnedPage() {
                 width: "18px",
                 height: "18px",
                 borderRadius: "50%",
-                border: Number(task.percentage || 0) >= 100 || task.status === "complete" ? "none" : "2px solid #c7c7c7",
-                background: Number(task.percentage || 0) >= 100 || task.status === "complete" ? "#45be57" : "transparent",
+                border: isTaskDone(task) ? "none" : "2px solid #c7c7c7",
+                background: isTaskDone(task) ? "#45be57" : "transparent",
                 color: "#fff",
                 display: "flex",
                 alignItems: "center",
@@ -468,7 +500,7 @@ export default function AdminOwnedPage() {
                 flexShrink: 0,
               }}
             >
-              {(Number(task.percentage || 0) >= 100 || task.status === "complete") ? "✓" : ""}
+              {isTaskDone(task) ? "v" : ""}
             </div>
             <div className="small" style={{ color: "#555" }}>{task.title}</div>
           </div>
@@ -484,7 +516,7 @@ export default function AdminOwnedPage() {
     const walk = (tasks = []) => {
       for (const task of tasks || []) {
         total += 1;
-        if (Number(task?.percentage || 0) >= 100 || task?.status === "complete") completed += 1;
+        if (isTaskDone(task)) completed += 1;
         walk(task?.children || []);
       }
     };
@@ -524,13 +556,13 @@ export default function AdminOwnedPage() {
   const deleteFolder = async (folder) => {
     if (!window.confirm(`Delete folder "${folder.name}" and its contents?`)) return;
     await axios.delete(`${BACKEND_URL}/folders/${folder._id}`, { params: { role, userId } });
-    fetchOwnedContents(currentFolderId);
+    fetchContents(currentFolderId);
   };
 
   const deleteFile = async (file) => {
     if (!window.confirm(`Delete file "${file.originalName}"?`)) return;
     await axios.delete(`${BACKEND_URL}/files/${file._id}`, { params: { role, userId } });
-    fetchOwnedContents(currentFolderId);
+    fetchContents(currentFolderId);
   };
 
   const handleContextMenu = (e, item) => {
@@ -553,8 +585,14 @@ export default function AdminOwnedPage() {
   const searchFiles = searchResults?.filter((item) => item.type === "file") || [];
   const searchFolders = searchResults?.filter((item) => item.type === "folder") || [];
   const isSearchMode = Array.isArray(searchResults);
-  const visibleFolders = (searchResults ? searchFolders : folders).filter(isOwnedByCurrentUser);
-  const visibleFiles = (searchResults ? searchFiles : files).filter(isOwnedByCurrentUser);
+  const visibleFolders = useMemo(() => {
+    const base = searchResults ? searchFolders : folders;
+    return isOwnedScope ? base.filter(isOwnedByCurrentUser) : base;
+  }, [searchResults, searchFolders, folders, isOwnedScope, isOwnedByCurrentUser]);
+  const visibleFiles = useMemo(() => {
+    const base = searchResults ? searchFiles : files;
+    return isOwnedScope ? base.filter(isOwnedByCurrentUser) : base;
+  }, [searchResults, searchFiles, files, isOwnedScope, isOwnedByCurrentUser]);
   const filteredVisibleFolders = useMemo(() => {
     const query = String(folderQuery || "").trim().toLowerCase();
     if (!query) return visibleFolders;
@@ -579,7 +617,7 @@ export default function AdminOwnedPage() {
       userId,
       role,
     });
-    await fetchOwnedContents(currentFolderId);
+    await fetchContents(currentFolderId);
   };
 
   const handleDragStart = (event, payload) => {
@@ -624,7 +662,7 @@ export default function AdminOwnedPage() {
         role,
         onStatus: setDropUploadMessage,
       });
-      await fetchOwnedContents(currentFolderId);
+      await fetchContents(currentFolderId);
       setDropUploadMessage(
         `Uploaded ${result.uploadedCount} file${result.uploadedCount === 1 ? "" : "s"} by drag and drop.`
       );
@@ -727,7 +765,9 @@ export default function AdminOwnedPage() {
             </button>
           )}
           <div className="d-flex align-items-center flex-wrap overflow-auto">
-            <span className="fw-bold me-2 text-primary">Admin Owned Workspace</span>
+            <span className="fw-bold me-2 text-primary">
+              {isOwnedScope ? "Admin Workspace" : "Admin Drive"}
+            </span>
             {(Array.isArray(breadcrumbs) ? breadcrumbs : []).map((b) => (
               <span key={b._id || "root"} className="d-flex align-items-center">
                 <FaChevronRight className="mx-2 text-muted" size={12} />
@@ -740,6 +780,22 @@ export default function AdminOwnedPage() {
         </div>
 
         <div className="d-flex align-items-center gap-2">
+          <div className="btn-group" role="group" aria-label="Content scope">
+            <button
+              type="button"
+              className={`btn btn-sm ${isOwnedScope ? "btn-primary" : "btn-outline-primary"}`}
+              onClick={() => setContentScope("owned")}
+            >
+              My Workspace
+            </button>
+            <button
+              type="button"
+              className={`btn btn-sm ${!isOwnedScope ? "btn-primary" : "btn-outline-primary"}`}
+              onClick={() => setContentScope("all")}
+            >
+              Admin Drive
+            </button>
+          </div>
           <button className="btn btn-outline-primary" onClick={() => setShowPresetModal(true)}>
             <FaPlus className="me-1" /> Predefined Folders
           </button>
@@ -761,7 +817,9 @@ export default function AdminOwnedPage() {
       </div>
 
       <div className="alert alert-light border py-2 px-3 small mb-3">
-        Tip: Open a folder, then upload/share/rename documents. Drag and drop works for moving files and folders.
+        {isOwnedScope
+          ? "Workspace mode: manage your own admin files and folders. Drag and drop works for moving and uploading."
+          : "Drive mode: viewing all admin-accessible files and folders. Use My Workspace for owner-focused management."}
       </div>
 
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
@@ -1005,7 +1063,11 @@ export default function AdminOwnedPage() {
         <div className="text-center py-5">
           <FaFolder className="text-muted mb-3" size={48} />
           <h5 className="text-muted">
-            {folderQuery ? "No folders or files match your search" : "No admin-owned files or folders yet"}
+            {folderQuery
+              ? "No folders or files match your search"
+              : isOwnedScope
+                ? "No files or folders in your admin workspace yet"
+                : "No files or folders found in admin drive"}
           </h5>
         </div>
       )}
@@ -1052,7 +1114,7 @@ export default function AdminOwnedPage() {
             onClose={() => setShowCreate(false)}
             onCreated={() => {
               setShowCreate(false);
-              fetchOwnedContents(currentFolderId);
+              fetchContents(currentFolderId);
             }}
             parentFolder={currentFolderId}
           />
@@ -1065,7 +1127,7 @@ export default function AdminOwnedPage() {
             onClose={() => setShowUpload(false)}
             onUploaded={() => {
               setShowUpload(false);
-              fetchOwnedContents(currentFolderId);
+              fetchContents(currentFolderId);
             }}
             parentFolder={currentFolderId}
           />
@@ -1143,7 +1205,7 @@ export default function AdminOwnedPage() {
             onClose={() => setRenameTarget(null)}
             onRenamed={() => {
               setRenameTarget(null);
-              fetchOwnedContents(currentFolderId);
+              fetchContents(currentFolderId);
             }}
           />
         </>
@@ -1205,7 +1267,9 @@ export default function AdminOwnedPage() {
               )}
               <button
                 className="btn btn-sm btn-outline-primary mt-2"
-                onClick={() => navigate(`/admin/tasks?folderId=${encodeURIComponent(currentFolderId)}`)}
+                onClick={() =>
+                  navigate(`/admin/copc-dashboard?tab=tasks&folderId=${encodeURIComponent(currentFolderId)}`)
+                }
               >
                 Open Task Management Page
               </button>

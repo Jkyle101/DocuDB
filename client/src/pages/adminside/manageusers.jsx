@@ -1,10 +1,9 @@
 import React, { useEffect, useState, useMemo, useRef } from "react";
 import axios from "axios";
-import { useOutletContext } from "react-router-dom";
 import {
   FaEnvelope, FaSync, FaUsers, FaUserCheck, FaUserTimes, FaUserCog,
   FaSearch, FaFilter, FaUserPlus, FaUpload, FaFileExcel, FaFileCode,
-  FaCalendarAlt, FaShieldAlt, FaUser, FaChartBar, FaCrown, FaKey, FaCheck, FaTimes
+  FaCalendarAlt, FaShieldAlt, FaUser, FaChartBar, FaCrown, FaKey, FaCheck, FaTimes, FaSave
 } from "react-icons/fa";
 import {
   PieChart, Pie, Cell, ResponsiveContainer, Tooltip
@@ -12,6 +11,19 @@ import {
 import "bootstrap/dist/css/bootstrap.min.css";
 import { BACKEND_URL } from "../../config";
 import "./admin-analytics.css";
+
+const DEPARTMENT_OPTIONS = ["COED", "COT", "COHTM"];
+
+const normalizeDepartment = (value) => {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw || raw === "UNASSIGNED") return "";
+  if (DEPARTMENT_OPTIONS.includes(raw)) return raw;
+  const collapsed = raw.replace(/[^A-Z0-9]/g, "");
+  if (collapsed.includes("COED") || collapsed.includes("EDUCATION")) return "COED";
+  if (collapsed.includes("COHTM") || collapsed.includes("HOSPITALITY") || collapsed.includes("TOURISM")) return "COHTM";
+  if (collapsed.includes("COT") || collapsed.includes("TECHNOLOGY")) return "COT";
+  return "";
+};
 
 export default function ManageUsers() {
   const roleOptions = [
@@ -36,17 +48,17 @@ export default function ManageUsers() {
   // User creation states
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [showBulkImportModal, setShowBulkImportModal] = useState(false);
-  const [newUser, setNewUser] = useState({ email: "", password: "", name: "", role: "faculty" });
+  const [newUser, setNewUser] = useState({ email: "", password: "", name: "", department: "", role: "faculty" });
   const [bulkUsers, setBulkUsers] = useState([]);
   const [bulkImportResults, setBulkImportResults] = useState(null);
   const [importing, setImporting] = useState(false);
+  const [savingUserId, setSavingUserId] = useState("");
 
   const fileInputRef = useRef(null);
 
-  // Get user role and search results
+  // Get user role
   const role = localStorage.getItem("role") || "superadmin";
   const userId = localStorage.getItem("userId");
-  const { searchResults } = useOutletContext();
   const normalizeRole = (value) => {
     const raw = String(value || "").toLowerCase();
     if (raw === "admin") return "superadmin";
@@ -73,7 +85,13 @@ export default function ManageUsers() {
           : Promise.resolve(null)
       ]);
 
-      setUsers(usersRes.data || []);
+      const userRows = Array.isArray(usersRes.data) ? usersRes.data : [];
+      setUsers(
+        userRows.map((user) => ({
+          ...user,
+          department: normalizeDepartment(user?.department),
+        }))
+      );
       setUserStats(statsRes.data || {});
       if (passwordRes) {
         setPasswordRequests(passwordRes.data || []);
@@ -140,7 +158,7 @@ export default function ManageUsers() {
     try {
       const displayName = name || (email && email.split('@')[0]) || "";
       return displayName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
-    } catch (error) {
+    } catch {
       return "U"; // Default to "U" for User if anything fails
     }
   };
@@ -178,7 +196,8 @@ export default function ManageUsers() {
     return users.filter(user => {
       const matchesSearch = !searchTerm ||
         user.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        user.email?.toLowerCase().includes(searchTerm.toLowerCase());
+        user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        user.department?.toLowerCase().includes(searchTerm.toLowerCase());
 
       const matchesRole = !roleFilter || normalizeRole(user.role) === roleFilter;
       const matchesStatus = !statusFilter ||
@@ -261,6 +280,56 @@ export default function ManageUsers() {
     }
   };
 
+  const updateUserFieldDraft = (targetUserId, field, value) => {
+    setUsers((prev) =>
+      prev.map((u) =>
+        String(u._id) === String(targetUserId)
+          ? { ...u, [field]: value }
+          : u
+      )
+    );
+  };
+
+  const updateUserDetails = async (user) => {
+    const nextName = String(user?.name || "").trim();
+    const nextDepartment = normalizeDepartment(user?.department);
+    if (!nextDepartment) {
+      alert(`Department must be one of: ${DEPARTMENT_OPTIONS.join(", ")}`);
+      return;
+    }
+
+    setSavingUserId(String(user._id));
+    try {
+      await axios.patch(
+        `${BACKEND_URL}/users/${user._id}`,
+        {
+          userId,
+          role,
+          name: nextName,
+          department: nextDepartment,
+        },
+        {
+          params: {
+            role,
+            userId: userId || "",
+            name: nextName,
+            department: nextDepartment,
+          },
+          headers: {
+            "Content-Type": "application/json",
+          },
+        }
+      );
+      alert("User details updated.");
+      fetchUsers();
+    } catch (err) {
+      console.error("Failed to update user details:", err);
+      alert(err.response?.data?.error || "Failed to update user details.");
+    } finally {
+      setSavingUserId("");
+    }
+  };
+
   // Approve password change request
   const approvePasswordRequest = async (requestId) => {
     if (!window.confirm("Approve this password change request?")) return;
@@ -299,11 +368,19 @@ export default function ManageUsers() {
       alert("Email and password are required.");
       return;
     }
+    const normalizedDepartment = normalizeDepartment(newUser.department);
+    if (!normalizedDepartment) {
+      alert(`Department must be one of: ${DEPARTMENT_OPTIONS.join(", ")}`);
+      return;
+    }
 
     try {
-      await axios.post(`${BACKEND_URL}/admin/users?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`, newUser);
+      await axios.post(
+        `${BACKEND_URL}/admin/users?role=${encodeURIComponent(role)}&userId=${encodeURIComponent(userId || "")}`,
+        { ...newUser, department: normalizedDepartment }
+      );
       alert("User added successfully!");
-      setNewUser({ email: "", password: "", name: "", role: "faculty" });
+      setNewUser({ email: "", password: "", name: "", department: "", role: "faculty" });
       setShowAddUserModal(false);
       fetchUsers();
     } catch (err) {
@@ -354,7 +431,13 @@ export default function ManageUsers() {
     try {
       if (fileType === 'application/json') {
         const data = JSON.parse(content);
-        return Array.isArray(data) ? data : [data];
+        const rows = Array.isArray(data) ? data : [data];
+        return rows.map((row, index) => ({
+          ...row,
+          role: row?.role || "faculty",
+          department: normalizeDepartment(row?.department),
+          lineNumber: row?.lineNumber || index + 1
+        }));
       } else if (fileType.includes('csv') || fileType.includes('excel')) {
         // Simple CSV parsing (assuming first row is headers)
         const lines = content.split('\n').filter(line => line.trim());
@@ -364,6 +447,8 @@ export default function ManageUsers() {
         const emailIndex = headers.indexOf('email');
         const passwordIndex = headers.indexOf('password');
         const nameIndex = headers.indexOf('name');
+        const roleIndex = headers.indexOf('role');
+        const departmentIndex = headers.indexOf('department');
 
         if (emailIndex === -1 || passwordIndex === -1) {
           throw new Error("CSV must contain 'email' and 'password' columns");
@@ -375,7 +460,8 @@ export default function ManageUsers() {
             email: values[emailIndex],
             password: values[passwordIndex],
             name: nameIndex >= 0 ? values[nameIndex] : '',
-            role: 'faculty',
+            department: normalizeDepartment(departmentIndex >= 0 ? values[departmentIndex] : ''),
+            role: roleIndex >= 0 ? values[roleIndex] || "faculty" : 'faculty',
             lineNumber: index + 2
           };
         });
@@ -628,7 +714,7 @@ export default function ManageUsers() {
                     <input
                       type="text"
                       className="form-control"
-                      placeholder="Search by name or email..."
+                      placeholder="Search by name, email, or department..."
                       value={searchTerm}
                       onChange={(e) => setSearchTerm(e.target.value)}
                     />
@@ -713,6 +799,7 @@ export default function ManageUsers() {
                     <tr>
                       <th>User</th>
                       <th>Email</th>
+                      <th>Department</th>
                       <th>Role</th>
                       <th>Status</th>
                       <th>Joined</th>
@@ -722,7 +809,7 @@ export default function ManageUsers() {
                   <tbody>
                     {filteredUsers.length === 0 ? (
                       <tr>
-                        <td colSpan="6" className="text-center text-muted py-4">
+                        <td colSpan="7" className="text-center text-muted py-4">
                           <FaUsers className="me-2" size={24} />
                           No users match your filters
                         </td>
@@ -736,7 +823,14 @@ export default function ManageUsers() {
                                 {getUserInitials(user.name, user.email)}
                               </div>
                               <div>
-                                <strong className="text-primary">{user.name || "N/A"}</strong>
+                                <input
+                                  type="text"
+                                  className="form-control form-control-sm"
+                                  value={user.name || ""}
+                                  onChange={(e) => updateUserFieldDraft(user._id, "name", e.target.value)}
+                                  placeholder="Full name"
+                                  style={{ minWidth: "180px" }}
+                                />
                               </div>
                             </div>
                           </td>
@@ -745,6 +839,21 @@ export default function ManageUsers() {
                               <FaEnvelope className="me-1 text-muted" />
                               {user.email}
                             </a>
+                          </td>
+                          <td>
+                            <select
+                              className="form-select form-select-sm"
+                              value={user.department || ""}
+                              onChange={(e) => updateUserFieldDraft(user._id, "department", e.target.value)}
+                              style={{ minWidth: "180px" }}
+                            >
+                              <option value="">Select department</option>
+                              {DEPARTMENT_OPTIONS.map((dep) => (
+                                <option key={dep} value={dep}>
+                                  {dep}
+                                </option>
+                              ))}
+                            </select>
                           </td>
                           <td>
                             <div className="d-flex align-items-center">
@@ -772,7 +881,16 @@ export default function ManageUsers() {
                             </small>
                           </td>
                           <td className="text-center">
-                            <div className="btn-group">
+                            <div className="d-flex flex-column flex-sm-row justify-content-center gap-2">
+                              <button
+                                className="btn btn-sm btn-outline-primary"
+                                onClick={() => updateUserDetails(user)}
+                                disabled={savingUserId === String(user._id)}
+                                title="Save name and department"
+                              >
+                                <FaSave className="me-1" />
+                                {savingUserId === String(user._id) ? "Saving..." : "Save"}
+                              </button>
                               {user.active !== false ? (
                                 <button
                                   className="btn btn-sm btn-outline-danger"
@@ -971,6 +1089,22 @@ export default function ManageUsers() {
                     />
                   </div>
                   <div className="mb-3">
+                    <label className="form-label">Department</label>
+                    <select
+                      className="form-select"
+                      value={newUser.department}
+                      onChange={(e) => setNewUser({ ...newUser, department: e.target.value })}
+                      required
+                    >
+                      <option value="">Select department</option>
+                      {DEPARTMENT_OPTIONS.map((dep) => (
+                        <option key={dep} value={dep}>
+                          {dep}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="mb-3">
                     <label className="form-label">Role</label>
                     <select
                       className="form-select"
@@ -994,7 +1128,7 @@ export default function ManageUsers() {
                 <button
                   className="btn btn-primary"
                   onClick={addUser}
-                  disabled={!newUser.email || !newUser.password}
+                  disabled={!newUser.email || !newUser.password || !newUser.department.trim()}
                 >
                   <FaUserPlus className="me-2" />
                   Add User
@@ -1025,9 +1159,9 @@ export default function ManageUsers() {
                 <div className="alert alert-info">
                   <strong>Supported Formats:</strong> JSON, CSV, Excel files
                   <br />
-                  <strong>Required Columns:</strong> email, password
+                  <strong>Required Columns:</strong> email, password, department
                   <br />
-                  <strong>Optional Columns:</strong> name
+                  <strong>Optional Columns:</strong> name, role
                   <br />
                   <strong>Default Role:</strong> faculty
                 </div>
@@ -1055,6 +1189,7 @@ export default function ManageUsers() {
                             <th>Password</th>
                             <th>Name</th>
                             <th>Role</th>
+                            <th>Department</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1065,11 +1200,12 @@ export default function ManageUsers() {
                               <td>••••••••</td>
                               <td>{user.name || "—"}</td>
                               <td>{user.role}</td>
+                              <td>{user.department || "Missing"}</td>
                             </tr>
                           ))}
                           {bulkUsers.length > 10 && (
                             <tr>
-                              <td colSpan="5" className="text-muted text-center">
+                              <td colSpan="6" className="text-muted text-center">
                                 ... and {bulkUsers.length - 10} more users
                               </td>
                             </tr>

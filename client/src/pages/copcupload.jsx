@@ -19,6 +19,7 @@ import {
 import { BACKEND_URL } from "../config";
 import UploadModal from "../components/UploadModal";
 import { isExternalFileDrag, uploadDroppedEntries } from "../utils/dropUpload";
+import { useSearchParams } from "react-router-dom";
 
 const workflowStatusMeta = (status) => {
   const key = String(status || "").toLowerCase();
@@ -37,6 +38,21 @@ const reviewerStatusMeta = (status) => {
   if (key === "pending") return { label: "Pending", className: "text-warning" };
   if (key === "not_required") return { label: "Not Required", className: "text-muted" };
   return { label: "N/A", className: "text-muted" };
+};
+
+const LEGACY_TASK_STATUS_MAP = {
+  not_started: "pending",
+  complete: "approved",
+};
+
+const normalizeTaskChecklistStatus = (status) => {
+  const key = String(status || "").toLowerCase();
+  return LEGACY_TASK_STATUS_MAP[key] || key || "pending";
+};
+
+const isChecklistTaskDone = (task) => {
+  const status = normalizeTaskChecklistStatus(task?.status);
+  return status === "approved" || Number(task?.percentage || 0) >= 100;
 };
 
 const isFullyApproved = (file) => {
@@ -63,6 +79,9 @@ const formatFileSize = (bytes = 0) => {
 };
 
 export default function CopcUploadPage() {
+  const [searchParams] = useSearchParams();
+  const requestedProgramId = String(searchParams.get("programId") || "");
+  const requestedFolderId = String(searchParams.get("folderId") || "");
   const userId = localStorage.getItem("userId");
   const role = localStorage.getItem("role") || "faculty";
 
@@ -100,6 +119,7 @@ export default function CopcUploadPage() {
   const CHECKLIST_PANEL_TOP = 92;
   const CHECKLIST_PANEL_RIGHT = 18;
   const CHECKLIST_BOUNDARY_PADDING = 8;
+  const deepLinkConsumedRef = useRef(false);
   const checklistCardRef = useRef(null);
   const checklistDragOffsetRef = useRef({ x: 0, y: 0 });
   const checklistDraggingRef = useRef(false);
@@ -177,7 +197,7 @@ export default function CopcUploadPage() {
       output.push({
         _id: task?._id || `${task?.title || "task"}-${depth}`,
         title: task?.title || "Untitled Task",
-        status: task?.status || "not_started",
+        status: normalizeTaskChecklistStatus(task?.status),
         percentage: Number(task?.percentage || 0),
         depth,
       });
@@ -263,7 +283,7 @@ export default function CopcUploadPage() {
   const checklistStats = useMemo(() => {
     const tasks = checklistSections.flatMap((section) => section.tasks || []);
     const total = tasks.length;
-    const completed = tasks.filter((task) => task.status === "complete" || Number(task.percentage || 0) >= 100).length;
+    const completed = tasks.filter((task) => isChecklistTaskDone(task)).length;
     return { total, completed };
   }, [checklistSections]);
 
@@ -279,8 +299,14 @@ export default function CopcUploadPage() {
     });
     const list = Array.isArray(data) ? data : [];
     setPrograms(list);
-    if (!selectedProgramId && list.length > 0) {
-      setSelectedProgramId(String(list[0]._id));
+    const requestedExists = requestedProgramId && list.some((item) => String(item._id) === requestedProgramId);
+    const selectedExists = selectedProgramId && list.some((item) => String(item._id) === String(selectedProgramId));
+    if (requestedExists) {
+      setSelectedProgramId(requestedProgramId);
+      return;
+    }
+    if (!selectedExists) {
+      setSelectedProgramId(list.length > 0 ? String(list[0]._id) : "");
     }
   };
 
@@ -386,7 +412,17 @@ export default function CopcUploadPage() {
 
       const uploadableIds = new Set(uploadable.map((f) => String(f._id)));
       setFolders(uploadable);
+      const shouldApplyDeepLink =
+        !deepLinkConsumedRef.current &&
+        !!requestedFolderId &&
+        (!requestedProgramId || String(programId) === String(requestedProgramId));
+      if (shouldApplyDeepLink) {
+        deepLinkConsumedRef.current = true;
+      }
       setCurrentFolderId((prev) => {
+        if (shouldApplyDeepLink && uploadableIds.has(String(requestedFolderId))) {
+          return String(requestedFolderId);
+        }
         if (!preserveCurrentFolder || !prev) return null;
         return uploadableIds.has(String(prev)) ? prev : null;
       });
@@ -504,6 +540,16 @@ export default function CopcUploadPage() {
     loadPrograms().catch(() => setPrograms([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!requestedProgramId) return;
+    const exists = programs.some((item) => String(item._id) === requestedProgramId);
+    if (exists) setSelectedProgramId(requestedProgramId);
+  }, [requestedProgramId, programs]);
+
+  useEffect(() => {
+    deepLinkConsumedRef.current = false;
+  }, [requestedProgramId, requestedFolderId]);
 
   useEffect(() => {
     if (!selectedProgramId) return;
@@ -701,6 +747,14 @@ export default function CopcUploadPage() {
       {selectedProgramId && (
         <div className="alert alert-light border py-2 px-3 small mb-3">
           Step 1: select a program. Step 2: open a folder. Step 3: click upload.
+        </div>
+      )}
+
+      {selectedProgramId && (
+        <div className="alert alert-warning py-2 px-3 small mb-3">
+          COPC file naming required inside COPC folders:{" "}
+          <code>[College]_[Area#]_[DocName]_[Date].pdf</code>{" "}
+          (Example: <code>COT_Area04_IT_Lab_Inventory_2026-03-19.pdf</code>)
         </div>
       )}
 
@@ -953,12 +1007,12 @@ export default function CopcUploadPage() {
                         {section.tasks.map((task) => (
                           <div key={`tsk-${section.folder._id}-${task._id}-${task.depth}`} className="d-flex align-items-center gap-2 small">
                             <span style={{ width: `${task.depth * 12}px` }} />
-                            {task.status === "complete" ? (
+                            {isChecklistTaskDone(task) ? (
                               <FaCheckSquare className="text-success" />
                             ) : (
                               <FaRegSquare className="text-muted" />
                             )}
-                            <span className={task.status === "complete" ? "text-success" : ""}>{task.title}</span>
+                            <span className={isChecklistTaskDone(task) ? "text-success" : ""}>{task.title}</span>
                           </div>
                         ))}
                       </div>

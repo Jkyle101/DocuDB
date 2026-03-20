@@ -149,11 +149,17 @@ export default function CopcEvaluationPage() {
     window.open(url, "_blank");
   };
 
+  const goBackToDashboard = () => {
+    const params = new URLSearchParams({ tab: "workflow" });
+    if (selectedProgramId) params.set("programId", String(selectedProgramId));
+    navigate(`/copc-dashboard?${params.toString()}`);
+  };
+
   return (
     <div className="container-fluid py-3 file-manager-container">
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <div className="d-flex align-items-center gap-2">
-          <button className="btn btn-outline-secondary" onClick={() => navigate("/copc-workflow")}>
+          <button className="btn btn-outline-secondary" onClick={goBackToDashboard}>
             <FaArrowLeft className="me-1" /> Back
           </button>
           <h4 className="mb-0">Evaluation Stage</h4>
@@ -221,7 +227,7 @@ export default function CopcEvaluationPage() {
                 <div className="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
                   <div>
                     <div className="fw-semibold">{workflow.program.code} - {workflow.program.name}</div>
-                    <div className="small text-muted">{workflow.program.department || "Department N/A"} | AY {workflow.program.year || "N/A"}</div>
+                    <div className="small text-muted">{workflow.program.description || "No description"} | AY {workflow.program.year || "N/A"}</div>
                   </div>
                   <div className="d-flex gap-2 flex-wrap">
                     <span className="badge text-bg-light border">Overall Compliance: {Math.round(workflow.overallCompliance || 0)}%</span>

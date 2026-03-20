@@ -195,6 +195,159 @@ function normalizeRole(role) {
   return value;
 }
 
+const DEPARTMENT_CODES = ["COED", "COT", "COHTM"];
+const DEPARTMENT_CODE_SET = new Set(DEPARTMENT_CODES);
+
+function normalizeDepartmentCode(value) {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw) return "";
+  if (DEPARTMENT_CODE_SET.has(raw)) return raw;
+
+  const collapsed = raw.replace(/[^A-Z0-9]/g, "");
+  if (collapsed.includes("COED") || collapsed.includes("EDUCATION")) return "COED";
+  if (collapsed.includes("COHTM") || collapsed.includes("HOSPITALITY") || collapsed.includes("TOURISM")) return "COHTM";
+  if (collapsed.includes("COT") || collapsed.includes("TECHNOLOGY")) return "COT";
+  return "";
+}
+
+function cleanObjectIdList(value) {
+  return Array.from(
+    new Set(
+      (Array.isArray(value) ? value : [])
+        .map((entry) => entry?._id?.toString?.() || entry?.toString?.())
+        .filter(Boolean)
+    )
+  );
+}
+
+async function resolveCopcUploaderAssignments(uploaders = [], uploaderGroups = []) {
+  const directUploaderIds = cleanObjectIdList(uploaders);
+  const requestedGroupIds = cleanObjectIdList(uploaderGroups);
+
+  if (!requestedGroupIds.length) {
+    return { uploaderIds: directUploaderIds, uploaderGroupIds: [] };
+  }
+
+  const groups = await Group.find({ _id: { $in: requestedGroupIds } })
+    .select("_id name members")
+    .lean();
+
+  const validDepartmentGroups = groups.filter((group) => normalizeDepartmentCode(group?.name));
+  const validGroupIds = validDepartmentGroups.map((group) => String(group?._id || ""));
+  const invalidGroupIds = requestedGroupIds.filter((id) => !validGroupIds.includes(String(id)));
+  if (invalidGroupIds.length > 0) {
+    throw new Error(`Invalid uploader department group(s): ${invalidGroupIds.join(", ")}`);
+  }
+
+  const memberIds = validDepartmentGroups.flatMap((group) =>
+    (Array.isArray(group?.members) ? group.members : [])
+      .map((memberId) => memberId?._id?.toString?.() || memberId?.toString?.())
+      .filter(Boolean)
+  );
+
+  return {
+    uploaderIds: Array.from(new Set([...directUploaderIds, ...memberIds])),
+    uploaderGroupIds: validGroupIds,
+  };
+}
+
+async function resolveDepartmentGroupCreatorId(preferredUserId = null) {
+  if (preferredUserId) {
+    const preferred = await UserModel.findById(preferredUserId).select("_id").lean();
+    if (preferred?._id) return preferred._id;
+  }
+
+  const superadmin = await UserModel.findOne({ role: "superadmin" })
+    .sort({ createdAt: 1 })
+    .select("_id")
+    .lean();
+  if (superadmin?._id) return superadmin._id;
+
+  const fallback = await UserModel.findOne({})
+    .sort({ createdAt: 1 })
+    .select("_id")
+    .lean();
+  return fallback?._id || null;
+}
+
+async function ensureDepartmentGroupsExist(preferredCreatorId = null) {
+  const creatorId = await resolveDepartmentGroupCreatorId(preferredCreatorId);
+  const groupsByCode = new Map();
+  let createdCount = 0;
+
+  for (const code of DEPARTMENT_CODES) {
+    const regex = new RegExp(`^${escapeRegexForExactMatch(code)}$`, "i");
+    let group = await Group.findOne({ name: regex });
+
+    if (!group && creatorId) {
+      group = await Group.create({
+        name: code,
+        description: `Department group for ${code}`,
+        members: [],
+        leaders: [],
+        createdBy: creatorId,
+        notifications: [],
+        announcements: [],
+        sharedFiles: [],
+        sharedFolders: [],
+      });
+      createdCount += 1;
+      createLog("CREATE_DEPARTMENT_GROUP", creatorId, `Created department group "${code}"`);
+    }
+
+    if (group) groupsByCode.set(code, group);
+  }
+
+  return { groupsByCode, createdCount };
+}
+
+async function applyDepartmentGroupMembership(userId, departmentValue, options = {}) {
+  if (!userId) return { targetDepartment: "", applied: false };
+
+  const targetDepartment = normalizeDepartmentCode(departmentValue);
+  const groupsByCode =
+    options.groupsByCode instanceof Map
+      ? options.groupsByCode
+      : (await ensureDepartmentGroupsExist(options.actorId || userId)).groupsByCode;
+
+  const allGroups = DEPARTMENT_CODES.map((code) => groupsByCode.get(code)).filter(Boolean);
+  if (!allGroups.length) return { targetDepartment, applied: false };
+
+  const targetGroup = targetDepartment ? groupsByCode.get(targetDepartment) : null;
+  const targetGroupId = targetGroup?._id?.toString?.() || "";
+  const nonTargetGroupIds = allGroups
+    .map((group) => group?._id?.toString?.())
+    .filter((id) => id && id !== targetGroupId);
+
+  if (nonTargetGroupIds.length > 0) {
+    await Group.updateMany(
+      { _id: { $in: nonTargetGroupIds } },
+      { $pull: { members: userId, leaders: userId } }
+    );
+  }
+
+  if (targetGroupId) {
+    await Group.updateOne({ _id: targetGroupId }, { $addToSet: { members: userId } });
+  }
+
+  return { targetDepartment, applied: true };
+}
+
+async function syncDepartmentGroupsForAllUsers(preferredCreatorId = null) {
+  const { groupsByCode, createdCount } = await ensureDepartmentGroupsExist(preferredCreatorId);
+  if (!groupsByCode.size) return { createdCount, syncedCount: 0 };
+
+  const users = await UserModel.find({}).select("_id department").lean();
+  let syncedCount = 0;
+
+  for (const user of users) {
+    await applyDepartmentGroupMembership(user?._id, user?.department, { groupsByCode });
+    syncedCount += 1;
+  }
+
+  return { createdCount, syncedCount };
+}
+
 async function resolveActorRole(userId, claimedRole) {
   const claimed = normalizeRole(claimedRole);
   if (!userId) return claimed;
@@ -260,29 +413,282 @@ function isReadOnlyReviewerRole(role) {
   return READ_ONLY_REVIEWER_ROLES.has(normalizeRole(role));
 }
 
+const TASK_STATUS_PERCENTAGE = {
+  pending: 0,
+  in_progress: 50,
+  for_review: 75,
+  approved: 100,
+  rejected: 35,
+};
+
+const LEGACY_TO_NEW_TASK_STATUS = {
+  not_started: "pending",
+  in_progress: "in_progress",
+  complete: "approved",
+};
+
+const TASK_STATUS_TRANSITIONS = {
+  pending: new Set(["in_progress"]),
+  in_progress: new Set(["for_review"]),
+  for_review: new Set(["approved", "rejected"]),
+  rejected: new Set(["in_progress"]),
+  approved: new Set([]),
+};
+
+const TASK_STATUS_SET = new Set(Object.keys(TASK_STATUS_PERCENTAGE));
+const TASK_TYPE_SET = new Set(["document", "review", "approval", "monitoring", "general"]);
+const TASK_PRIORITY_SET = new Set(["low", "medium", "high", "critical"]);
+const TASK_ASSIGNED_ROLE_SET = new Set(["faculty", "dept_chair", "qa_admin", "superadmin", "evaluator"]);
+
+function mapTaskStatusToLegacy(status = "pending") {
+  if (status === "approved") return "complete";
+  if (status === "pending") return "not_started";
+  return "in_progress";
+}
+
+function normalizeTaskStatus(rawStatus, fallback = "pending") {
+  const raw = String(rawStatus || "").trim().toLowerCase();
+  const mapped = LEGACY_TO_NEW_TASK_STATUS[raw] || raw;
+  if (TASK_STATUS_SET.has(mapped)) return mapped;
+  return fallback;
+}
+
+function inferTaskType(title = "", description = "", scope = "") {
+  const text = `${title} ${description} ${scope}`.toLowerCase();
+  if (
+    /\b(upload|replace|version|rename|organize|file|document)\b/.test(text) &&
+    !/\b(review|approve|reject|audit|monitor|expired|missing|validate)\b/.test(text)
+  ) {
+    return "document";
+  }
+  if (/\b(review|check|validate|verify|completeness|compliance)\b/.test(text)) return "review";
+  if (/\b(approve|approval|reject|revision|final)\b/.test(text)) return "approval";
+  if (/\b(track|monitor|audit|expired|missing|deadline|overdue)\b/.test(text)) return "monitoring";
+  return "general";
+}
+
+function normalizeTaskType(rawType, title = "", description = "", scope = "") {
+  const raw = String(rawType || "").trim().toLowerCase();
+  if (TASK_TYPE_SET.has(raw)) return raw;
+  return inferTaskType(title, description, scope);
+}
+
+function normalizeTaskPriority(rawPriority, fallback = "medium") {
+  const raw = String(rawPriority || "").trim().toLowerCase();
+  if (TASK_PRIORITY_SET.has(raw)) return raw;
+  return fallback;
+}
+
+function normalizeTaskAssignedRole(rawAssignedRole, fallback = "faculty") {
+  const normalized = normalizeRole(rawAssignedRole);
+  if (TASK_ASSIGNED_ROLE_SET.has(normalized)) return normalized;
+  return fallback;
+}
+
+function toTaskDate(value, fallback = null) {
+  if (!value) return fallback;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return fallback;
+  return parsed;
+}
+
+function buildTaskReferenceId(task = {}) {
+  const explicit = String(task.taskId || "").trim();
+  if (explicit) return explicit;
+  const objectId = task?._id?.toString?.() || "";
+  if (!objectId) return `T-${String(Date.now())}`;
+  return `T-${objectId.slice(-6).toUpperCase()}`;
+}
+
+function normalizeTaskAttachments(attachments = []) {
+  return (Array.isArray(attachments) ? attachments : [])
+    .map((entry) => {
+      const name = String(entry?.name || "").trim();
+      const url = String(entry?.url || "").trim();
+      const fileId = entry?.fileId || null;
+      const uploadedBy = entry?.uploadedBy || null;
+      const uploadedAt = toTaskDate(entry?.uploadedAt, new Date());
+      if (!name && !url && !fileId) return null;
+      return {
+        fileId,
+        name,
+        url,
+        uploadedBy,
+        uploadedAt,
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeTaskComments(comments = []) {
+  return (Array.isArray(comments) ? comments : [])
+    .map((entry) => {
+      const message = String(entry?.message || "").trim();
+      if (!message) return null;
+      return {
+        message,
+        createdBy: entry?.createdBy || null,
+        mentions: cleanObjectIdList(entry?.mentions),
+        attachments: normalizeTaskAttachments(entry?.attachments),
+        createdAt: toTaskDate(entry?.createdAt, new Date()),
+        updatedAt: toTaskDate(entry?.updatedAt, null),
+      };
+    })
+    .filter(Boolean);
+}
+
+function normalizeTaskHistory(history = []) {
+  return (Array.isArray(history) ? history : [])
+    .map((entry) => {
+      const action = String(entry?.action || "").trim();
+      if (!action) return null;
+      return {
+        action,
+        fromStatus: normalizeTaskStatus(entry?.fromStatus, ""),
+        toStatus: normalizeTaskStatus(entry?.toStatus, ""),
+        notes: String(entry?.notes || "").trim(),
+        actor: entry?.actor || null,
+        at: toTaskDate(entry?.at, new Date()),
+      };
+    })
+    .filter(Boolean);
+}
+
+function buildTaskHistoryEntry({
+  action = "",
+  fromStatus = "",
+  toStatus = "",
+  notes = "",
+  actor = null,
+} = {}) {
+  const trimmed = String(action || "").trim();
+  if (!trimmed) return null;
+  return {
+    action: trimmed,
+    fromStatus: normalizeTaskStatus(fromStatus, ""),
+    toStatus: normalizeTaskStatus(toStatus, ""),
+    notes: String(notes || "").trim(),
+    actor: actor || null,
+    at: new Date(),
+  };
+}
+
+function isTaskOverdue(task = {}, now = new Date()) {
+  const dueDate = toTaskDate(task?.dueDate, null);
+  if (!dueDate) return false;
+  const status = normalizeTaskStatus(task?.status, "pending");
+  if (status === "approved") return false;
+  return dueDate.getTime() < now.getTime();
+}
+
+function isTaskStatusTransitionAllowed(currentStatus, nextStatus, actorRole, options = {}) {
+  const from = normalizeTaskStatus(currentStatus, "pending");
+  const to = normalizeTaskStatus(nextStatus, from);
+  if (from === to) return true;
+
+  if (options?.allowAdminOverride) {
+    return TASK_STATUS_SET.has(to);
+  }
+  if (!TASK_STATUS_TRANSITIONS[from] || !TASK_STATUS_TRANSITIONS[from].has(to)) {
+    return false;
+  }
+
+  const role = normalizeRole(actorRole);
+  if (role === "superadmin") return true;
+  if (role === "evaluator") return false;
+  if (role === "faculty") {
+    return (from === "pending" && to === "in_progress") ||
+      (from === "in_progress" && to === "for_review") ||
+      (from === "rejected" && to === "in_progress");
+  }
+  if (role === "dept_chair") {
+    return (from === "for_review" && (to === "approved" || to === "rejected")) ||
+      (from === "rejected" && to === "in_progress") ||
+      (from === "pending" && to === "in_progress") ||
+      (from === "in_progress" && to === "for_review");
+  }
+  if (role === "qa_admin") {
+    return (from === "for_review" && (to === "approved" || to === "rejected")) ||
+      (from === "rejected" && to === "in_progress") ||
+      (from === "pending" && to === "in_progress") ||
+      (from === "in_progress" && to === "for_review");
+  }
+  return false;
+}
+
 function normalizeTaskNode(task = {}) {
-  const allowedStatuses = new Set(["not_started", "in_progress", "complete"]);
-  const status = allowedStatuses.has(task.status) ? task.status : "not_started";
-  const percentage = Number.isFinite(Number(task.percentage))
-    ? Math.max(0, Math.min(100, Number(task.percentage)))
-    : status === "complete"
-      ? 100
-      : status === "in_progress"
-        ? 50
-        : 0;
+  const status = normalizeTaskStatus(task.status, "pending");
+  const title = String(task.title || "").trim() || "Untitled Task";
+  const description = String(task.description || "");
+  const scope = String(task.scope || "");
+  const folderPath = String(task.folderPath || scope || "");
+  const taskType = normalizeTaskType(task.taskType, title, description, scope);
+  const priority = normalizeTaskPriority(task.priority, "medium");
+  const assignedRole = normalizeTaskAssignedRole(task.assignedRole, "faculty");
+  const assignedUploaders = cleanObjectIdList(task.assignedUploaders || []);
+  const assignedProgramChairs = cleanObjectIdList(task.assignedProgramChairs || []);
+  const assignedQaOfficers = cleanObjectIdList(task.assignedQaOfficers || []);
+  const assignedTo = toObjectIdString(task?.assignedTo) || (assignedUploaders[0] || null);
+  const dueDate = toTaskDate(task.dueDate, null);
+  const createdAt = toTaskDate(task.createdAt, new Date());
+  const updatedAt = toTaskDate(task.updatedAt, new Date());
+
+  const rawPercentage = Number(task.percentage);
+  let percentage = Number.isFinite(rawPercentage)
+    ? Math.max(0, Math.min(100, rawPercentage))
+    : Number(TASK_STATUS_PERCENTAGE[status] || 0);
+  if (status === "approved") percentage = 100;
+  if (status === "pending" && percentage > 50) percentage = Number(TASK_STATUS_PERCENTAGE.pending);
+
+  const comments = normalizeTaskComments(task.comments);
+  const history = normalizeTaskHistory(task.history);
+  const attachments = normalizeTaskAttachments(task.attachments);
+  const recurrence = task?.recurrence && typeof task.recurrence === "object"
+    ? {
+        enabled: !!task.recurrence.enabled,
+        frequency: String(task.recurrence.frequency || "").toLowerCase(),
+        interval: Number(task.recurrence.interval || 1) > 0 ? Number(task.recurrence.interval || 1) : 1,
+        nextDueDate: toTaskDate(task.recurrence.nextDueDate, null),
+        lastGeneratedAt: toTaskDate(task.recurrence.lastGeneratedAt, null),
+      }
+    : {
+        enabled: false,
+        frequency: "",
+        interval: 1,
+        nextDueDate: null,
+        lastGeneratedAt: null,
+      };
 
   return {
     _id: task._id,
-    title: String(task.title || "").trim() || "Untitled Task",
-    description: String(task.description || ""),
+    taskId: buildTaskReferenceId(task),
+    taskType,
+    title,
+    description,
+    folderPath,
+    assignedTo,
+    assignedRole,
+    priority,
+    dueDate,
+    createdBy: task?.createdBy || null,
+    attachments,
+    comments,
+    history,
+    source: ["manual", "folder_auto", "recurring"].includes(String(task?.source || "").toLowerCase())
+      ? String(task.source).toLowerCase()
+      : "manual",
+    recurrence,
     percentage,
     status,
-    scope: String(task.scope || ""),
+    legacyStatus: mapTaskStatusToLegacy(status),
+    scope,
     checks: Array.isArray(task.checks) ? task.checks.filter(Boolean).map(String) : [],
-    assignedUploaders: Array.isArray(task.assignedUploaders) ? task.assignedUploaders : [],
-    assignedProgramChairs: Array.isArray(task.assignedProgramChairs) ? task.assignedProgramChairs : [],
-    assignedQaOfficers: Array.isArray(task.assignedQaOfficers) ? task.assignedQaOfficers : [],
+    assignedUploaders,
+    assignedProgramChairs,
+    assignedQaOfficers,
     children: Array.isArray(task.children) ? task.children.map(normalizeTaskNode) : [],
+    createdAt,
+    updatedAt,
   };
 }
 
@@ -290,16 +696,85 @@ function computeTaskProgress(tasks = []) {
   const normalized = (tasks || []).map(normalizeTaskNode);
   let nodes = 0;
   let total = 0;
+  const counts = {
+    pending: 0,
+    in_progress: 0,
+    for_review: 0,
+    approved: 0,
+    rejected: 0,
+    overdue: 0,
+  };
+  const now = new Date();
   const walk = (arr) => {
     for (const task of arr || []) {
       nodes += 1;
       total += Number(task.percentage || 0);
+      const status = normalizeTaskStatus(task?.status, "pending");
+      if (Object.prototype.hasOwnProperty.call(counts, status)) counts[status] += 1;
+      if (isTaskOverdue(task, now)) counts.overdue += 1;
       walk(task.children || []);
     }
   };
   walk(normalized);
   const progress = nodes ? Number((total / nodes).toFixed(2)) : 0;
-  return { normalized, progress, totalNodes: nodes };
+  return { normalized, progress, totalNodes: nodes, counts };
+}
+
+function computeCopcSummaryByTopFolders(folders = [], rootId) {
+  const rootKey = String(rootId || "");
+  const folderById = new Map();
+  const childrenByParent = new Map();
+
+  for (const folder of folders || []) {
+    const id = String(folder?._id || "");
+    if (!id) continue;
+    folderById.set(id, folder);
+    const parentKey = folder?.parentFolder ? String(folder.parentFolder) : "";
+    if (!childrenByParent.has(parentKey)) childrenByParent.set(parentKey, []);
+    childrenByParent.get(parentKey).push(id);
+  }
+
+  const collectNestedTasks = (folderId, seen = new Set()) => {
+    const key = String(folderId || "");
+    if (!key || seen.has(key)) return [];
+    seen.add(key);
+
+    const folder = folderById.get(key);
+    const ownTasks = Array.isArray(folder?.complianceTasks) ? [...folder.complianceTasks] : [];
+    const childIds = childrenByParent.get(key) || [];
+    for (const childId of childIds) {
+      ownTasks.push(...collectNestedTasks(childId, seen));
+    }
+    return ownTasks;
+  };
+
+  const topFolderIds = (childrenByParent.get(rootKey) || []).sort((a, b) => {
+    const aName = String(folderById.get(a)?.name || "");
+    const bName = String(folderById.get(b)?.name || "");
+    return aName.localeCompare(bName);
+  });
+
+  const summary = topFolderIds.map((folderId) => {
+    const folder = folderById.get(folderId);
+    const nestedTasks = collectNestedTasks(folderId, new Set());
+    const { progress, totalNodes } = computeTaskProgress(nestedTasks);
+    return {
+      folderId: String(folder?._id || folderId || ""),
+      label: String(folder?.name || "Untitled Folder"),
+      percent: totalNodes > 0 ? Number(progress.toFixed(2)) : 0,
+    };
+  });
+
+  const overallCompliance = summary.length
+    ? Number(
+        (
+          summary.reduce((acc, item) => acc + Number(item?.percent || 0), 0) /
+          summary.length
+        ).toFixed(2)
+      )
+    : 0;
+
+  return { summary, overallCompliance };
 }
 
 function findTaskById(tasks = [], taskId) {
@@ -355,7 +830,9 @@ function buildFileWorkflowFromFolder(folder) {
 
 function collectTaskAssignmentUserIds(tasks = [], key = "assignedUploaders", out = new Set()) {
   for (const task of tasks || []) {
-    const ids = Array.isArray(task?.[key]) ? task[key] : [];
+    const ids = key === "assignedTo"
+      ? [task?.assignedTo].filter(Boolean)
+      : (Array.isArray(task?.[key]) ? task[key] : []);
     for (const id of ids) {
       const raw = id?._id?.toString?.() || id?.toString?.();
       if (raw) out.add(raw);
@@ -383,6 +860,7 @@ function collectFolderAssignmentUserIds(folder) {
   collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedUploaders", out);
   collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedProgramChairs", out);
   collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedQaOfficers", out);
+  collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedTo", out);
   return out;
 }
 
@@ -464,18 +942,17 @@ async function canUserAccessCopcProgram(rootFolder, userId, role) {
   if (!innerIds.length) return false;
 
   const target = String(userId);
-  const assignedChild = await Folder.findOne({
+  const descendants = await Folder.find({
     _id: { $in: innerIds },
     deletedAt: null,
-    $or: [
-      { "folderAssignments.uploaders": target },
-      { "folderAssignments.programChairs": target },
-      { "folderAssignments.qaOfficers": target },
-      { "folderAssignments.evaluators": target },
-    ],
-  }).select("_id");
+  }).select("folderAssignments complianceTasks");
 
-  return !!assignedChild;
+  for (const folder of descendants) {
+    const assigned = collectFolderAssignmentUserIds(folder);
+    if (assigned.has(target)) return true;
+  }
+
+  return false;
 }
 
 function canUploadToFolder(folder, userId, role) {
@@ -492,7 +969,8 @@ function canUploadToFolder(folder, userId, role) {
       .filter(Boolean)
   );
   const taskUploaders = collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedUploaders");
-  const restrictedByAssignments = folderUploaders.size > 0 || taskUploaders.size > 0;
+  const directTaskAssignees = collectTaskAssignmentUserIds(folder.complianceTasks || [], "assignedTo");
+  const restrictedByAssignments = folderUploaders.size > 0 || taskUploaders.size > 0 || directTaskAssignees.size > 0;
   const hasComplianceScope =
     !!folder?.complianceProfileKey || Array.isArray(folder?.complianceTasks) && folder.complianceTasks.length > 0;
   if (!restrictedByAssignments && hasComplianceScope) {
@@ -502,7 +980,7 @@ function canUploadToFolder(folder, userId, role) {
   if (!restrictedByAssignments) return true;
 
   const target = userId?.toString?.();
-  return folderUploaders.has(target) || taskUploaders.has(target);
+  return folderUploaders.has(target) || taskUploaders.has(target) || directTaskAssignees.has(target);
 }
 
 function isFileFullyApprovedForCopc(file) {
@@ -526,25 +1004,594 @@ function canRoleEdit(permission) {
   return role === "editor" || role === "owner";
 }
 
-const COPC_DEFAULT_STRUCTURE = [
-  "01 Program Profile",
-  "02 Curriculum",
-  "03 Faculty Credentials",
-  "04 Facilities",
-  "05 Library Resources",
-  "06 Administration",
-  "07 Supporting Documents",
+function cloneFolderTemplate(nodes = []) {
+  return (nodes || []).map((node) => ({
+    ...node,
+    children: cloneFolderTemplate(node.children || []),
+  }));
+}
+
+function formatCopcFolderName(rawName = "") {
+  return String(rawName || "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+const COPC_FOLDER_TREE_TEMPLATE = [
+  {
+    name: "01_Legal_Documents",
+    tasks: [
+      "Upload Charter (RA/City Ordinance)",
+      "Upload SEC / CHED Recognition",
+      "Upload LUDIP document",
+      "Validate authenticity (Admin / QA)",
+      "Tag as Institutional Compliance",
+    ],
+  },
+  {
+    name: "02_Governance",
+    tasks: [
+      "Upload BOT Resolutions",
+      "Upload Organizational Chart",
+      "Upload Administrative Manual",
+      "Version control for updates",
+      "Approval by QA Admin",
+    ],
+  },
+  {
+    name: "03_Physical_Plant",
+    tasks: [
+      "Upload Campus Map",
+      "Upload Fire Safety Certificates",
+      "Upload Sanitary Permits",
+      "Upload Building Plans",
+      "Verify validity dates (expiry tracking)",
+    ],
+  },
+  {
+    name: "04_Student_Services",
+    tasks: [
+      "Upload Admission Manual",
+      "Upload Guidance Records",
+      "Upload Library Development Plan",
+      "Upload Student Handbook",
+      "Ensure latest version is active",
+    ],
+  },
+  {
+    name: "01_COLLEGE_OF_TECHNOLOGY_(COT)",
+    children: [
+      {
+        name: "Area_I_-_Program_Administration",
+        tasks: [
+          "Upload CMO 25 s2015 Compliance",
+          "Upload Program Educational Objectives (PEO)",
+          "Upload Retention and Admission Policies",
+          "Map compliance to CHED standards",
+          "QA validation",
+        ],
+      },
+      {
+        name: "Area_II_-_Faculty",
+        tasks: [
+          "Upload Faculty PDS and CVs",
+          "Upload Transcripts and Diplomas",
+          "Upload Professional Certifications",
+          "Upload Teaching Loads per Semester",
+          "Verify faculty qualifications",
+        ],
+      },
+      {
+        name: "Area_III_-_Curriculum_and_Instruction",
+        tasks: [
+          "Upload Approved Prospectus",
+          "Upload Course Syllabi with OBE Mapping",
+          "Upload Student Outputs and Assessments",
+          "Validate OBE alignment",
+          "Version control syllabi",
+        ],
+      },
+      {
+        name: "Area_IV_-_Laboratories",
+        tasks: [
+          "Upload Lab Inventory (Hardware Specs)",
+          "Upload Software Licenses",
+          "Upload Network Topology and Bandwidth Cert",
+          "Check completeness of lab resources",
+        ],
+      },
+      {
+        name: "Area_V_-_Linkages_and_Internship",
+        tasks: [
+          "Upload MOAs with IT industries",
+          "Upload Internship Manual",
+          "Upload Evaluation Reports",
+          "Track active partnerships",
+        ],
+      },
+    ],
+  },
+  {
+    name: "02_COLLEGE_OF_EDUCATION_(COED)",
+    children: [
+      {
+        name: "Area_I_-_Program_Administration",
+        tasks: [
+          "Upload CMO Compliance",
+          "Upload Program Objectives",
+          "Align with CHED standards",
+        ],
+      },
+      {
+        name: "Area_II_-_Faculty",
+        tasks: [
+          "Upload PRC Licenses",
+          "Upload Graduate Credentials",
+          "Upload Research Publications",
+          "Validate faculty eligibility",
+        ],
+      },
+      {
+        name: "Area_III_-_Curriculum_and_Instruction",
+        tasks: [
+          "Upload Professional Education Syllabi",
+          "Upload Specialization Syllabi",
+          "Upload Instructional Materials",
+          "Check curriculum completeness",
+        ],
+      },
+      {
+        name: "Area_IV_-_Field_Study_and_Practice_Teaching",
+        tasks: [
+          "Upload MOAs with schools",
+          "Upload Student E-Portfolios",
+          "Upload LET Performance Reports",
+          "Analyze board exam performance",
+        ],
+      },
+    ],
+  },
+  {
+    name: "03_COLLEGE_OF_HOSPITALITY_&_TOURISM_MGMT_(CHTM)",
+    children: [
+      {
+        name: "Area_I_-_Program_Administration",
+        tasks: [
+          "Upload CMO Compliance",
+          "Upload Organizational Structure",
+        ],
+      },
+      {
+        name: "Area_II_-_Faculty",
+        tasks: [
+          "Upload Industry Experience Certificates",
+          "Upload TESDA Certifications",
+          "Upload Degree Credentials",
+          "Validate industry relevance",
+        ],
+      },
+      {
+        name: "Area_III_-_Curriculum_and_Instruction",
+        tasks: [
+          "Upload Lab Manuals",
+          "Upload Tourism Syllabi",
+          "Ensure practical alignment",
+        ],
+      },
+      {
+        name: "Area_IV_-_Specialized_Facilities",
+        tasks: [
+          "Upload Kitchen Inventory",
+          "Upload Mock Hotel Photos",
+          "Upload Simulation Room Setup",
+          "Verify facility readiness",
+        ],
+      },
+      {
+        name: "Area_V_-_Practicum_and_Industry",
+        tasks: [
+          "Upload MOAs with hotels/airlines",
+          "Upload Student Logbooks",
+          "Upload Internship Reports",
+          "Track placement performance",
+        ],
+      },
+    ],
+  },
+  {
+    name: "04_RESEARCH_AND_EXTENSION",
+    children: [
+      {
+        name: "01_Research_Manual_&_Policies",
+        tasks: [
+          "Upload research manual",
+          "Update policies regularly",
+          "Approve revisions",
+        ],
+      },
+      {
+        name: "02_Institutional_Research_Agenda",
+        tasks: [
+          "Upload research agenda",
+          "Align with institutional goals",
+          "Monitor implementation",
+        ],
+      },
+      {
+        name: "03_Extension_Program_Narratives",
+        tasks: [
+          "Upload community program reports",
+          "Attach photos/evidence",
+          "Track impact",
+        ],
+      },
+      {
+        name: "04_MoUs_for_Community_Extension",
+        tasks: [
+          "Upload MoUs",
+          "Track active partnerships",
+          "Monitor expiration",
+        ],
+      },
+    ],
+  },
 ];
 
-const COPC_DEFAULT_TASKS = {
-  "01 Program Profile": ["Program mission and vision", "Program rationale", "Program objectives"],
-  "02 Curriculum": ["Curriculum map", "Program outcomes alignment", "Course syllabi and specifications"],
-  "03 Faculty Credentials": ["TOR", "Diploma", "PRC License", "Curriculum Vitae", "Training Certificates"],
-  "04 Facilities": ["Laboratory inventory", "Lab photos", "Facilities utilization"],
-  "05 Library Resources": ["Library holdings", "Digital resources", "Library utilization report"],
-  "06 Administration": ["Organizational chart", "Admin policies", "Academic governance records"],
-  "07 Supporting Documents": ["MOA/MOU", "Extension programs", "Quality improvement plans"],
-};
+function collectCopcTemplateTaskMap(nodes = [], out = new Map()) {
+  for (const node of nodes || []) {
+    if (!node?.name) continue;
+    const nameKey = formatCopcFolderName(node.name);
+    if (Array.isArray(node.tasks) && node.tasks.length > 0) {
+      out.set(nameKey, [...node.tasks]);
+    }
+    if (Array.isArray(node.children) && node.children.length > 0) {
+      collectCopcTemplateTaskMap(node.children, out);
+    }
+  }
+  return out;
+}
+
+function toObjectIdString(value) {
+  return value?._id?.toString?.() || value?.toString?.() || "";
+}
+
+function includesUserInAssignmentList(list = [], userId) {
+  const target = String(userId || "");
+  if (!target) return false;
+  return (Array.isArray(list) ? list : []).some((entry) => toObjectIdString(entry) === target);
+}
+
+function includesUserInAnyGroupMemberList(groupIds = [], userId, groupMemberMap = new Map()) {
+  const target = String(userId || "");
+  if (!target) return false;
+  for (const groupId of Array.isArray(groupIds) ? groupIds : []) {
+    const key = toObjectIdString(groupId);
+    if (!key) continue;
+    const members = groupMemberMap.get(key);
+    if (members && members.has(target)) return true;
+  }
+  return false;
+}
+
+function getFolderAssignmentsForRole(folder, role) {
+  const normalizedRole = normalizeRole(role);
+  const assignments = folder?.folderAssignments || {};
+  if (normalizedRole === "dept_chair") return assignments.programChairs || [];
+  if (normalizedRole === "qa_admin") return assignments.qaOfficers || [];
+  if (normalizedRole === "evaluator") return assignments.evaluators || [];
+  return assignments.uploaders || [];
+}
+
+function getTaskAssignmentsForRole(task, role) {
+  const normalizedRole = normalizeRole(role);
+  const assignedTo = task?.assignedTo ? [task.assignedTo] : [];
+  const assignedRole = normalizeTaskAssignedRole(task?.assignedRole || "");
+  if (normalizedRole === "dept_chair") {
+    const direct = task?.assignedProgramChairs || [];
+    if (direct.length > 0) return direct;
+    return assignedRole === "dept_chair" ? assignedTo : [];
+  }
+  if (normalizedRole === "qa_admin") {
+    const direct = task?.assignedQaOfficers || [];
+    if (direct.length > 0) return direct;
+    return assignedRole === "qa_admin" ? assignedTo : [];
+  }
+  if (normalizedRole === "evaluator" || normalizedRole === "superadmin") return [];
+  const uploaders = task?.assignedUploaders || [];
+  if (uploaders.length > 0) return uploaders;
+  return assignedRole === "faculty" ? assignedTo : [];
+}
+
+function flattenTaskTree(tasks = [], depth = 0, parentTaskId = null, out = []) {
+  for (const task of tasks || []) {
+    const taskId = toObjectIdString(task?._id);
+    out.push({
+      task,
+      taskId,
+      depth,
+      parentTaskId,
+    });
+    flattenTaskTree(task?.children || [], depth + 1, taskId || null, out);
+  }
+  return out;
+}
+
+const COPC_PREDEFINED_TASKS_BY_FOLDER_NAME = collectCopcTemplateTaskMap(
+  cloneFolderTemplate(COPC_FOLDER_TREE_TEMPLATE)
+);
+
+function buildCopcTaskNodes(taskTitles = [], scopeName = "") {
+  return (Array.isArray(taskTitles) ? taskTitles : []).map((taskTitle) =>
+    normalizeTaskNode({
+      title: taskTitle,
+      taskType: inferTaskType(taskTitle, "", scopeName),
+      status: "pending",
+      priority: "high",
+      percentage: TASK_STATUS_PERCENTAGE.pending,
+      scope: String(scopeName || ""),
+      folderPath: String(scopeName || ""),
+      checks: ["complete", "updated", "aligned with CHED standards"],
+      source: "folder_auto",
+    })
+  );
+}
+
+async function createCopcFolderTreeNodes({
+  nodes = [],
+  parentId,
+  ownerId,
+  programKey,
+  baseAssignments,
+  createdFolders,
+}) {
+  for (const node of nodes) {
+    if (!node?.name) continue;
+    const folderName = formatCopcFolderName(node.name);
+    const folderDoc = await Folder.create({
+      name: folderName,
+      owner: ownerId,
+      parentFolder: parentId,
+      permissions: "owner",
+      sharedWith: [],
+      complianceProfileKey: programKey,
+      folderAssignments: baseAssignments,
+      complianceTasks: buildCopcTaskNodes(node.tasks, folderName),
+    });
+    createdFolders.push(folderDoc);
+    if (Array.isArray(node.children) && node.children.length > 0) {
+      await createCopcFolderTreeNodes({
+        nodes: node.children,
+        parentId: folderDoc._id,
+        ownerId,
+        programKey,
+        baseAssignments,
+        createdFolders,
+      });
+    }
+  }
+}
+
+async function migrateLegacyCopcTemplateFolderNames() {
+  const targets = await Folder.find({
+    deletedAt: null,
+    complianceProfileKey: /^COPC_/i,
+    "copc.isProgramRoot": { $ne: true },
+    name: /_/,
+  }).select("_id name");
+
+  if (!targets.length) return 0;
+
+  const operations = [];
+  for (const folder of targets) {
+    const nextName = formatCopcFolderName(folder.name);
+    if (!nextName || nextName === String(folder.name || "")) continue;
+    operations.push({
+      updateOne: {
+        filter: { _id: folder._id },
+        update: { $set: { name: nextName } },
+      },
+    });
+  }
+
+  if (!operations.length) return 0;
+  await Folder.bulkWrite(operations, { ordered: false });
+  return operations.length;
+}
+
+async function backfillCopcPredefinedTasks() {
+  const predefinedNames = Array.from(COPC_PREDEFINED_TASKS_BY_FOLDER_NAME.keys());
+  if (!predefinedNames.length) return 0;
+
+  const folders = await Folder.find({
+    deletedAt: null,
+    complianceProfileKey: /^COPC_/i,
+    "copc.isProgramRoot": { $ne: true },
+    name: { $in: predefinedNames },
+  }).select("_id name complianceTasks");
+
+  if (!folders.length) return 0;
+
+  const operations = [];
+  for (const folder of folders) {
+    const currentTasks = Array.isArray(folder.complianceTasks) ? folder.complianceTasks : [];
+    if (currentTasks.length > 0) continue;
+    const templateTasks = COPC_PREDEFINED_TASKS_BY_FOLDER_NAME.get(String(folder.name || ""));
+    if (!Array.isArray(templateTasks) || !templateTasks.length) continue;
+    operations.push({
+      updateOne: {
+        filter: { _id: folder._id },
+        update: { $set: { complianceTasks: buildCopcTaskNodes(templateTasks, folder.name) } },
+      },
+    });
+  }
+
+  if (!operations.length) return 0;
+  await Folder.bulkWrite(operations, { ordered: false });
+  return operations.length;
+}
+
+function toCopcAreaToken(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num < 0) return null;
+  return `Area${String(Math.floor(num)).padStart(2, "0")}`;
+}
+
+function romanToNumber(raw) {
+  const input = String(raw || "").toUpperCase();
+  if (!input) return null;
+  const values = { I: 1, V: 5, X: 10, L: 50, C: 100 };
+  let total = 0;
+  let prev = 0;
+  for (let i = input.length - 1; i >= 0; i -= 1) {
+    const current = values[input[i]];
+    if (!current) return null;
+    if (current < prev) total -= current;
+    else total += current;
+    prev = current;
+  }
+  return total > 0 ? total : null;
+}
+
+function extractAreaNumberFromFolderName(name) {
+  const value = String(name || "");
+  const areaMatch = value.match(/AREA[_\s-]*(\d{1,2}|[IVXLCDM]+)/i);
+  if (areaMatch?.[1]) {
+    if (/^\d{1,2}$/.test(areaMatch[1])) return Number(areaMatch[1]);
+    const fromRoman = romanToNumber(areaMatch[1]);
+    if (Number.isFinite(fromRoman)) return fromRoman;
+  }
+  const numericPrefix = value.match(/^(\d{1,2})(?:\.\d+)?(?:[_\s-]|$)/);
+  if (numericPrefix?.[1]) return Number(numericPrefix[1]);
+  return null;
+}
+
+function extractCollegeCodeFromFolderName(name) {
+  const value = String(name || "").toUpperCase();
+  if (
+    value.includes("COLLEGE_OF_TECHNOLOGY") ||
+    value.includes("(COT)") ||
+    value.includes("_COT")
+  ) {
+    return "COT";
+  }
+  if (
+    value.includes("COLLEGE_OF_EDUCATION") ||
+    value.includes("(COED)") ||
+    value.includes("_COED")
+  ) {
+    return "COED";
+  }
+  if (
+    value.includes("HOSPITALITY") ||
+    value.includes("TOURISM") ||
+    value.includes("(CHTM)") ||
+    value.includes("_CHTM")
+  ) {
+    return "CHTM";
+  }
+  return null;
+}
+
+function parseCopcFilename(originalName) {
+  const raw = String(originalName || "").trim();
+  const regex =
+    /^([A-Za-z0-9]+)_((?:Area)?\d{1,2})_([A-Za-z0-9][A-Za-z0-9_()&.\-]*)_((?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01]))\.pdf$/i;
+  const match = raw.match(regex);
+  if (!match) return null;
+  const areaDigits = String(match[2]).match(/(\d{1,2})/i);
+  const areaToken = areaDigits?.[1] ? toCopcAreaToken(Number(areaDigits[1])) : null;
+  if (!areaToken) return null;
+  return {
+    collegeCode: String(match[1]).toUpperCase(),
+    areaToken,
+    docName: String(match[3]),
+    dateText: String(match[4]),
+  };
+}
+
+async function getFolderLineage(folderId) {
+  const lineage = [];
+  let cursor = await Folder.findById(folderId).select("name parentFolder");
+  let guard = 0;
+  while (cursor && guard < 240) {
+    guard += 1;
+    lineage.unshift({
+      _id: cursor._id,
+      name: cursor.name,
+      parentFolder: cursor.parentFolder || null,
+    });
+    if (!cursor.parentFolder) break;
+    cursor = await Folder.findById(cursor.parentFolder).select("name parentFolder");
+  }
+  return lineage;
+}
+
+function inferCopcFilenameExpectations(lineage, rootFolder) {
+  let expectedCollege = null;
+  let expectedAreaToken = null;
+  for (let index = lineage.length - 1; index >= 0; index -= 1) {
+    const nodeName = String(lineage[index]?.name || "");
+    if (!expectedCollege) {
+      expectedCollege = extractCollegeCodeFromFolderName(nodeName);
+    }
+    if (!expectedAreaToken) {
+      const areaNumber = extractAreaNumberFromFolderName(nodeName);
+      if (Number.isFinite(areaNumber)) {
+        expectedAreaToken = toCopcAreaToken(areaNumber);
+      }
+    }
+  }
+  if (!expectedCollege) {
+    const code = String(rootFolder?.copc?.programCode || "").toUpperCase();
+    if (code.includes("COT")) expectedCollege = "COT";
+    if (code.includes("COED")) expectedCollege = "COED";
+    if (code.includes("CHTM")) expectedCollege = "CHTM";
+  }
+  return { expectedCollege, expectedAreaToken };
+}
+
+async function validateCopcFilenameForFolder(folderId, originalName) {
+  const root = await findCopcRootFolderByFolderId(folderId);
+  if (!root) return { valid: true, isCopc: false };
+
+  const lineage = await getFolderLineage(folderId);
+  const expected = inferCopcFilenameExpectations(lineage, root);
+  const parsed = parseCopcFilename(originalName);
+  const sampleCollege = expected.expectedCollege || "COT";
+  const sampleArea = expected.expectedAreaToken || "Area01";
+  const sampleDate = new Date().toISOString().slice(0, 10);
+  const sample = `${sampleCollege}_${sampleArea}_Document_Name_${sampleDate}.pdf`;
+
+  if (!parsed) {
+    return {
+      valid: false,
+      isCopc: true,
+      expected,
+      error: `COPC naming is required: [College]_[Area#]_[DocName]_[Date].pdf (YYYY-MM-DD). Example: ${sample}`,
+    };
+  }
+
+  if (expected.expectedCollege && parsed.collegeCode !== expected.expectedCollege) {
+    return {
+      valid: false,
+      isCopc: true,
+      expected,
+      error: `Invalid COPC filename for this folder. Expected college code "${expected.expectedCollege}" and format [College]_[Area#]_[DocName]_[Date].pdf. Example: ${sample}`,
+    };
+  }
+
+  if (expected.expectedAreaToken && parsed.areaToken !== expected.expectedAreaToken) {
+    return {
+      valid: false,
+      isCopc: true,
+      expected,
+      error: `Invalid COPC filename for this folder. Expected area token "${expected.expectedAreaToken}" and format [College]_[Area#]_[DocName]_[Date].pdf. Example: ${sample}`,
+    };
+  }
+
+  return { valid: true, isCopc: true, expected, parsed };
+}
 
 async function getDescendantFolderIds(rootId, options = {}) {
   const includeDeleted = !!options.includeDeleted;
@@ -651,6 +1698,50 @@ mongoose
   .then(() => {
     console.log("? MongoDB connected");
     createLog("SYSTEM", null, "MongoDB connected");
+    migrateLegacyCopcTemplateFolderNames()
+      .then((renamedCount) => {
+        if (renamedCount > 0) {
+          createLog(
+            "COPC_FOLDER_NAME_MIGRATION",
+            null,
+            `Renamed ${renamedCount} predefined COPC folder(s) to remove underscores`
+          );
+        }
+        return backfillCopcPredefinedTasks();
+      })
+      .then((backfilledCount) => {
+        if (backfilledCount > 0) {
+          createLog(
+            "COPC_TASKS_BACKFILL",
+            null,
+            `Backfilled predefined tasks for ${backfilledCount} COPC folder(s)`
+          );
+        }
+        return syncDepartmentGroupsForAllUsers();
+      })
+      .then(({ createdCount, syncedCount }) => {
+        if (createdCount > 0) {
+          createLog(
+            "DEPARTMENT_GROUPS_CREATED",
+            null,
+            `Created ${createdCount} department group(s): ${DEPARTMENT_CODES.join(", ")}`
+          );
+        }
+        if (syncedCount > 0) {
+          createLog(
+            "DEPARTMENT_GROUPS_SYNC",
+            null,
+            `Synchronized department group membership for ${syncedCount} user(s)`
+          );
+        }
+      })
+      .catch((err) => {
+        createLog(
+          "COPC_TEMPLATE_MIGRATION_ERROR",
+          null,
+          `Failed COPC template migration/backfill: ${err?.message || err}`
+        );
+      });
   })
   .catch((err) => {
     console.error("MongoDB error:", err);
@@ -1679,6 +2770,9 @@ const handleLogin = async (req, res) => {
       role: normalizeRole(user.role),
       userId: user._id.toString(),
       email: normalizeEmail(user.email),
+      name: String(user.name || "").trim(),
+      department: normalizeDepartmentCode(user.department) || "Unassigned",
+      profilePicture: user.profilePicture || null,
     });
   } catch (err) {
     console.error("Login error:", err);
@@ -1973,22 +3067,61 @@ app.post("/upload-profile-picture", upload.single("profilePicture"), async (req,
   }
 });
 
-// Update user profile fields (limited: profilePicture)
+// Update user profile fields (self or admin)
 app.patch("/users/:id", async (req, res) => {
   try {
     const { id } = req.params;
-    const { profilePicture } = req.body;
+    const actorId = req.query?.userId || req.body?.userId;
+    const actorRole = await resolveActorRole(actorId, req.query?.role || req.body?.role);
+    const isAdmin = canManageUsers(actorRole);
+    const isSelf = !!actorId && String(actorId) === String(id);
+    if (!isAdmin && !isSelf) {
+      return res.status(403).json({ error: "Not authorized to update this profile" });
+    }
+
+    const requestBody =
+      req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body : {};
+    const profilePicture = requestBody.profilePicture;
+    const name =
+      typeof requestBody.name !== "undefined" ? requestBody.name : req.query?.name;
+    const department =
+      typeof requestBody.department !== "undefined"
+        ? requestBody.department
+        : req.query?.department;
+    const shouldSyncDepartment =
+      Object.prototype.hasOwnProperty.call(requestBody, "department") ||
+      typeof req.query?.department !== "undefined";
     const update = {};
     if (typeof profilePicture !== "undefined") {
       update.profilePicture = profilePicture;
     }
+    if (typeof name === "string") {
+      const normalizedName = String(name || "").trim();
+      if (normalizedName.length > 120) {
+        return res.status(400).json({ error: "Name must be 120 characters or fewer" });
+      }
+      update.name = normalizedName;
+    }
+    if (typeof department === "string") {
+      const normalizedDepartment = normalizeDepartmentCode(department);
+      if (!normalizedDepartment) {
+        return res.status(400).json({ error: `Department must be one of: ${DEPARTMENT_CODES.join(", ")}` });
+      }
+      update.department = normalizedDepartment;
+    }
     if (Object.keys(update).length === 0) {
       return res.status(400).json({ error: "No updatable fields provided" });
     }
-    const user = await UserModel.findByIdAndUpdate(id, update, { new: true });
+    const user = await UserModel.findByIdAndUpdate(id, update, { new: true })
+      .select("_id name email department role active profilePicture createdAt");
     if (!user) return res.status(404).json({ error: "User not found" });
-    createLog("UPDATE_USER_PROFILE", user._id, "Updated profile fields");
-    res.json(user);
+    if (shouldSyncDepartment) {
+      await applyDepartmentGroupMembership(user._id, user.department, { actorId });
+    }
+    const normalizedUser = user.toObject();
+    normalizedUser.department = normalizeDepartmentCode(normalizedUser.department) || "Unassigned";
+    createLog("UPDATE_USER_PROFILE", actorId || user._id, `Updated profile fields for ${user.email}`);
+    res.json({ success: true, user: normalizedUser });
   } catch (err) {
     res.status(500).json({ error: "Failed to update user profile" });
   }
@@ -2050,6 +3183,18 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       if (targetFolder && !canUploadToFolder(targetFolder, userId, actorRole)) {
         return res.status(403).json({ error: "You are not assigned to upload in this folder" });
       }
+      if (targetFolder?._id) {
+        const namingCheck = await validateCopcFilenameForFolder(targetFolder._id, req.file.originalname);
+        if (!namingCheck.valid) {
+          try {
+            fs.unlinkSync(uploadedFilePath);
+          } catch {}
+          return res.status(400).json({
+            error: namingCheck.error,
+            code: "COPC_FILENAME_INVALID",
+          });
+        }
+      }
 
       const isOwner =
         file.owner?.toString?.() === userId ||
@@ -2109,6 +3254,18 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       await file.save();
     } else {
       // New file upload
+      if (targetFolder?._id) {
+        const namingCheck = await validateCopcFilenameForFolder(targetFolder._id, req.file.originalname);
+        if (!namingCheck.valid) {
+          try {
+            fs.unlinkSync(uploadedFilePath);
+          } catch {}
+          return res.status(400).json({
+            error: namingCheck.error,
+            code: "COPC_FILENAME_INVALID",
+          });
+        }
+      }
       file = new File({
       originalName: req.file.originalname,
       filename: req.file.filename,
@@ -3049,6 +4206,20 @@ app.post("/upload-camera", upload.array("images", 20), async (req, res) => {
       let baseName = (originalName || `CameraCapture_${Date.now()}`).replace(/[^\w\-.]/g, "_");
       const hasExt = baseName.toLowerCase().endsWith(ext.toLowerCase());
       const safeName = hasExt ? baseName : `${baseName}${ext}`;
+      if (targetFolder?._id) {
+        const namingCheck = await validateCopcFilenameForFolder(targetFolder._id, safeName);
+        if (!namingCheck.valid) {
+          try {
+            for (const f of imageFiles) {
+              fs.unlinkSync(path.join(__dirname, "uploads", f.filename));
+            }
+          } catch {}
+          return res.status(400).json({
+            error: namingCheck.error,
+            code: "COPC_FILENAME_INVALID",
+          });
+        }
+      }
       const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`;
       const targetPath = path.join(__dirname, "uploads", filename);
       fs.writeFileSync(targetPath, buffer);
@@ -4450,7 +5621,19 @@ app.get("/folders/:id/tasks", async (req, res) => {
     const canView = canViewCompliance(actorRole) || isAdmin || isOwner || isAssignedScope;
     if (!canView) return res.status(403).json({ error: "Not authorized to view folder tasks" });
 
-    const { normalized, progress, totalNodes } = computeTaskProgress(folder.complianceTasks || []);
+    const { normalized, progress, totalNodes, counts } = computeTaskProgress(folder.complianceTasks || []);
+    const flattenedTasks = flattenTaskTree(normalized);
+    const now = new Date();
+    const dueSoonThreshold = new Date(now);
+    dueSoonThreshold.setDate(dueSoonThreshold.getDate() + 7);
+    const dueSoonCount = flattenedTasks.filter((node) => {
+      const dueDate = toTaskDate(node?.task?.dueDate, null);
+      if (!dueDate) return false;
+      const status = normalizeTaskStatus(node?.task?.status, "pending");
+      if (status === "approved") return false;
+      const ts = dueDate.getTime();
+      return ts >= now.getTime() && ts <= dueSoonThreshold.getTime();
+    }).length;
     const programChairReviews = (folder.complianceReviews || []).filter((r) => isProgramChairRole(r.role));
     const qaReviews = (folder.complianceReviews || []).filter((r) => isQaReviewRole(r.role));
     const root = await findCopcRootFolderByFolderId(folder._id);
@@ -4499,7 +5682,17 @@ app.get("/folders/:id/tasks", async (req, res) => {
       tasks: normalized,
       progress,
       totalNodes,
-      assignments: folder.folderAssignments || { uploaders: [], programChairs: [], qaOfficers: [], evaluators: [] },
+      statusCounts: counts,
+      dashboard: {
+        totalTasks: totalNodes,
+        completedTasks: counts.approved,
+        pendingTasks: counts.pending + counts.in_progress + counts.for_review + counts.rejected,
+        overdueTasks: counts.overdue,
+        dueSoonTasks: dueSoonCount,
+        copcReadinessScore: progress,
+        forReviewQueue: counts.for_review,
+      },
+      assignments: folder.folderAssignments || { uploaders: [], uploaderGroups: [], programChairs: [], qaOfficers: [], evaluators: [] },
       assignmentPool: {
         uploaders: mapUsers(poolIds.uploaders),
         programChairs: mapUsers(poolIds.programChairs),
@@ -4510,6 +5703,7 @@ app.get("/folders/:id/tasks", async (req, res) => {
         programChair: programChairReviews,
         qa: qaReviews,
       },
+      generatedAt: new Date(),
     });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch folder tasks" });
@@ -4525,12 +5719,24 @@ app.put("/folders/:id/tasks", async (req, res) => {
 
     const folder = await Folder.findById(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
 
-    folder.complianceTasks = Array.isArray(tasks) ? tasks.map(normalizeTaskNode) : [];
+    folder.complianceTasks = Array.isArray(tasks)
+      ? tasks.map((entry) =>
+          normalizeTaskNode({
+            ...entry,
+            folderPath: entry?.folderPath || entry?.scope || folder.name,
+            createdBy: entry?.createdBy || userId || null,
+          })
+        )
+      : [];
     folder.complianceProfileKey = profileKey || folder.complianceProfileKey || null;
     if (assignments && typeof assignments === "object") {
       folder.folderAssignments = {
         uploaders: Array.isArray(assignments.uploaders) ? assignments.uploaders : folder.folderAssignments?.uploaders || [],
+        uploaderGroups: Array.isArray(assignments.uploaderGroups) ? assignments.uploaderGroups : folder.folderAssignments?.uploaderGroups || [],
         programChairs: Array.isArray(assignments.programChairs) ? assignments.programChairs : folder.folderAssignments?.programChairs || [],
         qaOfficers: Array.isArray(assignments.qaOfficers) ? assignments.qaOfficers : folder.folderAssignments?.qaOfficers || [],
         evaluators: Array.isArray(assignments.evaluators) ? assignments.evaluators : folder.folderAssignments?.evaluators || [],
@@ -4539,8 +5745,14 @@ app.put("/folders/:id/tasks", async (req, res) => {
     await folder.save();
 
     createLog("UPDATE_FOLDER_TASKS", userId, `Updated compliance tasks for folder ${folder.name}`);
-    const { normalized, progress } = computeTaskProgress(folder.complianceTasks || []);
-    res.json({ success: true, tasks: normalized, progress, assignments: folder.folderAssignments || {} });
+    const { normalized, progress, counts } = computeTaskProgress(folder.complianceTasks || []);
+    res.json({
+      success: true,
+      tasks: normalized,
+      progress,
+      statusCounts: counts,
+      assignments: folder.folderAssignments || {},
+    });
   } catch (err) {
     res.status(500).json({ error: "Failed to update folder tasks" });
   }
@@ -4565,25 +5777,18 @@ app.patch("/folders/:id/assignments", async (req, res) => {
 
     const previousAssignments = {
       uploaders: [...(folder.folderAssignments?.uploaders || [])],
+      uploaderGroups: [...(folder.folderAssignments?.uploaderGroups || [])],
       programChairs: [...(folder.folderAssignments?.programChairs || [])],
       qaOfficers: [...(folder.folderAssignments?.qaOfficers || [])],
       evaluators: [...(folder.folderAssignments?.evaluators || [])],
     };
 
-    const clean = (value) =>
-      Array.from(
-        new Set(
-          (Array.isArray(value) ? value : [])
-            .map((entry) => entry?._id?.toString?.() || entry?.toString?.())
-            .filter(Boolean)
-        )
-      );
-
     folder.folderAssignments = {
-      uploaders: clean(assignments.uploaders ?? folder.folderAssignments?.uploaders),
-      programChairs: clean(assignments.programChairs ?? folder.folderAssignments?.programChairs),
-      qaOfficers: clean(assignments.qaOfficers ?? folder.folderAssignments?.qaOfficers),
-      evaluators: clean(assignments.evaluators ?? folder.folderAssignments?.evaluators),
+      uploaders: cleanObjectIdList(assignments.uploaders ?? folder.folderAssignments?.uploaders),
+      uploaderGroups: cleanObjectIdList(assignments.uploaderGroups ?? folder.folderAssignments?.uploaderGroups),
+      programChairs: cleanObjectIdList(assignments.programChairs ?? folder.folderAssignments?.programChairs),
+      qaOfficers: cleanObjectIdList(assignments.qaOfficers ?? folder.folderAssignments?.qaOfficers),
+      evaluators: cleanObjectIdList(assignments.evaluators ?? folder.folderAssignments?.evaluators),
     };
     await folder.save();
     createLog("UPDATE_FOLDER_ASSIGNMENTS", userId, `Updated assignments for folder ${folder.name}`);
@@ -4635,17 +5840,128 @@ app.patch("/folders/:id/assignments", async (req, res) => {
   }
 });
 
-// Add a task node (admin only)
+function collectTaskAssigneeIds(task = {}) {
+  return uniqNotificationIds([
+    task?.assignedTo,
+    ...(task?.assignedUploaders || []),
+    ...(task?.assignedProgramChairs || []),
+    ...(task?.assignedQaOfficers || []),
+  ]);
+}
+
+function roleScopedTaskAssigneeIds(task = {}, actorRole = "") {
+  const role = normalizeRole(actorRole);
+  if (role === "dept_chair") {
+    const direct = cleanObjectIdList(task?.assignedProgramChairs || []);
+    if (direct.length > 0) return direct;
+    if (normalizeTaskAssignedRole(task?.assignedRole || "") === "dept_chair" && task?.assignedTo) {
+      return [toObjectIdString(task.assignedTo)];
+    }
+    return [];
+  }
+  if (role === "qa_admin") {
+    const direct = cleanObjectIdList(task?.assignedQaOfficers || []);
+    if (direct.length > 0) return direct;
+    if (normalizeTaskAssignedRole(task?.assignedRole || "") === "qa_admin" && task?.assignedTo) {
+      return [toObjectIdString(task.assignedTo)];
+    }
+    return [];
+  }
+  if (role === "faculty") {
+    const direct = cleanObjectIdList(task?.assignedUploaders || []);
+    if (direct.length > 0) return direct;
+    if (normalizeTaskAssignedRole(task?.assignedRole || "") === "faculty" && task?.assignedTo) {
+      return [toObjectIdString(task.assignedTo)];
+    }
+    return [];
+  }
+  return [];
+}
+
+async function canActorManageTaskScope(folder, actorRole, userId) {
+  const role = normalizeRole(actorRole);
+  if (role === "superadmin") return true;
+  if (role === "dept_chair") {
+    if (isUserAssignedTo(userId, folder?.folderAssignments?.programChairs || [])) return true;
+    return canUserAccessFolderByAssignment(folder?._id, userId, role);
+  }
+  if (role === "qa_admin") {
+    if (isUserAssignedTo(userId, folder?.folderAssignments?.qaOfficers || [])) return true;
+    return canUserAccessFolderByAssignment(folder?._id, userId, role);
+  }
+  return false;
+}
+
+function applyTaskRoleAssignment(task = {}, assignedRole = "faculty", assignedTo = null) {
+  const nextRole = normalizeTaskAssignedRole(assignedRole, "faculty");
+  task.assignedRole = nextRole;
+  task.assignedTo = assignedTo || null;
+  const targetId = assignedTo ? toObjectIdString(assignedTo) : "";
+  if (!targetId) return;
+
+  if (nextRole === "faculty") {
+    task.assignedUploaders = cleanObjectIdList([...(task.assignedUploaders || []), targetId]);
+  } else if (nextRole === "dept_chair") {
+    task.assignedProgramChairs = cleanObjectIdList([...(task.assignedProgramChairs || []), targetId]);
+  } else if (nextRole === "qa_admin") {
+    task.assignedQaOfficers = cleanObjectIdList([...(task.assignedQaOfficers || []), targetId]);
+  }
+}
+
+// Add a task node (super admin, dept chair, or QA admin in assigned scope)
 app.post("/folders/:id/tasks", async (req, res) => {
   try {
     const { userId, role, parentTaskId, task } = req.body || {};
-    const isAdmin = await isAdminContext(role, userId);
-    if (!isAdmin) return res.status(403).json({ error: "Only super admin can add tasks" });
+    const actorRole = await resolveActorRole(userId, role);
+    if (!["superadmin", "dept_chair", "qa_admin"].includes(normalizeRole(actorRole))) {
+      return res.status(403).json({ error: "Only super admin, dept chair, or QA admin can add tasks" });
+    }
 
     const folder = await Folder.findById(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
+    if (!(await canActorManageTaskScope(folder, actorRole, userId))) {
+      return res.status(403).json({ error: "Not assigned to create tasks in this folder scope" });
+    }
 
-    const nextTask = normalizeTaskNode(task || {});
+    const rawTask = task || {};
+    const assignedRole = normalizeTaskAssignedRole(rawTask.assignedRole, "faculty");
+    const assignedTo = rawTask.assignedTo || null;
+    const normalizedStatus = normalizeTaskStatus(rawTask.status, "pending");
+    const historyEntry = buildTaskHistoryEntry({
+      action: "created",
+      fromStatus: "",
+      toStatus: normalizedStatus,
+      notes: String(rawTask?.description || "").trim(),
+      actor: userId || null,
+    });
+
+    const nextTask = normalizeTaskNode({
+      ...rawTask,
+      taskType: normalizeTaskType(rawTask.taskType, rawTask.title, rawTask.description, rawTask.scope),
+      status: normalizedStatus,
+      percentage: typeof rawTask.percentage !== "undefined"
+        ? Number(rawTask.percentage)
+        : Number(TASK_STATUS_PERCENTAGE[normalizedStatus] || 0),
+      scope: rawTask.scope || folder.name,
+      folderPath: rawTask.folderPath || rawTask.scope || folder.name,
+      priority: normalizeTaskPriority(rawTask.priority, "medium"),
+      assignedRole,
+      assignedTo,
+      dueDate: toTaskDate(rawTask.dueDate, null),
+      createdBy: rawTask.createdBy || userId || null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      comments: normalizeTaskComments(rawTask.comments || []),
+      attachments: normalizeTaskAttachments(rawTask.attachments || []),
+      history: [...normalizeTaskHistory(rawTask.history || []), historyEntry].filter(Boolean),
+      source: rawTask.source || "manual",
+    });
+
+    applyTaskRoleAssignment(nextTask, assignedRole, assignedTo);
+
     if (!parentTaskId) {
       folder.complianceTasks.push(nextTask);
     } else {
@@ -4656,40 +5972,164 @@ app.post("/folders/:id/tasks", async (req, res) => {
     }
 
     await folder.save();
-    const { normalized, progress } = computeTaskProgress(folder.complianceTasks || []);
-    res.json({ success: true, tasks: normalized, progress });
+
+    const dueText = nextTask?.dueDate ? ` Due ${new Date(nextTask.dueDate).toLocaleDateString()}.` : "";
+    await createNotificationsForUsers(
+      collectTaskAssigneeIds(nextTask),
+      "ACTION_REQUIRED",
+      "New task assigned",
+      `You were assigned to "${nextTask.title}" in folder "${folder.name}".${dueText}`,
+      nextTask.title,
+      folder._id,
+      "Folder",
+      {
+        actorId: userId,
+        metadata: {
+          folderName: folder.name,
+          taskTitle: nextTask.title,
+          taskId: nextTask.taskId,
+          status: nextTask.status,
+        },
+      }
+    );
+
+    createLog("CREATE_FOLDER_TASK", userId, `Created task "${nextTask.title}" in folder ${folder.name}`);
+    const { normalized, progress, counts } = computeTaskProgress(folder.complianceTasks || []);
+    res.json({ success: true, tasks: normalized, progress, statusCounts: counts });
   } catch (err) {
     res.status(500).json({ error: "Failed to add task" });
   }
 });
 
-// Edit a task node (admin only for task structure/text)
+// Edit task details and assignments (superadmin/dept chair/QA admin)
 app.patch("/folders/:id/tasks/:taskId", async (req, res) => {
   try {
     const { userId, role, updates } = req.body || {};
-    const isAdmin = await isAdminContext(role, userId);
-    if (!isAdmin) return res.status(403).json({ error: "Only super admin can edit task details" });
+    const actorRole = await resolveActorRole(userId, role);
+    const normalizedActorRole = normalizeRole(actorRole);
+    const isAdmin = normalizedActorRole === "superadmin";
+    if (!["superadmin", "dept_chair", "qa_admin"].includes(normalizedActorRole)) {
+      return res.status(403).json({ error: "Not authorized to update task details" });
+    }
 
     const folder = await Folder.findById(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
+    if (!(await canActorManageTaskScope(folder, actorRole, userId))) {
+      return res.status(403).json({ error: "Not assigned to this folder scope" });
+    }
 
     const task = findTaskById(folder.complianceTasks || [], req.params.taskId);
     if (!task) return res.status(404).json({ error: "Task not found" });
 
     const next = updates || {};
-    if (typeof next.title === "string") task.title = next.title.trim() || task.title;
+    const previousAssignees = collectTaskAssigneeIds(task);
+    const currentStatus = normalizeTaskStatus(task.status, "pending");
+
+    if (typeof next.title === "string" && (isAdmin || normalizedActorRole === "dept_chair" || normalizedActorRole === "qa_admin")) {
+      task.title = next.title.trim() || task.title;
+    }
     if (typeof next.description === "string") task.description = next.description;
     if (typeof next.scope === "string") task.scope = next.scope;
-    if (Array.isArray(next.checks)) task.checks = next.checks;
-    if (Array.isArray(next.assignedUploaders)) task.assignedUploaders = next.assignedUploaders;
-    if (Array.isArray(next.assignedProgramChairs)) task.assignedProgramChairs = next.assignedProgramChairs;
-    if (Array.isArray(next.assignedQaOfficers)) task.assignedQaOfficers = next.assignedQaOfficers;
-    if (next.status) task.status = next.status;
-    if (typeof next.percentage !== "undefined") task.percentage = Number(next.percentage) || 0;
+    if (typeof next.folderPath === "string") task.folderPath = next.folderPath;
+    if (Array.isArray(next.checks)) task.checks = next.checks.map(String);
+    if (typeof next.taskType === "string") task.taskType = normalizeTaskType(next.taskType, task.title, task.description, task.scope);
+    if (typeof next.priority === "string") task.priority = normalizeTaskPriority(next.priority, "medium");
+    if (Object.prototype.hasOwnProperty.call(next, "dueDate")) task.dueDate = toTaskDate(next.dueDate, null);
+    if (Array.isArray(next.attachments)) task.attachments = normalizeTaskAttachments(next.attachments);
 
+    if (Array.isArray(next.assignedUploaders)) task.assignedUploaders = cleanObjectIdList(next.assignedUploaders);
+    if (Array.isArray(next.assignedProgramChairs) && (isAdmin || normalizedActorRole === "qa_admin")) {
+      task.assignedProgramChairs = cleanObjectIdList(next.assignedProgramChairs);
+    }
+    if (Array.isArray(next.assignedQaOfficers) && (isAdmin || normalizedActorRole === "qa_admin")) {
+      task.assignedQaOfficers = cleanObjectIdList(next.assignedQaOfficers);
+    }
+
+    const hasAssignedRoleUpdate = Object.prototype.hasOwnProperty.call(next, "assignedRole");
+    const hasAssignedToUpdate = Object.prototype.hasOwnProperty.call(next, "assignedTo");
+    if (hasAssignedRoleUpdate || hasAssignedToUpdate) {
+      const incomingAssignedRole = hasAssignedRoleUpdate
+        ? normalizeTaskAssignedRole(next.assignedRole, task.assignedRole || "faculty")
+        : normalizeTaskAssignedRole(task.assignedRole || "", "faculty");
+      const incomingAssignedTo = hasAssignedToUpdate
+        ? (next.assignedTo || null)
+        : (task.assignedTo || null);
+      applyTaskRoleAssignment(task, incomingAssignedRole, incomingAssignedTo);
+    }
+
+    if (Object.prototype.hasOwnProperty.call(next, "comments")) {
+      task.comments = normalizeTaskComments(next.comments);
+    }
+    if (typeof next.comment === "string" && String(next.comment).trim()) {
+      task.comments = Array.isArray(task.comments) ? task.comments : [];
+      task.comments.push({
+        message: String(next.comment).trim(),
+        createdBy: userId || null,
+        mentions: cleanObjectIdList(next.mentions),
+        attachments: normalizeTaskAttachments(next.commentAttachments || []),
+        createdAt: new Date(),
+        updatedAt: null,
+      });
+    }
+
+    if (Object.prototype.hasOwnProperty.call(next, "status")) {
+      const targetStatus = normalizeTaskStatus(next.status, currentStatus);
+      if (
+        !isTaskStatusTransitionAllowed(currentStatus, targetStatus, actorRole, {
+          allowAdminOverride: isAdmin,
+        })
+      ) {
+        return res.status(400).json({
+          error: `Invalid task status transition from "${currentStatus}" to "${targetStatus}" for role ${normalizedActorRole}`,
+        });
+      }
+      task.status = targetStatus;
+      task.percentage = Object.prototype.hasOwnProperty.call(next, "percentage")
+        ? Math.max(0, Math.min(100, Number(next.percentage) || 0))
+        : Number(TASK_STATUS_PERCENTAGE[targetStatus] || 0);
+      task.history = Array.isArray(task.history) ? task.history : [];
+      const notes = String(next.notes || next.comment || "").trim();
+      const transitionEntry = buildTaskHistoryEntry({
+        action: "status_updated",
+        fromStatus: currentStatus,
+        toStatus: targetStatus,
+        notes,
+        actor: userId || null,
+      });
+      if (transitionEntry) task.history.push(transitionEntry);
+    } else if (Object.prototype.hasOwnProperty.call(next, "percentage")) {
+      task.percentage = Math.max(0, Math.min(100, Number(next.percentage) || 0));
+    }
+
+    task.updatedAt = new Date();
     await folder.save();
-    const { normalized, progress } = computeTaskProgress(folder.complianceTasks || []);
-    res.json({ success: true, tasks: normalized, progress });
+
+    const nextAssignees = collectTaskAssigneeIds(task);
+    await createNotificationsForUsers(
+      diffNotificationRecipients(nextAssignees, previousAssignees),
+      "ACTION_REQUIRED",
+      "Task assignment updated",
+      `You were assigned to task "${task.title}" in folder "${folder.name}".`,
+      task.title,
+      folder._id,
+      "Folder",
+      {
+        actorId: userId,
+        metadata: {
+          folderName: folder.name,
+          taskTitle: task.title,
+          taskId: task.taskId || buildTaskReferenceId(task),
+          status: normalizeTaskStatus(task.status, "pending"),
+        },
+      }
+    );
+    createLog("UPDATE_FOLDER_TASK", userId, `Updated task "${task.title}" in folder ${folder.name}`);
+
+    const { normalized, progress, counts } = computeTaskProgress(folder.complianceTasks || []);
+    res.json({ success: true, tasks: normalized, progress, statusCounts: counts });
   } catch (err) {
     res.status(500).json({ error: "Failed to update task" });
   }
@@ -4715,23 +6155,22 @@ app.delete("/folders/:id/tasks/:taskId", async (req, res) => {
     await folder.save();
 
     createLog("DELETE_FOLDER_TASK", userId, `Removed task from folder ${folder.name}`);
-    const { normalized, progress } = computeTaskProgress(folder.complianceTasks || []);
-    res.json({ success: true, tasks: normalized, progress });
+    const { normalized, progress, counts } = computeTaskProgress(folder.complianceTasks || []);
+    res.json({ success: true, tasks: normalized, progress, statusCounts: counts });
   } catch (err) {
     res.status(500).json({ error: "Failed to delete task" });
   }
 });
 
-// Check task status (admin/program chair/qa)
+// Update task status using pipeline: pending -> in_progress -> for_review -> approved/rejected
 app.patch("/folders/:id/tasks/:taskId/check", async (req, res) => {
   try {
-    const { userId, role, status, percentage } = req.body || {};
+    const { userId, role, status, percentage, notes, comment } = req.body || {};
     const actorRole = await resolveActorRole(userId, role);
-    const isAdmin = actorRole === "superadmin";
-    const isChair = isProgramChairRole(actorRole);
-    const isQa = isQaReviewRole(actorRole);
-    if (!isAdmin && !isChair && !isQa) {
-      return res.status(403).json({ error: "Not authorized to check tasks" });
+    const normalizedActorRole = normalizeRole(actorRole);
+    const isAdmin = normalizedActorRole === "superadmin";
+    if (!["superadmin", "dept_chair", "qa_admin", "faculty"].includes(normalizedActorRole)) {
+      return res.status(403).json({ error: "Not authorized to update task status" });
     }
 
     const folder = await Folder.findById(req.params.id);
@@ -4739,30 +6178,643 @@ app.patch("/folders/:id/tasks/:taskId/check", async (req, res) => {
     if (await isFolderWithinLockedCopc(folder._id)) {
       return res.status(423).json({ error: "This COPC scope is locked after final approval" });
     }
-    if (!isAdmin) {
-      const assignedList = isChair
-        ? folder?.folderAssignments?.programChairs || []
-        : folder?.folderAssignments?.qaOfficers || [];
-      if (assignedList.length === 0) {
-        return res.status(403).json({ error: "No reviewer assignment found for this folder scope" });
-      }
-      if (!isUserAssignedTo(userId, assignedList)) {
-        return res.status(403).json({ error: "Not assigned to this folder scope" });
-      }
-    }
 
     const task = findTaskById(folder.complianceTasks || [], req.params.taskId);
     if (!task) return res.status(404).json({ error: "Task not found" });
 
-    if (status) task.status = status;
-    if (typeof percentage !== "undefined") task.percentage = Number(percentage) || 0;
-    if (status === "complete" && typeof percentage === "undefined") task.percentage = 100;
+    const folderRoleAssignments = getFolderAssignmentsForRole(folder, actorRole);
+    const taskRoleAssignments = roleScopedTaskAssigneeIds(task, actorRole);
+    const actorIsAssignedToTask =
+      includesUserInAssignmentList(folderRoleAssignments, userId) ||
+      includesUserInAssignmentList(taskRoleAssignments, userId);
+    if (!isAdmin && !actorIsAssignedToTask) {
+      return res.status(403).json({ error: "Not assigned to this task scope" });
+    }
+
+    const currentStatus = normalizeTaskStatus(task.status, "pending");
+    const targetStatus = normalizeTaskStatus(status, currentStatus);
+    if (
+      !isTaskStatusTransitionAllowed(currentStatus, targetStatus, actorRole, {
+        allowAdminOverride: isAdmin,
+      })
+    ) {
+      return res.status(400).json({
+        error: `Invalid task status transition from "${currentStatus}" to "${targetStatus}" for role ${normalizedActorRole}`,
+      });
+    }
+
+    const noteText = String(comment || notes || "").trim();
+    if (targetStatus === "rejected" && !noteText) {
+      return res.status(400).json({ error: "Rejection comment is required when rejecting a task" });
+    }
+
+    task.status = targetStatus;
+    task.percentage = typeof percentage !== "undefined"
+      ? Math.max(0, Math.min(100, Number(percentage) || 0))
+      : Number(TASK_STATUS_PERCENTAGE[targetStatus] || 0);
+    task.updatedAt = new Date();
+
+    task.history = Array.isArray(task.history) ? task.history : [];
+    const historyAction =
+      targetStatus === "for_review"
+        ? "submitted_for_review"
+        : targetStatus === "approved"
+          ? "approved"
+          : targetStatus === "rejected"
+            ? "rejected"
+            : targetStatus === "in_progress" && currentStatus === "rejected"
+              ? "reopened"
+              : "status_updated";
+    const historyEntry = buildTaskHistoryEntry({
+      action: historyAction,
+      fromStatus: currentStatus,
+      toStatus: targetStatus,
+      notes: noteText,
+      actor: userId || null,
+    });
+    if (historyEntry) task.history.push(historyEntry);
+
+    if (noteText) {
+      task.comments = Array.isArray(task.comments) ? task.comments : [];
+      task.comments.push({
+        message: noteText,
+        createdBy: userId || null,
+        mentions: [],
+        attachments: [],
+        createdAt: new Date(),
+        updatedAt: null,
+      });
+    }
 
     await folder.save();
-    const { normalized, progress } = computeTaskProgress(folder.complianceTasks || []);
-    res.json({ success: true, tasks: normalized, progress });
+
+    if (targetStatus === "for_review") {
+      const reviewTargets = uniqNotificationIds([
+        ...(task?.assignedProgramChairs || []),
+        ...(folder?.folderAssignments?.programChairs || []),
+        ...(task?.assignedQaOfficers || []),
+        ...(folder?.folderAssignments?.qaOfficers || []),
+      ]);
+      await createNotificationsForUsers(
+        reviewTargets,
+        "ACTION_REQUIRED",
+        "Task submitted for review",
+        `Task "${task.title}" in folder "${folder.name}" is now for review.`,
+        task.title,
+        folder._id,
+        "Folder",
+        {
+          actorId: userId,
+          metadata: {
+            folderName: folder.name,
+            taskTitle: task.title,
+            taskId: task.taskId || buildTaskReferenceId(task),
+            status: targetStatus,
+          },
+        }
+      );
+    }
+
+    if (["approved", "rejected"].includes(targetStatus)) {
+      await createNotificationsForUsers(
+        collectTaskAssigneeIds(task),
+        "ACTION_REQUIRED",
+        targetStatus === "approved" ? "Task approved" : "Task rejected",
+        targetStatus === "approved"
+          ? `Task "${task.title}" in folder "${folder.name}" was approved.`
+          : `Task "${task.title}" in folder "${folder.name}" was rejected.${noteText ? ` Comment: ${noteText}` : ""}`,
+        task.title,
+        folder._id,
+        "Folder",
+        {
+          actorId: userId,
+          metadata: {
+            folderName: folder.name,
+            taskTitle: task.title,
+            taskId: task.taskId || buildTaskReferenceId(task),
+            status: targetStatus,
+          },
+        }
+      );
+    }
+
+    const { normalized, progress, counts } = computeTaskProgress(folder.complianceTasks || []);
+    res.json({
+      success: true,
+      taskId: req.params.taskId,
+      status: targetStatus,
+      tasks: normalized,
+      progress,
+      statusCounts: counts,
+    });
   } catch (err) {
-    res.status(500).json({ error: "Failed to check task" });
+    res.status(500).json({ error: "Failed to update task status" });
+  }
+});
+
+function buildAutoTaskTemplatesForFolder(folderName = "", folderPath = "") {
+  const name = String(folderName || "").toLowerCase();
+  const path = String(folderPath || folderName || "");
+  const base = [];
+
+  const pushTask = ({
+    title,
+    description = "",
+    taskType = "document",
+    priority = "medium",
+    assignedRole = "faculty",
+    subtasks = [],
+  }) => {
+    const childNodes = (Array.isArray(subtasks) ? subtasks : [])
+      .filter(Boolean)
+      .map((childTitle) =>
+        normalizeTaskNode({
+          title: String(childTitle),
+          description: "",
+          taskType: "document",
+          status: "pending",
+          priority: "medium",
+          assignedRole,
+          scope: path,
+          folderPath: path,
+          source: "folder_auto",
+        })
+      );
+
+    base.push(
+      normalizeTaskNode({
+        title,
+        description,
+        taskType,
+        status: "pending",
+        priority,
+        assignedRole,
+        scope: path,
+        folderPath: path,
+        source: "folder_auto",
+        children: childNodes,
+      })
+    );
+  };
+
+  if (/faculty|area[_\s-]*ii/.test(name)) {
+    pushTask({
+      title: "Upload all faculty CVs",
+      description: "Collect and upload current faculty CV files.",
+      taskType: "document",
+      priority: "high",
+      assignedRole: "faculty",
+      subtasks: ["CV_John.pdf", "CV_Maria.pdf"],
+    });
+    pushTask({
+      title: "Upload diplomas and credentials",
+      description: "Upload diplomas, TOR, and relevant credential proofs.",
+      taskType: "document",
+      priority: "high",
+      assignedRole: "faculty",
+    });
+    pushTask({
+      title: "Validate faculty compliance",
+      description: "Review completeness and compliance against CHED/COPC expectations.",
+      taskType: "review",
+      priority: "high",
+      assignedRole: "dept_chair",
+    });
+  }
+
+  if (/curriculum|instruction|area[_\s-]*iii/.test(name)) {
+    pushTask({
+      title: "Upload syllabus and curriculum mapping",
+      description: "Upload current syllabus with OBE and CHED alignment.",
+      taskType: "document",
+      priority: "high",
+      assignedRole: "faculty",
+    });
+    pushTask({
+      title: "Check curriculum completeness",
+      description: "Review curriculum package completeness before approval.",
+      taskType: "review",
+      priority: "high",
+      assignedRole: "dept_chair",
+    });
+  }
+
+  if (/laborator|facilit|library|area[_\s-]*iv/.test(name)) {
+    pushTask({
+      title: "Upload facility inventory and evidence",
+      description: "Upload inventories, photos, licenses, and inspection documents.",
+      taskType: "document",
+      priority: "medium",
+      assignedRole: "faculty",
+    });
+    pushTask({
+      title: "Audit uploaded facility files",
+      description: "Audit uploaded files for recency and validity.",
+      taskType: "monitoring",
+      priority: "medium",
+      assignedRole: "qa_admin",
+    });
+  }
+
+  if (/legal|governance|administration|program[_\s-]*administration|area[_\s-]*i/.test(name)) {
+    pushTask({
+      title: "Upload official compliance documents",
+      description: "Upload CMO and program administration compliance files.",
+      taskType: "document",
+      priority: "high",
+      assignedRole: "faculty",
+    });
+    pushTask({
+      title: "Validate compliance (CHED / COPC)",
+      description: "Validate documents against CHED/COPC standards.",
+      taskType: "review",
+      priority: "high",
+      assignedRole: "qa_admin",
+    });
+    pushTask({
+      title: "Approve submission package",
+      description: "Approve or reject with revision notes.",
+      taskType: "approval",
+      priority: "high",
+      assignedRole: "dept_chair",
+    });
+  }
+
+  if (/linkage|internship|practicum|industry|extension|mou|mou?s/.test(name)) {
+    pushTask({
+      title: "Track missing partner documents",
+      description: "Track missing MOA and practicum supporting files.",
+      taskType: "monitoring",
+      priority: "medium",
+      assignedRole: "qa_admin",
+    });
+    pushTask({
+      title: "Check expired documents",
+      description: "Review expiration dates and request refreshed copies.",
+      taskType: "monitoring",
+      priority: "medium",
+      assignedRole: "qa_admin",
+    });
+  }
+
+  if (base.length === 0) {
+    pushTask({
+      title: `Upload required documents for ${folderName || "folder"}`,
+      description: "Upload and organize required files based on folder structure.",
+      taskType: "document",
+      priority: "medium",
+      assignedRole: "faculty",
+    });
+    pushTask({
+      title: "Review and approve folder submissions",
+      description: "Submit for review then approve/reject with comments.",
+      taskType: "approval",
+      priority: "medium",
+      assignedRole: "dept_chair",
+    });
+  }
+
+  return base;
+}
+
+async function buildFolderPathString(folder) {
+  if (!folder?._id) return String(folder?.name || "");
+  const parts = [String(folder.name || "Untitled Folder")];
+  let cursor = folder;
+  let guard = 0;
+  while (cursor?.parentFolder && guard < 180) {
+    guard += 1;
+    // eslint-disable-next-line no-await-in-loop
+    const parent = await Folder.findById(cursor.parentFolder).select("name parentFolder");
+    if (!parent) break;
+    parts.unshift(String(parent.name || "Untitled Folder"));
+    cursor = parent;
+  }
+  return parts.join("/");
+}
+
+// Auto-generate tasks from folder structure
+app.post("/folders/:id/tasks/auto-generate", async (req, res) => {
+  try {
+    const { userId, role, replaceExisting = false, dueDate, priority = "medium" } = req.body || {};
+    const actorRole = await resolveActorRole(userId, role);
+    if (!["superadmin", "qa_admin", "dept_chair"].includes(normalizeRole(actorRole))) {
+      return res.status(403).json({ error: "Only super admin, QA admin, or dept chair can auto-generate tasks" });
+    }
+
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (await isFolderWithinLockedCopc(folder._id)) {
+      return res.status(423).json({ error: "This COPC scope is locked after final approval" });
+    }
+    if (!(await canActorManageTaskScope(folder, actorRole, userId))) {
+      return res.status(403).json({ error: "Not assigned to this folder scope" });
+    }
+
+    const folderPath = await buildFolderPathString(folder);
+    const autoTasks = buildAutoTaskTemplatesForFolder(folder.name, folderPath).map((task) =>
+      normalizeTaskNode({
+        ...task,
+        priority: normalizeTaskPriority(priority || task.priority, task.priority || "medium"),
+        dueDate: toTaskDate(dueDate || task.dueDate, task.dueDate || null),
+        createdBy: userId || null,
+        updatedAt: new Date(),
+      })
+    );
+
+    let createdCount = autoTasks.length;
+    if (replaceExisting) {
+      folder.complianceTasks = autoTasks;
+    } else {
+      const existingTitles = new Set(
+        flattenTaskTree(folder.complianceTasks || [])
+          .map((node) => String(node?.task?.title || "").trim().toLowerCase())
+          .filter(Boolean)
+      );
+      const appendable = autoTasks.filter((task) => !existingTitles.has(String(task.title || "").trim().toLowerCase()));
+      folder.complianceTasks = [...(folder.complianceTasks || []), ...appendable];
+      createdCount = appendable.length;
+    }
+
+    await folder.save();
+    createLog("AUTO_GENERATE_FOLDER_TASKS", userId, `Generated tasks for folder ${folder.name}`);
+
+    const { normalized, progress, counts } = computeTaskProgress(folder.complianceTasks || []);
+    res.json({
+      success: true,
+      folderId: folder._id,
+      createdCount,
+      tasks: normalized,
+      progress,
+      statusCounts: counts,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to auto-generate tasks" });
+  }
+});
+
+// Program-level task reports for COPC defense dashboards
+app.get("/copc/programs/:id/task-reports", async (req, res) => {
+  try {
+    const { userId, role } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    if (!canGenerateReports(actorRole)) {
+      return res.status(403).json({ error: "Not authorized to generate task reports" });
+    }
+
+    const root = await Folder.findById(req.params.id).select("name copc folderAssignments owner");
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+    const isAdmin = normalizeRole(actorRole) === "superadmin";
+    if (!isAdmin && !(await canUserAccessCopcProgram(root, userId, actorRole))) {
+      return res.status(403).json({ error: "Not authorized to view this COPC program" });
+    }
+
+    const folderIds = await getDescendantFolderIds(root._id);
+    const folders = await Folder.find({ _id: { $in: folderIds }, deletedAt: null })
+      .select("_id name parentFolder complianceTasks")
+      .lean();
+
+    const folderById = new Map(folders.map((folder) => [String(folder._id), folder]));
+    const rootKey = String(root._id);
+    const toFolderPath = (folderId) => {
+      const parts = [];
+      let cursor = folderById.get(String(folderId));
+      let guard = 0;
+      while (cursor && guard < 250) {
+        guard += 1;
+        const id = String(cursor._id);
+        if (id === rootKey) break;
+        parts.unshift(String(cursor.name || "Untitled Folder"));
+        if (!cursor.parentFolder) break;
+        cursor = folderById.get(String(cursor.parentFolder));
+      }
+      return parts.join(" / ");
+    };
+
+    const allTaskRows = [];
+    for (const folder of folders) {
+      const taskRows = flattenTaskTree(computeTaskProgress(folder.complianceTasks || []).normalized);
+      for (const row of taskRows) {
+        const task = normalizeTaskNode(row.task || {});
+        allTaskRows.push({
+          folderId: String(folder._id),
+          folderName: String(folder.name || "Untitled Folder"),
+          folderPath: toFolderPath(folder._id),
+          depth: row.depth || 0,
+          task,
+        });
+      }
+    }
+
+    const completion = {
+      totalTasks: allTaskRows.length,
+      approved: allTaskRows.filter((row) => row.task.status === "approved").length,
+      pending: allTaskRows.filter((row) => row.task.status === "pending").length,
+      inProgress: allTaskRows.filter((row) => row.task.status === "in_progress").length,
+      forReview: allTaskRows.filter((row) => row.task.status === "for_review").length,
+      rejected: allTaskRows.filter((row) => row.task.status === "rejected").length,
+      overdue: allTaskRows.filter((row) => isTaskOverdue(row.task)).length,
+    };
+    completion.completionRate = completion.totalTasks
+      ? Number(((completion.approved / completion.totalTasks) * 100).toFixed(2))
+      : 0;
+
+    const perFolder = folders.map((folder) => {
+      const report = computeTaskProgress(folder.complianceTasks || []);
+      return {
+        folderId: String(folder._id),
+        folderName: String(folder.name || "Untitled Folder"),
+        folderPath: toFolderPath(folder._id),
+        progress: report.progress,
+        counts: report.counts,
+      };
+    });
+
+    const missingDocuments = allTaskRows
+      .filter((row) => row.task.taskType === "document" && row.task.status !== "approved")
+      .map((row) => ({
+        taskId: row.task.taskId,
+        title: row.task.title,
+        folderPath: row.folderPath,
+        status: row.task.status,
+        dueDate: row.task.dueDate,
+        overdue: isTaskOverdue(row.task),
+      }))
+      .slice(0, 500);
+
+    const performanceMap = new Map();
+    for (const row of allTaskRows) {
+      const assignees = collectTaskAssigneeIds(row.task);
+      for (const assignee of assignees) {
+        const key = String(assignee);
+        if (!performanceMap.has(key)) {
+          performanceMap.set(key, {
+            userId: key,
+            total: 0,
+            approved: 0,
+            forReview: 0,
+            rejected: 0,
+            overdue: 0,
+          });
+        }
+        const bucket = performanceMap.get(key);
+        bucket.total += 1;
+        if (row.task.status === "approved") bucket.approved += 1;
+        if (row.task.status === "for_review") bucket.forReview += 1;
+        if (row.task.status === "rejected") bucket.rejected += 1;
+        if (isTaskOverdue(row.task)) bucket.overdue += 1;
+      }
+    }
+    const perfUserIds = Array.from(performanceMap.keys());
+    const perfUsers = perfUserIds.length
+      ? await UserModel.find({ _id: { $in: perfUserIds } }).select("name email role")
+      : [];
+    const perfUsersMap = new Map(perfUsers.map((user) => [String(user._id), user]));
+    const userPerformance = Array.from(performanceMap.values())
+      .map((entry) => {
+        const user = perfUsersMap.get(String(entry.userId));
+        return {
+          ...entry,
+          name: user?.name || "",
+          email: user?.email || "",
+          role: normalizeRole(user?.role || ""),
+          completionRate: entry.total ? Number(((entry.approved / entry.total) * 100).toFixed(2)) : 0,
+        };
+      })
+      .sort((a, b) => b.completionRate - a.completionRate);
+
+    const auditLogs = [];
+    for (const row of allTaskRows) {
+      for (const entry of normalizeTaskHistory(row.task.history || [])) {
+        auditLogs.push({
+          taskId: row.task.taskId,
+          taskTitle: row.task.title,
+          folderPath: row.folderPath,
+          action: entry.action,
+          fromStatus: entry.fromStatus,
+          toStatus: entry.toStatus,
+          notes: entry.notes,
+          actor: entry.actor || null,
+          at: entry.at,
+        });
+      }
+    }
+    auditLogs.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+
+    res.json({
+      generatedAt: new Date(),
+      program: {
+        _id: root._id,
+        code: root?.copc?.programCode || root.name,
+        name: root?.copc?.programName || root.name,
+        description: root?.copc?.description || root?.copc?.departmentName || "",
+        year: root?.copc?.year || null,
+      },
+      completionReport: completion,
+      perCollegeComplianceReport: perFolder,
+      missingDocumentsReport: {
+        total: missingDocuments.length,
+        rows: missingDocuments,
+      },
+      userPerformanceReport: userPerformance,
+      auditLogs: auditLogs.slice(0, 1000),
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to generate task reports" });
+  }
+});
+
+// Trigger deadline reminders and overdue escalation for tasks
+app.post("/tasks/reminders/run", async (req, res) => {
+  try {
+    const { userId, role, dueSoonDays = 3 } = req.body || {};
+    const actorRole = await resolveActorRole(userId, role);
+    if (!["superadmin", "qa_admin"].includes(normalizeRole(actorRole))) {
+      return res.status(403).json({ error: "Only super admin or QA admin can run task reminders" });
+    }
+
+    const now = new Date();
+    const dueSoonBoundary = new Date(now);
+    dueSoonBoundary.setDate(dueSoonBoundary.getDate() + Math.max(1, Number(dueSoonDays) || 3));
+
+    const folders = await Folder.find({
+      deletedAt: null,
+      complianceTasks: { $exists: true, $ne: [] },
+    }).select("_id name folderAssignments complianceTasks");
+
+    let dueSoonCount = 0;
+    let overdueCount = 0;
+    let notifiedCount = 0;
+    const dedupe = new Set();
+
+    for (const folder of folders) {
+      const taskRows = flattenTaskTree(computeTaskProgress(folder.complianceTasks || []).normalized);
+      for (const row of taskRows) {
+        const task = normalizeTaskNode(row.task || {});
+        const dueDate = toTaskDate(task.dueDate, null);
+        if (!dueDate) continue;
+        if (task.status === "approved") continue;
+
+        const isOverdue = dueDate.getTime() < now.getTime();
+        const isDueSoon = !isOverdue && dueDate.getTime() <= dueSoonBoundary.getTime();
+        if (!isOverdue && !isDueSoon) continue;
+
+        if (isOverdue) overdueCount += 1;
+        if (isDueSoon) dueSoonCount += 1;
+
+        const assignees = collectTaskAssigneeIds(task);
+        const escalationTargets = isOverdue
+          ? uniqNotificationIds([
+              ...(folder?.folderAssignments?.qaOfficers || []),
+              ...(folder?.folderAssignments?.programChairs || []),
+            ])
+          : [];
+        const targets = uniqNotificationIds([...assignees, ...escalationTargets]);
+        for (const target of targets) {
+          const dedupeKey = `${String(target)}:${String(task.taskId || buildTaskReferenceId(task))}:${isOverdue ? "overdue" : "dueSoon"}`;
+          if (dedupe.has(dedupeKey)) continue;
+          dedupe.add(dedupeKey);
+
+          // eslint-disable-next-line no-await-in-loop
+          const notification = await createNotification(
+            target,
+            "DEADLINE_ALERT",
+            isOverdue ? "Task overdue" : "Task deadline reminder",
+            isOverdue
+              ? `Task "${task.title}" in folder "${folder.name}" is overdue.`
+              : `Task "${task.title}" in folder "${folder.name}" is due on ${dueDate.toLocaleDateString()}.`,
+            task.title,
+            folder._id,
+            "Folder",
+            {
+              actorId: userId,
+              metadata: {
+                folderName: folder.name,
+                taskTitle: task.title,
+                taskId: task.taskId || buildTaskReferenceId(task),
+                dueDate,
+                status: task.status,
+                overdue: isOverdue,
+              },
+            }
+          );
+          if (notification) notifiedCount += 1;
+        }
+      }
+    }
+
+    createLog("RUN_TASK_REMINDERS", userId, `Task reminders: ${notifiedCount} notifications`);
+    res.json({
+      success: true,
+      dueSoonTasks: dueSoonCount,
+      overdueTasks: overdueCount,
+      notificationsCreated: notifiedCount,
+      generatedAt: new Date(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to run task reminders" });
   }
 });
 
@@ -4880,21 +6932,22 @@ app.post("/copc/programs/init", async (req, res) => {
       role,
       programCode,
       programName,
+      description,
       departmentName,
       year,
       deptChairIds = [],
       qaAdminIds = [],
       evaluatorIds = [],
       uploaderIds = [],
-      facultyUserIds = [],
     } = req.body || {};
 
     const actorRole = await resolveActorRole(userId, role);
     if (actorRole !== "superadmin") {
       return res.status(403).json({ error: "Only super admin can initialize COPC programs" });
     }
-    if (!programCode || !programName || !departmentName || !year) {
-      return res.status(400).json({ error: "programCode, programName, departmentName, and year are required" });
+    const normalizedDescription = String(description || departmentName || "").trim();
+    if (!programCode || !programName || !normalizedDescription || !year) {
+      return res.status(400).json({ error: "programCode, programName, description, and year are required" });
     }
 
     const rootFolderName = "COPC";
@@ -4937,6 +6990,7 @@ app.post("/copc/programs/init", async (req, res) => {
 
     const baseAssignments = {
       uploaders: cleanIds(uploaderIds),
+      uploaderGroups: [],
       programChairs: cleanIds(deptChairIds),
       qaOfficers: cleanIds(qaAdminIds),
       evaluators: cleanIds(evaluatorIds),
@@ -4954,7 +7008,8 @@ app.post("/copc/programs/init", async (req, res) => {
         isProgramRoot: true,
         programCode: String(programCode).trim().toUpperCase(),
         programName: String(programName).trim(),
-        departmentName: String(departmentName).trim(),
+        description: normalizedDescription,
+        departmentName: normalizedDescription,
         year: Number(year),
         workflowStage: "collecting_documents",
         workflowStatus: "Collecting Documents",
@@ -4962,64 +7017,14 @@ app.post("/copc/programs/init", async (req, res) => {
     });
 
     const createdFolders = [programFolder];
-    let facultyCredentialsFolder = null;
-    for (const sectionName of COPC_DEFAULT_STRUCTURE) {
-      const taskTitles = COPC_DEFAULT_TASKS[sectionName] || [];
-      const tasks = taskTitles.map((title) =>
-        normalizeTaskNode({
-          title,
-          status: "not_started",
-          percentage: 0,
-          scope: sectionName,
-          checks: ["complete", "updated", "aligned with CHED standards"],
-        })
-      );
-      const section = await Folder.create({
-        name: sectionName,
-        owner: userId,
-        parentFolder: programFolder._id,
-        permissions: "owner",
-        sharedWith: [],
-        complianceProfileKey: programKey,
-        folderAssignments: baseAssignments,
-        complianceTasks: tasks,
-      });
-      createdFolders.push(section);
-      if (sectionName.toLowerCase().includes("faculty")) facultyCredentialsFolder = section;
-    }
-
-    if (facultyCredentialsFolder) {
-      const facultyIds = cleanIds(facultyUserIds);
-      for (const facultyId of facultyIds) {
-        const facultyUser = await UserModel.findById(facultyId).select("email");
-        if (!facultyUser) continue;
-        const folderName = String(facultyUser.email || `faculty-${facultyId}`).split("@")[0];
-        const facultyFolder = await Folder.create({
-          name: folderName,
-          owner: userId,
-          parentFolder: facultyCredentialsFolder._id,
-          permissions: "owner",
-          sharedWith: [],
-          complianceProfileKey: programKey,
-          folderAssignments: {
-            uploaders: [facultyId],
-            programChairs: baseAssignments.programChairs,
-            qaOfficers: baseAssignments.qaOfficers,
-            evaluators: baseAssignments.evaluators,
-          },
-          complianceTasks: (COPC_DEFAULT_TASKS["03 Faculty Credentials"] || []).map((title) =>
-            normalizeTaskNode({
-              title,
-              status: "not_started",
-              percentage: 0,
-              scope: "03 Faculty Credentials",
-              checks: ["complete", "updated", "aligned with CHED standards"],
-            })
-          ),
-        });
-        createdFolders.push(facultyFolder);
-      }
-    }
+    await createCopcFolderTreeNodes({
+      nodes: cloneFolderTemplate(COPC_FOLDER_TREE_TEMPLATE),
+      parentId: programFolder._id,
+      ownerId: userId,
+      programKey,
+      baseAssignments,
+      createdFolders,
+    });
 
     createLog("COPC_INIT_PROGRAM", userId, `Initialized ${programName} (${programCode}) COPC workflow`);
     res.json({
@@ -5066,7 +7071,8 @@ app.get("/copc/programs", async (req, res) => {
           profileKey: folder.complianceProfileKey || null,
           programCode: folder?.copc?.programCode || "",
           programName: folder?.copc?.programName || folder.name,
-          departmentName: folder?.copc?.departmentName || "",
+          description: folder?.copc?.description || folder?.copc?.departmentName || "",
+          departmentName: folder?.copc?.description || folder?.copc?.departmentName || "",
           year: folder?.copc?.year || null,
           workflowStage,
           workflowStatus,
@@ -5094,7 +7100,7 @@ app.get("/copc/programs/:id/workflow", async (req, res) => {
     }
 
     const folderIds = await getDescendantFolderIds(root._id);
-    const folders = await Folder.find({ _id: { $in: folderIds }, deletedAt: null }).select("name complianceTasks");
+    const folders = await Folder.find({ _id: { $in: folderIds }, deletedAt: null }).select("_id name parentFolder complianceTasks");
     const files = await File.find({ parentFolder: { $in: folderIds }, deletedAt: null }).select("reviewWorkflow parentFolder");
 
     const counts = {
@@ -5115,32 +7121,7 @@ app.get("/copc/programs/:id/workflow", async (req, res) => {
       if (wf?.verificationBadge?.verified) counts.verified += 1;
     }
 
-    const bucketKeywords = [
-      { label: "Faculty Documents", keys: ["faculty"] },
-      { label: "Curriculum", keys: ["curriculum"] },
-      { label: "Facilities", keys: ["facilities"] },
-      { label: "Library Resources", keys: ["library"] },
-      { label: "Program Profile", keys: ["program profile"] },
-      { label: "Administration", keys: ["administration"] },
-      { label: "Supporting Documents", keys: ["supporting"] },
-    ];
-    const summaryMap = {};
-    bucketKeywords.forEach((b) => (summaryMap[b.label] = { total: 0, nodes: 0 }));
-    for (const folder of folders) {
-      const low = String(folder.name || "").toLowerCase();
-      const picked = bucketKeywords.find((b) => b.keys.some((k) => low.includes(k)));
-      if (!picked) continue;
-      const { progress, totalNodes } = computeTaskProgress(folder.complianceTasks || []);
-      summaryMap[picked.label].total += progress;
-      if (totalNodes > 0) summaryMap[picked.label].nodes += 1;
-    }
-    const summary = Object.entries(summaryMap).map(([label, value]) => ({
-      label,
-      percent: value.nodes > 0 ? Number((value.total / value.nodes).toFixed(2)) : 0,
-    }));
-    const overallCompliance = summary.length
-      ? Number((summary.reduce((acc, item) => acc + item.percent, 0) / summary.length).toFixed(2))
-      : 0;
+    const { summary, overallCompliance } = computeCopcSummaryByTopFolders(folders, root._id);
     const finalApprovalChecklist = {
       finalDocumentVerification:
         counts.submitted > 0 && counts.approved === counts.submitted,
@@ -5178,7 +7159,8 @@ app.get("/copc/programs/:id/workflow", async (req, res) => {
         _id: root._id,
         code: root?.copc?.programCode || root.name,
         name: root?.copc?.programName || root.name,
-        department: root?.copc?.departmentName || "",
+        description: root?.copc?.description || root?.copc?.departmentName || "",
+        department: root?.copc?.description || root?.copc?.departmentName || "",
         year: root?.copc?.year || null,
         stage: workflowStage,
         status: workflowStatus,
@@ -5188,6 +7170,7 @@ app.get("/copc/programs/:id/workflow", async (req, res) => {
         archiveMeta: root?.copc?.archiveMeta || {},
         assignments: {
           uploaders: Array.isArray(root?.folderAssignments?.uploaders) ? root.folderAssignments.uploaders : [],
+          uploaderGroups: Array.isArray(root?.folderAssignments?.uploaderGroups) ? root.folderAssignments.uploaderGroups : [],
           programChairs: Array.isArray(root?.folderAssignments?.programChairs) ? root.folderAssignments.programChairs : [],
           qaOfficers: Array.isArray(root?.folderAssignments?.qaOfficers) ? root.folderAssignments.qaOfficers : [],
           evaluators: Array.isArray(root?.folderAssignments?.evaluators) ? root.folderAssignments.evaluators : [],
@@ -5282,7 +7265,8 @@ app.get("/copc/programs/:id/department-chair/submissions", async (req, res) => {
         _id: root._id,
         code: root?.copc?.programCode || root.name,
         name: root?.copc?.programName || root.name,
-        department: root?.copc?.departmentName || "",
+        description: root?.copc?.description || root?.copc?.departmentName || "",
+        department: root?.copc?.description || root?.copc?.departmentName || "",
         year: root?.copc?.year || null,
       },
       counts,
@@ -5373,7 +7357,8 @@ app.get("/copc/programs/:id/qa/submissions", async (req, res) => {
         _id: root._id,
         code: root?.copc?.programCode || root.name,
         name: root?.copc?.programName || root.name,
-        department: root?.copc?.departmentName || "",
+        description: root?.copc?.description || root?.copc?.departmentName || "",
+        department: root?.copc?.description || root?.copc?.departmentName || "",
         year: root?.copc?.year || null,
       },
       counts,
@@ -5532,34 +7517,7 @@ app.get("/copc/programs/:id/evaluation/report/download", async (req, res) => {
       if (wf?.verificationBadge?.verified) counts.verified += 1;
     }
 
-    const bucketKeywords = [
-      { label: "Faculty Documents", keys: ["faculty"] },
-      { label: "Curriculum", keys: ["curriculum"] },
-      { label: "Facilities", keys: ["facilities"] },
-      { label: "Library Resources", keys: ["library"] },
-      { label: "Program Profile", keys: ["program profile"] },
-      { label: "Administration", keys: ["administration"] },
-      { label: "Supporting Documents", keys: ["supporting"] },
-    ];
-    const summaryMap = {};
-    bucketKeywords.forEach((bucket) => {
-      summaryMap[bucket.label] = { total: 0, nodes: 0 };
-    });
-    for (const folder of folders) {
-      const low = String(folder.name || "").toLowerCase();
-      const picked = bucketKeywords.find((bucket) => bucket.keys.some((key) => low.includes(key)));
-      if (!picked) continue;
-      const { progress, totalNodes } = computeTaskProgress(folder.complianceTasks || []);
-      summaryMap[picked.label].total += progress;
-      if (totalNodes > 0) summaryMap[picked.label].nodes += 1;
-    }
-    const summary = Object.entries(summaryMap).map(([label, value]) => ({
-      label,
-      percent: value.nodes > 0 ? Number((value.total / value.nodes).toFixed(2)) : 0,
-    }));
-    const overallCompliance = summary.length
-      ? Number((summary.reduce((acc, item) => acc + item.percent, 0) / summary.length).toFixed(2))
-      : 0;
+    const { summary, overallCompliance } = computeCopcSummaryByTopFolders(folders, root._id);
 
     const verifiedDocuments = files
       .filter((file) => isFileFullyApprovedForCopc(file))
@@ -5582,7 +7540,7 @@ app.get("/copc/programs/:id/evaluation/report/download", async (req, res) => {
     lines.push("Section,Metric,Value");
     lines.push(`Program,Code,${escapeCsv(root?.copc?.programCode || root.name)}`);
     lines.push(`Program,Name,${escapeCsv(root?.copc?.programName || root.name)}`);
-    lines.push(`Program,Department,${escapeCsv(root?.copc?.departmentName || "")}`);
+    lines.push(`Program,Description,${escapeCsv(root?.copc?.description || root?.copc?.departmentName || "")}`);
     lines.push(`Program,Academic Year,${escapeCsv(root?.copc?.year || "")}`);
     lines.push(`Program,Workflow Stage,${escapeCsv(root?.copc?.workflowStage || "initialized")}`);
     lines.push(`Program,Workflow Status,${escapeCsv(root?.copc?.workflowStatus || "In Progress")}`);
@@ -5705,6 +7663,213 @@ app.get("/copc/programs/:id/my-upload-status", async (req, res) => {
   }
 });
 
+// List COPC compliance tasks assigned to the current user for a selected program
+app.get("/copc/programs/:id/assigned-tasks", async (req, res) => {
+  try {
+    const { userId, role } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    if (!canViewCompliance(actorRole)) {
+      return res.status(403).json({ error: "Not authorized to view COPC assigned tasks" });
+    }
+
+    const root = await Folder.findById(req.params.id).select("name copc complianceProfileKey folderAssignments owner");
+    if (!root || !root?.copc?.isProgramRoot) {
+      return res.status(404).json({ error: "COPC program root not found" });
+    }
+
+    const isAdmin = actorRole === "superadmin";
+    if (!isAdmin && !(await canUserAccessCopcProgram(root, userId, actorRole))) {
+      return res.status(403).json({ error: "Not authorized to view this COPC program" });
+    }
+
+    const folderIds = await getDescendantFolderIds(root._id);
+    const folders = await Folder.find({ _id: { $in: folderIds }, deletedAt: null })
+      .select("_id name parentFolder complianceTasks folderAssignments")
+      .sort({ name: 1 })
+      .lean();
+
+    const folderById = new Map(folders.map((folder) => [String(folder._id), folder]));
+    const rootId = String(root._id);
+    const normalizedActorRole = normalizeRole(actorRole);
+    const rootRoleAssignments = getFolderAssignmentsForRole(root, actorRole);
+    const facultyUsesUploaderGroups = normalizedActorRole === "faculty";
+
+    const uploaderGroupMemberMap = new Map();
+    if (facultyUsesUploaderGroups) {
+      const uploaderGroupIds = new Set(
+        [
+          ...(root?.folderAssignments?.uploaderGroups || []),
+          ...folders.flatMap((folder) => folder?.folderAssignments?.uploaderGroups || []),
+        ]
+          .map((groupId) => toObjectIdString(groupId))
+          .filter(Boolean)
+      );
+
+      if (uploaderGroupIds.size > 0) {
+        const groups = await Group.find({ _id: { $in: Array.from(uploaderGroupIds) } })
+          .select("_id members")
+          .lean();
+        for (const group of groups) {
+          const memberIds = new Set(
+            (Array.isArray(group?.members) ? group.members : [])
+              .map((member) => toObjectIdString(member))
+              .filter(Boolean)
+          );
+          uploaderGroupMemberMap.set(String(group?._id || ""), memberIds);
+        }
+      }
+    }
+
+    const buildFolderPath = (folderId) => {
+      const parts = [];
+      let cursor = folderById.get(String(folderId));
+      let guard = 0;
+      while (cursor && guard < 240) {
+        guard += 1;
+        const cursorId = String(cursor._id);
+        if (cursorId === rootId) break;
+        parts.unshift(String(cursor.name || "Untitled Folder"));
+        if (!cursor.parentFolder) break;
+        cursor = folderById.get(String(cursor.parentFolder));
+      }
+      return parts.join(" / ");
+    };
+
+    const rows = [];
+    const summary = {
+      folders: 0,
+      totalTasks: 0,
+      pending: 0,
+      inProgress: 0,
+      forReview: 0,
+      approved: 0,
+      rejected: 0,
+      overdue: 0,
+      // Legacy aliases kept for existing clients.
+      notStarted: 0,
+      complete: 0,
+    };
+
+    for (const folder of folders) {
+      const folderId = String(folder._id);
+      if (folderId === rootId) continue;
+
+      const taskNodes = flattenTaskTree(folder.complianceTasks || []);
+      const folderRoleAssignments = getFolderAssignmentsForRole(folder, actorRole);
+      const assignedFromFolderScope =
+        includesUserInAssignmentList(folderRoleAssignments, userId) ||
+        includesUserInAssignmentList(rootRoleAssignments, userId);
+      const assignedFromUploaderGroupScope =
+        facultyUsesUploaderGroups &&
+        (
+          includesUserInAnyGroupMemberList(
+            folder?.folderAssignments?.uploaderGroups || [],
+            userId,
+            uploaderGroupMemberMap
+          ) ||
+          includesUserInAnyGroupMemberList(
+            root?.folderAssignments?.uploaderGroups || [],
+            userId,
+            uploaderGroupMemberMap
+          )
+        );
+
+      const folderAssignedForRole = isAdmin
+        ? true
+        : (assignedFromFolderScope || assignedFromUploaderGroupScope);
+
+      const assignedTasks = [];
+      for (const node of taskNodes) {
+        const normalizedTask = normalizeTaskNode(node.task || {});
+        const taskAssignedForRole = isAdmin
+          ? true
+          : includesUserInAssignmentList(getTaskAssignmentsForRole(normalizedTask, actorRole), userId);
+
+        if (!folderAssignedForRole && !taskAssignedForRole) continue;
+
+        const assignmentSources = [];
+        if (folderAssignedForRole) assignmentSources.push("folder_scope");
+        if (taskAssignedForRole) assignmentSources.push("task_direct");
+
+        assignedTasks.push({
+          taskId: String(normalizedTask.taskId || normalizedTask._id || node.taskId || ""),
+          title: normalizedTask.title,
+          description: normalizedTask.description || "",
+          folderId: String(folder._id),
+          folderName: String(folder.name || "Untitled Folder"),
+          folderPath: buildFolderPath(folder._id),
+          scope: normalizedTask.scope || "",
+          taskType: normalizedTask.taskType || "general",
+          priority: normalizedTask.priority || "medium",
+          dueDate: normalizedTask.dueDate || null,
+          status: normalizedTask.status || "pending",
+          legacyStatus: normalizedTask.legacyStatus || mapTaskStatusToLegacy(normalizedTask.status),
+          percentage: Number(normalizedTask.percentage || 0),
+          overdue: isTaskOverdue(normalizedTask),
+          depth: Number(node.depth || 0),
+          assignmentSources,
+        });
+      }
+
+      if (!assignedTasks.length && !folderAssignedForRole) continue;
+
+      const folderStats = {
+        totalTasks: assignedTasks.length,
+        pending: assignedTasks.filter((task) => task.status === "pending").length,
+        inProgress: assignedTasks.filter((task) => task.status === "in_progress").length,
+        forReview: assignedTasks.filter((task) => task.status === "for_review").length,
+        approved: assignedTasks.filter((task) => task.status === "approved").length,
+        rejected: assignedTasks.filter((task) => task.status === "rejected").length,
+        overdue: assignedTasks.filter((task) => task.overdue).length,
+      };
+      folderStats.notStarted = folderStats.pending;
+      folderStats.complete = folderStats.approved;
+
+      summary.folders += 1;
+      summary.totalTasks += folderStats.totalTasks;
+      summary.pending += folderStats.pending;
+      summary.inProgress += folderStats.inProgress;
+      summary.forReview += folderStats.forReview;
+      summary.approved += folderStats.approved;
+      summary.rejected += folderStats.rejected;
+      summary.overdue += folderStats.overdue;
+      summary.notStarted += folderStats.notStarted;
+      summary.complete += folderStats.complete;
+
+      rows.push({
+        folderId: folder._id,
+        folderName: folder.name,
+        folderPath: buildFolderPath(folder._id),
+        assignedByRoleScope: folderAssignedForRole,
+        progress: computeTaskProgress(folder.complianceTasks || []).progress,
+        stats: folderStats,
+        tasks: assignedTasks,
+      });
+    }
+
+    rows.sort((a, b) =>
+      String(a.folderPath || a.folderName || "").localeCompare(
+        String(b.folderPath || b.folderName || "")
+      )
+    );
+
+    res.json({
+      program: {
+        _id: root._id,
+        code: root?.copc?.programCode || root.name,
+        name: root?.copc?.programName || root.name,
+        description: root?.copc?.description || root?.copc?.departmentName || "",
+        year: root?.copc?.year || null,
+      },
+      role: actorRole,
+      summary,
+      folders: rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load assigned COPC tasks" });
+  }
+});
+
 // List folders under a COPC program scope with upload eligibility
 app.get("/copc/programs/:id/folders", async (req, res) => {
   try {
@@ -5738,6 +7903,7 @@ app.get("/copc/programs/:id/folders", async (req, res) => {
         _id: root._id,
         code: root?.copc?.programCode || root.name,
         name: root?.copc?.programName || root.name,
+        description: root?.copc?.description || root?.copc?.departmentName || "",
         year: root?.copc?.year || null,
         isLocked: !!root?.copc?.locked?.isLocked,
       },
@@ -5769,25 +7935,28 @@ app.patch("/copc/programs/:id/assignments", async (req, res) => {
 
     const previousAssignments = {
       uploaders: [...(root.folderAssignments?.uploaders || [])],
+      uploaderGroups: [...(root.folderAssignments?.uploaderGroups || [])],
       programChairs: [...(root.folderAssignments?.programChairs || [])],
       qaOfficers: [...(root.folderAssignments?.qaOfficers || [])],
       evaluators: [...(root.folderAssignments?.evaluators || [])],
     };
 
-    const clean = (value) =>
-      Array.from(
-        new Set(
-          (Array.isArray(value) ? value : [])
-            .map((entry) => entry?._id?.toString?.() || entry?.toString?.())
-            .filter(Boolean)
-        )
+    let uploaderResolution = { uploaderIds: [], uploaderGroupIds: [] };
+    try {
+      uploaderResolution = await resolveCopcUploaderAssignments(
+        assignments.uploaders,
+        assignments.uploaderGroups ?? assignments.uploaderGroupIds
       );
+    } catch (assignmentErr) {
+      return res.status(400).json({ error: assignmentErr?.message || "Invalid uploader group assignment" });
+    }
 
     const next = {
-      uploaders: clean(assignments.uploaders),
-      programChairs: clean(assignments.programChairs),
-      qaOfficers: clean(assignments.qaOfficers),
-      evaluators: clean(assignments.evaluators),
+      uploaders: uploaderResolution.uploaderIds,
+      uploaderGroups: uploaderResolution.uploaderGroupIds,
+      programChairs: cleanObjectIdList(assignments.programChairs),
+      qaOfficers: cleanObjectIdList(assignments.qaOfficers),
+      evaluators: cleanObjectIdList(assignments.evaluators),
     };
 
     root.folderAssignments = next;
@@ -5800,6 +7969,7 @@ app.patch("/copc/programs/:id/assignments", async (req, res) => {
       {
         $set: {
           "folderAssignments.uploaders": next.uploaders,
+          "folderAssignments.uploaderGroups": next.uploaderGroups,
           "folderAssignments.programChairs": next.programChairs,
           "folderAssignments.qaOfficers": next.qaOfficers,
           "folderAssignments.evaluators": next.evaluators,
@@ -7148,13 +9318,45 @@ app.delete("/trash/folders/:id", async (req, res) => {
 // Get all users
 app.get("/users", async (req, res) => {
   try {
-    const users = await UserModel.find()
-      .select("_id name email role active createdAt")
+    const rows = await UserModel.find()
+      .select("_id name email department role active profilePicture createdAt")
       .sort({ createdAt: -1 })
       .lean();
+    const users = rows.map((user) => ({
+      ...user,
+      department: normalizeDepartmentCode(user?.department) || "Unassigned",
+    }));
     res.json(users);
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch users" });
+  }
+});
+
+// Get one user profile (self or admin)
+app.get("/users/:id", async (req, res, next) => {
+  try {
+    if (String(req.params.id || "").toLowerCase() === "stats") {
+      return next();
+    }
+    const actorId = req.query?.userId;
+    const actorRole = await resolveActorRole(actorId, req.query?.role);
+    const isAdmin = canManageUsers(actorRole);
+    const isSelf = !!actorId && String(actorId) === String(req.params.id);
+    if (!isAdmin && !isSelf) {
+      return res.status(403).json({ error: "Not authorized to view this user profile" });
+    }
+
+    const user = await UserModel.findById(req.params.id)
+      .select("_id name email department role active profilePicture createdAt")
+      .lean();
+    if (!user) return res.status(404).json({ error: "User not found" });
+
+    res.json({
+      ...user,
+      department: normalizeDepartmentCode(user?.department) || "Unassigned",
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch user profile" });
   }
 });
 
@@ -7250,10 +9452,11 @@ app.post("/admin/users", async (req, res) => {
     if (!canManageUsers(actorRole)) {
       return res.status(403).json({ error: "Only super admin can manage users" });
     }
-    const { email, password, name, role } = req.body;
+    const { email, password, name, role, department } = req.body;
     const allowedRoles = ["superadmin", "qa_admin", "dept_chair", "faculty", "evaluator"];
     const normalizedEmail = normalizeEmail(email);
     const normalizedPassword = String(password || "");
+    const normalizedDepartment = normalizeDepartmentCode(department);
 
     // Validate required fields
     if (!normalizedEmail || !normalizedPassword) {
@@ -7263,6 +9466,9 @@ app.post("/admin/users", async (req, res) => {
       return res.status(400).json({
         error: `Password must be at least ${MIN_PASSWORD_LENGTH} characters`,
       });
+    }
+    if (!normalizedDepartment) {
+      return res.status(400).json({ error: `Department must be one of: ${DEPARTMENT_CODES.join(", ")}` });
     }
 
     // Check if user already exists
@@ -7282,11 +9488,15 @@ app.post("/admin/users", async (req, res) => {
       email: normalizedEmail,
       password: normalizePasswordForStorage(normalizedPassword),
       name: name || "",
+      department: normalizedDepartment,
       role: normalizedRole || "faculty",
       active: true
     });
 
     await newUser.save();
+    await applyDepartmentGroupMembership(newUser._id, normalizedDepartment, {
+      actorId: req.query?.userId || newUser._id,
+    });
 
     // Log user creation
     createLog("CREATE_USER", newUser._id, `Admin created user: ${normalizedEmail}`);
@@ -7321,6 +9531,7 @@ app.post("/admin/users/bulk", async (req, res) => {
     let successful = 0;
     let failed = 0;
     const errors = [];
+    const { groupsByCode } = await ensureDepartmentGroupsExist(req.query?.userId);
 
     for (let i = 0; i < users.length; i++) {
       const user = users[i];
@@ -7356,16 +9567,28 @@ app.post("/admin/users/bulk", async (req, res) => {
           continue;
         }
 
+        const normalizedDepartment = normalizeDepartmentCode(user.department);
+        if (!normalizedDepartment) {
+          errors.push(`Row ${i + 1}: Department must be one of ${DEPARTMENT_CODES.join(", ")}`);
+          failed++;
+          continue;
+        }
+
         // Create new user
         const newUser = new UserModel({
           email: rowEmail,
           password: normalizePasswordForStorage(rowPassword),
           name: user.name || "",
+          department: normalizedDepartment,
           role: userRole,
           active: true
         });
 
         await newUser.save();
+        await applyDepartmentGroupMembership(newUser._id, normalizedDepartment, {
+          groupsByCode,
+          actorId: req.query?.userId || newUser._id,
+        });
         successful++;
 
         // Log user creation
@@ -8106,6 +10329,33 @@ app.get("/users/:id/groups", async (req, res) => {
     res.json(groups);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Get department groups (COED/COT/COHTM)
+app.get("/department-groups", async (req, res) => {
+  try {
+    const actorRole = await resolveActorRole(req.query?.userId, req.query?.role);
+    if (!canManageUsers(actorRole)) {
+      return res.status(403).json({ error: "Only super admin can manage users" });
+    }
+
+    const { groupsByCode } = await ensureDepartmentGroupsExist(req.query?.userId);
+    const rows = DEPARTMENT_CODES.map((code) => {
+      const group = groupsByCode.get(code);
+      if (!group) return null;
+      const members = Array.isArray(group.members) ? group.members : [];
+      return {
+        _id: group._id,
+        name: code,
+        code,
+        memberCount: members.length,
+      };
+    }).filter(Boolean);
+
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch department groups" });
   }
 });
 
@@ -9050,7 +11300,7 @@ app.get("/admin/search", async (req, res) => {
         userQuery.$or = [{ name: termRegex }, { email: termRegex }];
       }
       if (dateRange) userQuery.createdAt = dateRange;
-      const users = await UserModel.find(userQuery).select("name email role createdAt active").limit(limitNum);
+      const users = await UserModel.find(userQuery).select("name email department role createdAt active").limit(limitNum);
 
       users.forEach(user => {
         results.push({
@@ -9058,6 +11308,7 @@ app.get("/admin/search", async (req, res) => {
           type: "user",
           name: user.name || user.email,
           email: user.email,
+          department: normalizeDepartmentCode(user.department) || "Unassigned",
           role: user.role,
           createdAt: user.createdAt,
           active: user.active

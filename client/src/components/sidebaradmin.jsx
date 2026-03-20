@@ -5,13 +5,11 @@ import {
   FaUsers,
   FaDatabase,
   FaUser,
-  FaFile,
   FaTimes,
   FaTrash,
   FaUserFriends,
   FaFolder,
-  FaListUl,
-  FaArchive,
+  FaLayerGroup,
 } from "react-icons/fa";
 import Upload from "../pages/upload";
 import "bootstrap/dist/css/bootstrap.min.css";
@@ -121,38 +119,14 @@ function SidebarSuperAdmin({ onClose }) {
               </li>
               <li className="nav-item">
                 <NavLink
-                  to="/admin/tasks"
+                  to="/admin/copc-dashboard"
                   className={({ isActive }) =>
                     `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
                   }
                   onClick={handleLinkClick}
                 >
-                  <FaListUl className="me-2" size={16} />
-                  Task Management
-                </NavLink>
-              </li>
-              <li className="nav-item">
-                <NavLink
-                  to="/copc-workflow"
-                  className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
-                  }
-                  onClick={handleLinkClick}
-                >
-                  <FaListUl className="me-2" size={16} />
-                  COPC Workflow
-                </NavLink>
-              </li>
-              <li className="nav-item">
-                <NavLink
-                  to="/admin/copc-programs"
-                  className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
-                  }
-                  onClick={handleLinkClick}
-                >
-                  <FaArchive className="me-2" size={16} />
-                  COPC Program Management
+                  <FaLayerGroup className="me-2" size={16} />
+                  COPC Dashboard
                 </NavLink>
               </li>
             </ul>
@@ -166,18 +140,6 @@ function SidebarSuperAdmin({ onClose }) {
             <ul className="nav nav-pills flex-column gap-1">
               <li className="nav-item">
                 <NavLink
-                  to="/admin/drive"
-                  className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
-                  }
-                  onClick={handleLinkClick}
-                >
-                  <FaFile className="me-2" size={16} />
-                  Admin Drive
-                </NavLink>
-              </li>
-              <li className="nav-item">
-                <NavLink
                   to="/admin"
                   className={({ isActive }) =>
                     `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
@@ -185,7 +147,7 @@ function SidebarSuperAdmin({ onClose }) {
                   onClick={handleLinkClick}
                 >
                   <FaFolder className="me-2" size={16} />
-                  Admin Workspace
+                  Admin Files
                 </NavLink>
               </li>
 

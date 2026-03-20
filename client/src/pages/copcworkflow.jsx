@@ -4,6 +4,20 @@ import { FaCheckCircle, FaCog, FaDownload, FaFolderOpen, FaTimes } from "react-i
 import { BACKEND_URL } from "../config";
 import { useNavigate, useSearchParams } from "react-router-dom";
 
+const DEPARTMENT_CODES = ["COED", "COT", "COHTM"];
+
+const clampPercent = (value) => {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(100, numeric));
+};
+
+const toDisplayFolderLabel = (value) =>
+  String(value || "")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
 export default function CopcWorkflowPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
@@ -22,13 +36,15 @@ export default function CopcWorkflowPage() {
 
   const [programs, setPrograms] = useState([]);
   const [users, setUsers] = useState([]);
+  const [departmentGroups, setDepartmentGroups] = useState([]);
   const [selectedProgramId, setSelectedProgramId] = useState("");
   const [workflow, setWorkflow] = useState(null);
+  const [workflowCards, setWorkflowCards] = useState([]);
   const [loading, setLoading] = useState(false);
   const [initDraft, setInitDraft] = useState({
     programCode: "",
     programName: "",
-    departmentName: "",
+    description: "",
     year: new Date().getFullYear(),
     deptChairIds: [],
     qaAdminIds: [],
@@ -38,6 +54,7 @@ export default function CopcWorkflowPage() {
   const [observationText, setObservationText] = useState("");
   const [programAssignments, setProgramAssignments] = useState({
     uploaders: [],
+    uploaderGroups: [],
     programChairs: [],
     qaOfficers: [],
     evaluators: [],
@@ -47,6 +64,7 @@ export default function CopcWorkflowPage() {
     title: "Assign to:",
     selectedIds: [],
     candidateIds: [],
+    candidateType: "user",
     search: "",
     onSave: null,
   });
@@ -56,6 +74,50 @@ export default function CopcWorkflowPage() {
   const canReviewComplianceSubmissions = isSuperAdmin || normalizedRole === "qa_admin";
   const canOpenEvaluationStage = isSuperAdmin || normalizedRole === "evaluator";
   const canOpenUploadWorkspace = !isSuperAdmin && normalizedRole !== "evaluator";
+  const canOpenSummaryFolders = normalizedRole !== "evaluator";
+
+  const buildWorkflowCards = (workflowData, folderRows = [], programId) => {
+    const summaryRows = Array.isArray(workflowData?.summary) ? workflowData.summary : [];
+    const summaryById = new Map();
+    const summaryByLabel = new Map();
+
+    summaryRows.forEach((row) => {
+      const rowId = String(row?.folderId || "");
+      const rowLabel = String(row?.label || "");
+      const rowPercent = Number(row?.percent || 0);
+      if (rowId) summaryById.set(rowId, rowPercent);
+      if (rowLabel) summaryByLabel.set(rowLabel, rowPercent);
+    });
+
+    const topFolders = (Array.isArray(folderRows) ? folderRows : [])
+      .filter(
+        (folder) =>
+          !folder?.isProgramRoot &&
+          String(folder?.parentFolder || "") === String(programId || "")
+      )
+      .sort((a, b) => String(b?.name || "").localeCompare(String(a?.name || "")));
+
+    if (!topFolders.length) {
+      return summaryRows.map((row) => ({
+        folderId: String(row?.folderId || ""),
+        label: String(row?.label || "Untitled Folder"),
+        percent: Number(row?.percent || 0),
+      }));
+    }
+
+    return topFolders.map((folder) => {
+      const folderId = String(folder?._id || "");
+      const folderName = String(folder?.name || "Untitled Folder");
+      const percent = summaryById.has(folderId)
+        ? Number(summaryById.get(folderId) || 0)
+        : Number(summaryByLabel.get(folderName) || 0);
+      return {
+        folderId,
+        label: folderName,
+        percent,
+      };
+    });
+  };
 
   const loadPrograms = async () => {
     const { data } = await axios.get(`${BACKEND_URL}/copc/programs`, { params: { userId, role } });
@@ -78,30 +140,72 @@ export default function CopcWorkflowPage() {
     setUsers(Array.isArray(data) ? data : []);
   };
 
-  const loadWorkflow = async (programId) => {
-    if (!programId) return;
-    setLoading(true);
+  const loadDepartmentGroups = async () => {
+    if (!isSuperAdmin) return;
+    let rows = [];
     try {
-      const { data } = await axios.get(`${BACKEND_URL}/copc/programs/${programId}/workflow`, {
-        params: { userId, role },
-      });
-      setWorkflow(data || null);
+      const { data } = await axios.get(`${BACKEND_URL}/department-groups`, { params: { userId, role } });
+      rows = Array.isArray(data) ? data : [];
+    } catch (err) {
+      const status = err?.response?.status;
+      if (status !== 404) throw err;
+      const fallback = await axios.get(`${BACKEND_URL}/groups`, { params: { userId, role } });
+      const groupRows = Array.isArray(fallback?.data) ? fallback.data : [];
+      rows = groupRows.map((group) => ({
+        _id: group?._id,
+        name: String(group?.name || "").toUpperCase(),
+        code: String(group?.name || "").toUpperCase(),
+        memberCount: Array.isArray(group?.members) ? group.members.length : 0,
+      }));
+    }
+    setDepartmentGroups(
+      rows
+        .filter((group) => DEPARTMENT_CODES.includes(String(group?.code || group?.name || "").toUpperCase()))
+        .map((group) => ({
+          ...group,
+          code: String(group?.code || group?.name || "").toUpperCase(),
+          name: String(group?.name || group?.code || "").toUpperCase(),
+        }))
+    );
+  };
+
+  const loadWorkflow = async (programId, options = {}) => {
+    const silent = !!options.silent;
+    if (!programId) return;
+    if (!silent) setLoading(true);
+    try {
+      const [workflowRes, foldersRes] = await Promise.all([
+        axios.get(`${BACKEND_URL}/copc/programs/${programId}/workflow`, {
+          params: { userId, role },
+        }),
+        axios.get(`${BACKEND_URL}/copc/programs/${programId}/folders`, {
+          params: { userId, role },
+        }),
+      ]);
+
+      const data = workflowRes?.data || null;
+      const folderRows = Array.isArray(foldersRes?.data?.folders) ? foldersRes.data.folders : [];
+      setWorkflow(data);
+      setWorkflowCards(buildWorkflowCards(data, folderRows, programId));
+
       if (data?.program?.assignments) {
         setProgramAssignments({
           uploaders: (data.program.assignments.uploaders || []).map((v) => String(v?._id || v)),
+          uploaderGroups: (data.program.assignments.uploaderGroups || []).map((v) => String(v?._id || v)),
           programChairs: (data.program.assignments.programChairs || []).map((v) => String(v?._id || v)),
           qaOfficers: (data.program.assignments.qaOfficers || []).map((v) => String(v?._id || v)),
           evaluators: (data.program.assignments.evaluators || []).map((v) => String(v?._id || v)),
         });
       }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   };
 
   useEffect(() => {
     loadPrograms().catch(() => setPrograms([]));
     loadUsers().catch(() => setUsers([]));
+    loadDepartmentGroups().catch(() => setDepartmentGroups([]));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -113,7 +217,34 @@ export default function CopcWorkflowPage() {
 
   useEffect(() => {
     if (!selectedProgramId) return;
-    loadWorkflow(selectedProgramId).catch(() => setWorkflow(null));
+    loadWorkflow(selectedProgramId).catch(() => {
+      setWorkflow(null);
+      setWorkflowCards([]);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProgramId]);
+
+  useEffect(() => {
+    if (!selectedProgramId) return undefined;
+
+    const refresh = () => {
+      loadWorkflow(selectedProgramId, { silent: true }).catch(() => {});
+    };
+
+    const timer = setInterval(refresh, 10000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") refresh();
+    };
+    const onFocus = () => refresh();
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProgramId]);
 
@@ -137,24 +268,13 @@ export default function CopcWorkflowPage() {
     return value;
   };
 
-  const usersById = useMemo(() => {
-    const map = new Map();
-    users.forEach((u) => map.set(String(u._id), u));
-    return map;
-  }, [users]);
-
-  const selectedLabel = (id) => {
-    const user = usersById.get(String(id));
-    if (!user) return "Unknown user";
-    return `${user.name || user.email} (${roleLabel(user.role)})`;
-  };
-
-  const openAssignModal = ({ title, candidateIds, selectedIds, onSave }) => {
+  const openAssignModal = ({ title, candidateIds, selectedIds, candidateType = "user", onSave }) => {
     setAssignModal({
       open: true,
       title: title || "Assign to:",
       selectedIds: selectedIds || [],
       candidateIds: candidateIds || [],
+      candidateType,
       search: "",
       onSave,
     });
@@ -166,12 +286,13 @@ export default function CopcWorkflowPage() {
       title: "Assign to:",
       selectedIds: [],
       candidateIds: [],
+      candidateType: "user",
       search: "",
       onSave: null,
     });
   };
 
-  const toggleModalUser = (id) => {
+  const toggleModalSelection = (id) => {
     setAssignModal((prev) => {
       const raw = String(id);
       const exists = prev.selectedIds.includes(raw);
@@ -187,9 +308,19 @@ export default function CopcWorkflowPage() {
     closeAssignModal();
   };
 
-  const modalUsers = useMemo(() => {
+  const modalCandidates = useMemo(() => {
     const ids = new Set((assignModal.candidateIds || []).map(String));
     const q = assignModal.search.trim().toLowerCase();
+    if (assignModal.candidateType === "group") {
+      return departmentGroups
+        .filter((group) => ids.has(String(group._id)))
+        .filter((group) => {
+          if (!q) return true;
+          const name = String(group.name || "").toLowerCase();
+          const code = String(group.code || "").toLowerCase();
+          return name.includes(q) || code.includes(q);
+        });
+    }
     return users
       .filter((u) => ids.has(String(u._id)))
       .filter((u) => {
@@ -198,64 +329,14 @@ export default function CopcWorkflowPage() {
         const email = String(u.email || "").toLowerCase();
         return name.includes(q) || email.includes(q);
       });
-  }, [assignModal.candidateIds, assignModal.search, users]);
+  }, [assignModal.candidateIds, assignModal.candidateType, assignModal.search, departmentGroups, users]);
 
-  const removeAssigned = (key, id) => {
-    setInitDraft((prev) => ({
-      ...prev,
-      [key]: (prev[key] || []).filter((x) => String(x) !== String(id)),
-    }));
-  };
-
-  const renderAssigneeBadges = (ids = [], key) => {
-    const list = (ids || []).map(String);
-    if (!list.length) return <div className="small text-muted mt-1">No assigned users.</div>;
+  const renderAssignmentCount = (ids = [], singular, plural) => {
+    const count = new Set((ids || []).map(String).filter(Boolean)).size;
+    if (count < 1) return <div className="small text-muted mt-1">No assigned users.</div>;
     return (
-      <div className="d-flex flex-wrap gap-2 mt-2">
-        {list.map((id) => (
-          <span key={`${key}-${id}`} className="badge text-bg-light border d-flex align-items-center gap-2">
-            {selectedLabel(id)}
-            <button
-              className="btn btn-sm p-0 border-0 bg-transparent text-muted"
-              type="button"
-              onClick={() => removeAssigned(key, id)}
-              title="Remove user"
-              style={{ lineHeight: 1 }}
-            >
-              <FaTimes />
-            </button>
-          </span>
-        ))}
-      </div>
-    );
-  };
-
-  const removeProgramAssigned = (key, id) => {
-    setProgramAssignments((prev) => ({
-      ...prev,
-      [key]: (prev[key] || []).filter((x) => String(x) !== String(id)),
-    }));
-  };
-
-  const renderProgramBadges = (ids = [], key) => {
-    const list = (ids || []).map(String);
-    if (!list.length) return <div className="small text-muted mt-1">No assigned users.</div>;
-    return (
-      <div className="d-flex flex-wrap gap-2 mt-2">
-        {list.map((id) => (
-          <span key={`${key}-${id}`} className="badge text-bg-light border d-flex align-items-center gap-2">
-            {selectedLabel(id)}
-            <button
-              className="btn btn-sm p-0 border-0 bg-transparent text-muted"
-              type="button"
-              onClick={() => removeProgramAssigned(key, id)}
-              title="Remove user"
-              style={{ lineHeight: 1 }}
-            >
-              <FaTimes />
-            </button>
-          </span>
-        ))}
+      <div className="small text-muted mt-1">
+        {count} {count === 1 ? singular : plural} assigned.
       </div>
     );
   };
@@ -267,7 +348,7 @@ export default function CopcWorkflowPage() {
       ...initDraft,
       year: Number(initDraft.year),
     });
-    setInitDraft((prev) => ({ ...prev, programCode: "", programName: "", departmentName: "" }));
+    setInitDraft((prev) => ({ ...prev, programCode: "", programName: "", description: "" }));
     await loadPrograms();
   };
 
@@ -315,13 +396,31 @@ export default function CopcWorkflowPage() {
     window.open(url, "_blank");
   };
 
+  const openDashboardTab = (tab, extraParams = {}) => {
+    const params = new URLSearchParams({
+      tab: String(tab || "workflow"),
+    });
+    if (selectedProgramId) params.set("programId", String(selectedProgramId));
+    Object.entries(extraParams || {}).forEach(([key, value]) => {
+      if (value === null || value === undefined || value === "") return;
+      params.set(key, String(value));
+    });
+    navigate(`/copc-dashboard?${params.toString()}`);
+  };
+
+  const openSummaryFolder = (folderId) => {
+    const targetFolderId = String(folderId || "");
+    if (!selectedProgramId || !targetFolderId) return;
+    openDashboardTab("upload", { folderId: targetFolderId });
+  };
+
   return (
     <div className="container-fluid py-2">
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <h4 className="mb-0">COPC Workflow</h4>
         <div className="d-flex gap-2">
           {canOpenUploadWorkspace && (
-            <button className="btn btn-outline-success" onClick={() => navigate("/copc-workflow/upload")}>
+            <button className="btn btn-outline-success" onClick={() => openDashboardTab("upload")}>
               <FaFolderOpen className="me-1" />
               Go to COPC Upload
             </button>
@@ -330,13 +429,7 @@ export default function CopcWorkflowPage() {
             <button
               className="btn btn-outline-primary"
               disabled={!selectedProgramId}
-              onClick={() =>
-                navigate(
-                  selectedProgramId
-                    ? `/copc-workflow/department-review?programId=${encodeURIComponent(selectedProgramId)}`
-                    : "/copc-workflow/department-review"
-                )
-              }
+              onClick={() => openDashboardTab("department_review")}
             >
               <FaCheckCircle className="me-1" />
               Review Faculty Submissions
@@ -346,13 +439,7 @@ export default function CopcWorkflowPage() {
             <button
               className="btn btn-outline-warning"
               disabled={!selectedProgramId}
-              onClick={() =>
-                navigate(
-                  selectedProgramId
-                    ? `/copc-workflow/qa-review?programId=${encodeURIComponent(selectedProgramId)}`
-                    : "/copc-workflow/qa-review"
-                )
-              }
+              onClick={() => openDashboardTab("qa_review")}
             >
               <FaCheckCircle className="me-1" />
               QA Compliance Review
@@ -362,13 +449,7 @@ export default function CopcWorkflowPage() {
             <button
               className="btn btn-outline-secondary"
               disabled={!selectedProgramId}
-              onClick={() =>
-                navigate(
-                  selectedProgramId
-                    ? `/copc-workflow/evaluation?programId=${encodeURIComponent(selectedProgramId)}`
-                    : "/copc-workflow/evaluation"
-                )
-              }
+              onClick={() => openDashboardTab("evaluation")}
             >
               <FaCheckCircle className="me-1" />
               Evaluation Stage
@@ -392,16 +473,16 @@ export default function CopcWorkflowPage() {
 
       {isSuperAdmin && (
         <div className="card shadow-sm mb-3">
-          <div className="card-header bg-light fw-semibold">Step 1-2: Initialize Program and COPC Structure</div>
+          <div className="card-header bg-light fw-semibold">Create COPC</div>
           <div className="card-body">
             <div className="row g-2">
               <div className="col-md-3"><input className="form-control" placeholder="Program Code (BSIT)" value={initDraft.programCode} onChange={(e) => setInitDraft((p) => ({ ...p, programCode: e.target.value }))} /></div>
               <div className="col-md-3"><input className="form-control" placeholder="Program Name" value={initDraft.programName} onChange={(e) => setInitDraft((p) => ({ ...p, programName: e.target.value }))} /></div>
-              <div className="col-md-3"><input className="form-control" placeholder="Department Name" value={initDraft.departmentName} onChange={(e) => setInitDraft((p) => ({ ...p, departmentName: e.target.value }))} /></div>
+              <div className="col-md-3"><input className="form-control" placeholder="Description" value={initDraft.description} onChange={(e) => setInitDraft((p) => ({ ...p, description: e.target.value }))} /></div>
               <div className="col-md-2"><input className="form-control" type="number" value={initDraft.year} onChange={(e) => setInitDraft((p) => ({ ...p, year: e.target.value }))} /></div>
               <div className="col-md-1 d-grid"><button className="btn btn-primary" onClick={submitInit}><FaCog /></button></div>
             </div>
-            <div className="small text-muted mt-2">Create the program first, then use the single Program Role Assignments card below.</div>
+            <div className="small text-muted mt-2">Create COPC with its description, then use the Program Role Assignments card below.</div>
           </div>
         </div>
       )}
@@ -417,24 +498,46 @@ export default function CopcWorkflowPage() {
                 <div className="row g-2">
                   <div className="col-lg-3 col-md-6">
                     <label className="small text-muted">Uploaders</label>
-                    <button
-                      className="btn btn-outline-primary btn-sm w-100"
-                      onClick={() =>
-                        openAssignModal({
-                          title: "Assign Uploaders",
-                          candidateIds: roleUsers("uploader").map((u) => String(u._id)),
-                          selectedIds: (programAssignments.uploaders || []).map(String),
-                          onSave: async (ids) => {
-                            const next = { ...programAssignments, uploaders: ids };
-                            setProgramAssignments(next);
-                            await saveProgramAssignments(next);
-                          },
-                        })
-                      }
-                    >
-                      Open Assign Modal
-                    </button>
-                    {renderProgramBadges(programAssignments.uploaders, "p-uploaders")}
+                    <div className="d-flex flex-column gap-2">
+                      <button
+                        className="btn btn-outline-primary btn-sm w-100"
+                        onClick={() =>
+                          openAssignModal({
+                            title: "Assign Uploaders (Users)",
+                            candidateType: "user",
+                            candidateIds: roleUsers("uploader").map((u) => String(u._id)),
+                            selectedIds: (programAssignments.uploaders || []).map(String),
+                            onSave: async (ids) => {
+                              const next = { ...programAssignments, uploaders: ids };
+                              setProgramAssignments(next);
+                              await saveProgramAssignments(next);
+                            },
+                          })
+                        }
+                      >
+                        Assign Users
+                      </button>
+                      <button
+                        className="btn btn-outline-secondary btn-sm w-100"
+                        onClick={() =>
+                          openAssignModal({
+                            title: "Assign Uploaders (Department Groups)",
+                            candidateType: "group",
+                            candidateIds: departmentGroups.map((group) => String(group._id)),
+                            selectedIds: (programAssignments.uploaderGroups || []).map(String),
+                            onSave: async (ids) => {
+                              const next = { ...programAssignments, uploaderGroups: ids };
+                              setProgramAssignments(next);
+                              await saveProgramAssignments(next);
+                            },
+                          })
+                        }
+                      >
+                        Assign Department Groups
+                      </button>
+                    </div>
+                    {renderAssignmentCount(programAssignments.uploaders, "uploader", "uploaders")}
+                    {renderAssignmentCount(programAssignments.uploaderGroups, "department group", "department groups")}
                   </div>
                   <div className="col-lg-3 col-md-6">
                     <label className="small text-muted">Dept Chairs</label>
@@ -455,7 +558,7 @@ export default function CopcWorkflowPage() {
                     >
                       Open Assign Modal
                     </button>
-                    {renderProgramBadges(programAssignments.programChairs, "p-chairs")}
+                    {renderAssignmentCount(programAssignments.programChairs, "dept chair", "dept chairs")}
                   </div>
                   <div className="col-lg-3 col-md-6">
                     <label className="small text-muted">QA Admins</label>
@@ -476,7 +579,7 @@ export default function CopcWorkflowPage() {
                     >
                       Open Assign Modal
                     </button>
-                    {renderProgramBadges(programAssignments.qaOfficers, "p-qa")}
+                    {renderAssignmentCount(programAssignments.qaOfficers, "QA admin", "QA admins")}
                   </div>
                   <div className="col-lg-3 col-md-6">
                     <label className="small text-muted">Evaluators</label>
@@ -497,7 +600,7 @@ export default function CopcWorkflowPage() {
                     >
                       Open Assign Modal
                     </button>
-                    {renderProgramBadges(programAssignments.evaluators, "p-eval")}
+                    {renderAssignmentCount(programAssignments.evaluators, "evaluator", "evaluators")}
                   </div>
                 </div>
               </div>
@@ -509,7 +612,7 @@ export default function CopcWorkflowPage() {
               <div className="d-flex justify-content-between align-items-start flex-wrap gap-2">
                 <div>
                   <h5 className="mb-1">{workflow.program.code} - {workflow.program.name}</h5>
-                  <div className="text-muted small">{workflow.program.department} | AY {workflow.program.year || "N/A"}</div>
+                  <div className="text-muted small">{workflow.program.description || "No description"} | AY {workflow.program.year || "N/A"}</div>
                 </div>
                 <div>
                   <span className={`badge ${workflow.program.isLocked ? "bg-danger" : "bg-success"}`}>{workflow.program.status}</span>
@@ -526,24 +629,70 @@ export default function CopcWorkflowPage() {
           </div>
 
           <div className="row g-3 mb-3">
-            {workflow.summary.map((row) => (
-              <div key={row.label} className="col-xl-3 col-md-6">
-                <div className="card h-100 shadow-sm">
-                  <div className="card-body py-3">
-                    <div className="small text-muted">{row.label}</div>
-                    <div className="fw-bold fs-5">{Math.round(row.percent)}%</div>
+            <div className="col-12">
+              <div
+                className="card h-100 shadow-sm border-primary border-2"
+                style={{ background: "rgba(13,110,253,0.08)" }}
+              >
+                <div className="card-body py-3">
+                  <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
+                    <div>
+                      <div className="small text-primary fw-semibold">Overall Compliance</div>
+                      <div className="fw-bold fs-4 text-primary">{Math.round(clampPercent(workflow.overallCompliance))}%</div>
+                    </div>
+                  </div>
+                  <div className="progress mt-3" style={{ height: "10px" }}>
+                    <div
+                      className="progress-bar bg-primary"
+                      role="progressbar"
+                      style={{ width: `${clampPercent(workflow.overallCompliance)}%` }}
+                      aria-valuenow={clampPercent(workflow.overallCompliance)}
+                      aria-valuemin="0"
+                      aria-valuemax="100"
+                    />
                   </div>
                 </div>
               </div>
-            ))}
-            <div className="col-xl-3 col-md-6">
-              <div className="card h-100 shadow-sm border-primary">
-                <div className="card-body py-3">
-                  <div className="small text-muted">Overall Compliance</div>
-                  <div className="fw-bold fs-5 text-primary">{Math.round(workflow.overallCompliance)}%</div>
-                </div>
-              </div>
             </div>
+            {workflowCards.map((row) => {
+              const rawLabel = String(row?.label || "Untitled Folder");
+              const displayLabel = toDisplayFolderLabel(rawLabel) || "Untitled Folder";
+              const folderPercent = clampPercent(row?.percent);
+              const folderId = String(row?.folderId || "");
+              const canOpenFolder = canOpenSummaryFolders && !!selectedProgramId && !!folderId;
+              return (
+                <div key={folderId || rawLabel} className="col-xl-3 col-md-6">
+                  <div className={`card h-100 shadow-sm ${canOpenFolder ? "border-primary-subtle" : ""}`}>
+                    <button
+                      type="button"
+                      className="btn text-start w-100 h-100 p-0 border-0"
+                      onClick={() => canOpenFolder && openSummaryFolder(folderId)}
+                      disabled={!canOpenFolder}
+                      title={canOpenFolder ? `Open folder: ${displayLabel}` : "Folder link unavailable"}
+                      style={{ cursor: canOpenFolder ? "pointer" : "default" }}
+                    >
+                      <div className="card-body py-3">
+                        <div className="small text-muted">{displayLabel}</div>
+                        <div className="fw-bold fs-5">{Math.round(folderPercent)}%</div>
+                        <div className="progress mt-2" style={{ height: "8px" }}>
+                          <div
+                            className="progress-bar"
+                            role="progressbar"
+                            style={{ width: `${folderPercent}%` }}
+                            aria-valuenow={folderPercent}
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                          />
+                        </div>
+                        <div className={`small mt-2 ${canOpenFolder ? "text-primary" : "text-muted"}`}>
+                          {canOpenFolder ? "Open folder" : "Folder link unavailable"}
+                        </div>
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
           <div className="row g-3 mb-3">
@@ -663,37 +812,56 @@ export default function CopcWorkflowPage() {
               <div className="modal-body p-2">
                 <input
                   className="form-control form-control-sm mb-2"
-                  placeholder="Enter name to find member"
+                  placeholder={assignModal.candidateType === "group" ? "Search department group" : "Enter name to find member"}
                   value={assignModal.search}
                   onChange={(e) => setAssignModal((prev) => ({ ...prev, search: e.target.value }))}
                 />
                 <div style={{ maxHeight: "230px", overflowY: "auto" }}>
-                  {modalUsers.map((u) => {
-                    const selected = assignModal.selectedIds.includes(String(u._id));
-                    const initials = String(u.name || u.email || "U").slice(0, 1).toUpperCase();
+                  {modalCandidates.map((item) => {
+                    const selected = assignModal.selectedIds.includes(String(item._id));
+                    const initials = String(
+                      assignModal.candidateType === "group"
+                        ? item.code || item.name || "G"
+                        : item.name || item.email || "U"
+                    )
+                      .slice(0, 1)
+                      .toUpperCase();
+                    const primaryText =
+                      assignModal.candidateType === "group" ? item.name || item.code : item.name || item.email;
+                    const secondaryText =
+                      assignModal.candidateType === "group"
+                        ? `${Number(item.memberCount || 0)} member${Number(item.memberCount || 0) === 1 ? "" : "s"}`
+                        : roleLabel(item.role);
                     return (
-                      <div key={u._id} className="d-flex align-items-center justify-content-between px-1 py-1 border-bottom">
+                      <div key={item._id} className="d-flex align-items-center justify-content-between px-1 py-1 border-bottom">
                         <div className="d-flex align-items-center gap-2">
                           <div
                             className="rounded-circle d-flex align-items-center justify-content-center text-white small"
-                            style={{ width: "28px", height: "28px", background: "#6c757d" }}
+                            style={{
+                              width: "28px",
+                              height: "28px",
+                              background: assignModal.candidateType === "group" ? "#0d6efd" : "#6c757d",
+                            }}
                           >
                             {initials}
                           </div>
                           <div className="small">
-                            <div>{u.name || u.email}</div>
-                            <div className="text-muted" style={{ fontSize: "11px" }}>{roleLabel(u.role)}</div>
+                            <div>{primaryText}</div>
+                            <div className="text-muted" style={{ fontSize: "11px" }}>{secondaryText}</div>
                           </div>
                         </div>
                         <button
                           className={`btn btn-sm ${selected ? "btn-success" : "btn-outline-primary"}`}
-                          onClick={() => toggleModalUser(u._id)}
+                          onClick={() => toggleModalSelection(item._id)}
                         >
                           {selected ? "Added" : "Add"}
                         </button>
                       </div>
                     );
                   })}
+                  {modalCandidates.length === 0 && (
+                    <div className="small text-muted px-1 py-2">No matching entries found.</div>
+                  )}
                 </div>
               </div>
               <div className="modal-footer py-2 px-3">

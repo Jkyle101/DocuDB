@@ -105,12 +105,12 @@ export default function AdminCopcProgramsPage() {
     return (programs || []).filter((item) => {
       const code = String(item.programCode || "").toLowerCase();
       const name = String(item.programName || "").toLowerCase();
-      const dept = String(item.departmentName || "").toLowerCase();
+      const description = String(item.description || item.departmentName || "").toLowerCase();
       const year = String(item.year || "").toLowerCase();
       const status = String(item.workflowStatus || "").toLowerCase();
       const stage = String(item.workflowStage || "initialized");
 
-      const matchesSearch = !q || code.includes(q) || name.includes(q) || dept.includes(q) || year.includes(q) || status.includes(q);
+      const matchesSearch = !q || code.includes(q) || name.includes(q) || description.includes(q) || year.includes(q) || status.includes(q);
       const matchesStage = stageFilter === "all" || stage === stageFilter;
       const matchesLock = lockFilter === "all" || (lockFilter === "locked" ? !!item.isLocked : !item.isLocked);
       const matchesYear = yearFilter === "all" || year === yearFilter;
@@ -234,7 +234,7 @@ export default function AdminCopcProgramsPage() {
             <div className="col-lg-4 col-md-6">
               <input
                 className="form-control"
-                placeholder="Search program code, name, department, year"
+                placeholder="Search program code, name, description, year"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
               />
@@ -300,7 +300,7 @@ export default function AdminCopcProgramsPage() {
                 <thead className="table-light">
                   <tr>
                     <th>Program</th>
-                    <th>Department</th>
+                    <th>Description</th>
                     <th>Year</th>
                     <th>Stage</th>
                     <th>Status</th>
@@ -319,7 +319,7 @@ export default function AdminCopcProgramsPage() {
                           <div className="fw-semibold">{program.programCode || program.name}</div>
                           <div className="small text-muted">{program.programName || "Untitled Program"}</div>
                         </td>
-                        <td>{program.departmentName || "N/A"}</td>
+                        <td>{program.description || program.departmentName || "N/A"}</td>
                         <td>{program.year || "N/A"}</td>
                         <td>
                           <span className={`badge ${stageBadgeClass(program.workflowStage)}`}>
@@ -336,7 +336,11 @@ export default function AdminCopcProgramsPage() {
                           <div className="d-flex gap-2 justify-content-end flex-wrap">
                             <button
                               className="btn btn-sm btn-outline-primary"
-                              onClick={() => navigate(`/copc-workflow?programId=${encodeURIComponent(id)}`)}
+                              onClick={() =>
+                                navigate(
+                                  `/admin/copc-dashboard?tab=workflow&programId=${encodeURIComponent(id)}`
+                                )
+                              }
                             >
                               <FaEye className="me-1" />
                               Open

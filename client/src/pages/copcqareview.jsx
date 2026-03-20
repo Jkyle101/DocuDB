@@ -335,11 +335,17 @@ export default function CopcQaReviewPage() {
     );
   };
 
+  const goBackToDashboard = () => {
+    const params = new URLSearchParams({ tab: "workflow" });
+    if (selectedProgramId) params.set("programId", String(selectedProgramId));
+    navigate(`/copc-dashboard?${params.toString()}`);
+  };
+
   return (
     <div className="container-fluid py-3 file-manager-container">
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <div className="d-flex align-items-center gap-2">
-          <button className="btn btn-outline-secondary" onClick={() => navigate("/copc-workflow")}>
+          <button className="btn btn-outline-secondary" onClick={goBackToDashboard}>
             <FaArrowLeft className="me-1" /> Back
           </button>
           <h4 className="mb-0">QA Compliance Review</h4>
@@ -387,7 +393,7 @@ export default function CopcQaReviewPage() {
             <div className="d-flex justify-content-between align-items-start flex-wrap gap-2">
               <div>
                 <div className="fw-semibold">{programMeta.code} - {programMeta.name}</div>
-                <div className="small text-muted">{programMeta.department || "Department N/A"} | AY {programMeta.year || "N/A"}</div>
+                <div className="small text-muted">{programMeta.description || "No description"} | AY {programMeta.year || "N/A"}</div>
               </div>
               <div className="d-flex gap-2 flex-wrap">
                 <span className="badge text-bg-light border">Pending: {overallCounts.pending}</span>

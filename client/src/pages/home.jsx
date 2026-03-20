@@ -65,6 +65,13 @@ export default function Home() {
   const canUploadByRole = ["superadmin", "qa_admin", "dept_chair", "faculty"].includes(normalizeRole(role));
   const canDeleteByRole = ["superadmin", "qa_admin"].includes(normalizeRole(role));
   const canCheckTasks = isAdmin || isProgramChair || isQaReviewer;
+  const LEGACY_TASK_STATUS_MAP = { not_started: "pending", complete: "approved" };
+  const normalizeTaskStatusValue = (value) => {
+    const key = String(value || "").toLowerCase();
+    return LEGACY_TASK_STATUS_MAP[key] || key || "pending";
+  };
+  const isTaskDone = (task) =>
+    normalizeTaskStatusValue(task?.status) === "approved" || Number(task?.percentage || 0) >= 100;
   const isAssignedReviewer = (file, stage) => {
     if (isAdmin) return true;
     const workflow = file?.reviewWorkflow || {};
@@ -756,7 +763,7 @@ export default function Home() {
           checks: ["complete", "updated", "aligned with CHED standards"],
           scope: "General",
           percentage: 0,
-          status: "not_started",
+          status: "pending",
         },
       });
       setFolderTasks(Array.isArray(data?.tasks) ? data.tasks : []);
@@ -769,10 +776,25 @@ export default function Home() {
 
   const updateTask = async (taskId, updates) => {
     if (!currentFolder || !taskId) return;
+    const nextUpdates = { ...(updates || {}) };
+    if (Object.prototype.hasOwnProperty.call(nextUpdates, "status")) {
+      nextUpdates.status = normalizeTaskStatusValue(nextUpdates.status);
+      if (nextUpdates.status === "rejected" && !nextUpdates.comment && !nextUpdates.notes) {
+        const promptValue = window.prompt("Add rejection comment:", "");
+        if (promptValue === null) return;
+        const note = String(promptValue || "").trim();
+        if (!note) {
+          alert("Rejection comment is required.");
+          return;
+        }
+        nextUpdates.comment = note;
+        nextUpdates.notes = note;
+      }
+    }
     const endpoint = isAdmin
       ? `${BACKEND_URL}/folders/${currentFolder}/tasks/${taskId}`
       : `${BACKEND_URL}/folders/${currentFolder}/tasks/${taskId}/check`;
-    const payload = isAdmin ? { userId, role, updates } : { userId, role, ...updates };
+    const payload = isAdmin ? { userId, role, updates: nextUpdates } : { userId, role, ...nextUpdates };
     try {
       const { data } = await axios.patch(endpoint, payload);
       setFolderTasks(Array.isArray(data?.tasks) ? data.tasks : []);
@@ -848,15 +870,16 @@ export default function Home() {
               <select
                 className="form-select form-select-sm"
                 style={{ width: "130px" }}
-                value={task.status}
+                value={normalizeTaskStatusValue(task.status)}
                 onChange={(e) => updateTask(task._id, {
                   status: e.target.value,
-                  percentage: e.target.value === "complete" ? 100 : task.percentage,
                 })}
               >
-                <option value="not_started">Not Started</option>
+                <option value="pending">Pending</option>
                 <option value="in_progress">In Progress</option>
-                <option value="complete">Complete</option>
+                <option value="for_review">For Review</option>
+                <option value="approved">Approved</option>
+                <option value="rejected">Rejected</option>
               </select>
             )}
           </div>
@@ -900,8 +923,8 @@ export default function Home() {
                 width: "18px",
                 height: "18px",
                 borderRadius: "50%",
-                border: Number(task.percentage || 0) >= 100 || task.status === "complete" ? "none" : "2px solid #c7c7c7",
-                background: Number(task.percentage || 0) >= 100 || task.status === "complete" ? "#45be57" : "transparent",
+                border: isTaskDone(task) ? "none" : "2px solid #c7c7c7",
+                background: isTaskDone(task) ? "#45be57" : "transparent",
                 color: "#fff",
                 display: "flex",
                 alignItems: "center",
@@ -911,7 +934,7 @@ export default function Home() {
                 flexShrink: 0,
               }}
             >
-              {(Number(task.percentage || 0) >= 100 || task.status === "complete") ? "✓" : ""}
+              {isTaskDone(task) ? "v" : ""}
             </div>
             <div className="small" style={{ color: "#555" }}>
               {task.title}
@@ -1748,7 +1771,9 @@ export default function Home() {
                 {isAdmin && (
                   <button
                     className="btn btn-sm btn-outline-primary mt-2"
-                    onClick={() => navigate(`/admin/tasks?folderId=${encodeURIComponent(currentFolder)}`)}
+                    onClick={() =>
+                      navigate(`/admin/copc-dashboard?tab=tasks&folderId=${encodeURIComponent(currentFolder)}`)
+                    }
                   >
                     Open Task Management Page
                   </button>
@@ -2174,4 +2199,5 @@ export default function Home() {
     </>
   );
 }
+
 

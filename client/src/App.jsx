@@ -2,7 +2,6 @@ import { BrowserRouter as Router, Routes, Route, useLocation } from "react-route
 import React, { useEffect, useRef, useState } from "react";
 import Login from "./pages/login.jsx";
 import Home from "./pages/home"; // user page
-import AdminHome from "./pages/adminhome"; // admin page
 import AdminOwnedPage from "./pages/adminowned";
 import ProtectedRoute from "./components/ProtectedRoute";
 import Layout from "./components/layout";
@@ -15,13 +14,12 @@ import ManageUsers from "./pages/adminside/manageusers"; // manage users page
 import SystemLogs from "./pages/adminside/systemlogs.jsx"; //system logs
 import ManageGroups from "./pages/adminside/managegroups"; // manage groups page
 import AdminTrash from "./pages/adminside/trash"; // admin trash page
-import AdminTasksPage from "./pages/admintasks";
-import CopcWorkflowPage from "./pages/copcworkflow";
 import CopcUploadPage from "./pages/copcupload";
 import CopcDepartmentReviewPage from "./pages/copcdeptreview";
 import CopcQaReviewPage from "./pages/copcqareview";
 import CopcEvaluationPage from "./pages/copcevaluation";
-import AdminCopcProgramsPage from "./pages/admincopcprograms";
+import AdminCopcDashboardPage from "./pages/admincopcdashboard";
+import UserCopcDashboardPage from "./pages/usercopcdashboard";
 import Settings from "./pages/settings"; // user settings page
 import Notifications from "./pages/notifications"; // user notifications page
 import Help from "./pages/help"; // help & feedback page
@@ -145,6 +143,16 @@ function AppRoutes() {
         <Route index element={<EditorPage />} />
       </Route>
       <Route
+        path="/copc-dashboard"
+        element={
+          <ProtectedRoute allowedRoles={USER_ALLOWED_ROLES}>
+            <Layout role="user" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<UserCopcDashboardPage />} />
+      </Route>
+      <Route
         path="/copc-workflow"
         element={
           <ProtectedRoute allowedRoles={USER_ALLOWED_ROLES}>
@@ -152,7 +160,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<CopcWorkflowPage />} />
+        <Route index element={<UserCopcDashboardPage defaultTab="workflow" />} />
       </Route>
       <Route
         path="/copc-workflow/upload"
@@ -214,7 +222,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<AdminHome />} />
+        <Route index element={<AdminOwnedPage defaultScope="all" />} />
       </Route>
 
       <Route
@@ -265,7 +273,17 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<AdminOwnedPage />} />
+        <Route index element={<AdminOwnedPage defaultScope="owned" />} />
+      </Route>
+      <Route
+        path="/admin/copc-dashboard"
+        element={
+          <ProtectedRoute allowedRoles={["superadmin"]}>
+            <Layout role="admin" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<AdminCopcDashboardPage />} />
       </Route>
       <Route
         path="/admin/tasks"
@@ -275,7 +293,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<AdminTasksPage />} />
+        <Route index element={<AdminCopcDashboardPage defaultTab="tasks" />} />
       </Route>
       <Route
         path="/admin/copc-programs"
@@ -285,7 +303,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<AdminCopcProgramsPage />} />
+        <Route index element={<AdminCopcDashboardPage defaultTab="programs" />} />
       </Route>
     </Routes>
   );

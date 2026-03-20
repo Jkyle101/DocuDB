@@ -3,10 +3,24 @@ import { FaUser, FaEnvelope, FaSave, FaKey, FaBell, FaShieldAlt, FaPalette, FaCa
 import axios from "axios";
 import { BACKEND_URL } from "../config";
 
+const DEPARTMENT_OPTIONS = ["COED", "COT", "COHTM"];
+
+const normalizeDepartment = (value) => {
+  const raw = String(value || "").trim().toUpperCase();
+  if (!raw || raw === "UNASSIGNED") return "";
+  if (DEPARTMENT_OPTIONS.includes(raw)) return raw;
+  const collapsed = raw.replace(/[^A-Z0-9]/g, "");
+  if (collapsed.includes("COED") || collapsed.includes("EDUCATION")) return "COED";
+  if (collapsed.includes("COHTM") || collapsed.includes("HOSPITALITY") || collapsed.includes("TOURISM")) return "COHTM";
+  if (collapsed.includes("COT") || collapsed.includes("TECHNOLOGY")) return "COT";
+  return "";
+};
+
 function Settings() {
   const [userData, setUserData] = useState({
     name: "",
     email: "",
+    department: "",
     newPassword: "",
     confirmPassword: "",
     profilePicture: null
@@ -30,12 +44,47 @@ function Settings() {
   const [passwordResetCode, setPasswordResetCode] = useState("");
 
   const userId = localStorage.getItem("userId");
+  const role = localStorage.getItem("role") || "faculty";
 
   useEffect(() => {
-    // Load user data
     const email = localStorage.getItem("email");
     const name = localStorage.getItem("name") || email?.split('@')[0] || "";
-    setUserData(prev => ({ ...prev, email, name }));
+    const department = normalizeDepartment(localStorage.getItem("department"));
+    const profilePicture = localStorage.getItem("profilePicture");
+    setUserData(prev => ({ ...prev, email, name, department, profilePicture: profilePicture || null }));
+
+    let ignore = false;
+    const loadProfile = async () => {
+      if (!userId) return;
+      try {
+        const { data } = await axios.get(`${BACKEND_URL}/users/${userId}`, {
+          params: { userId, role },
+        });
+        if (ignore) return;
+        const safeName = String(data?.name || "").trim();
+        const safeEmail = String(data?.email || email || "").trim();
+        const safeDepartment = normalizeDepartment(data?.department);
+        const safeProfilePicture = data?.profilePicture || null;
+        setUserData((prev) => ({
+          ...prev,
+          name: safeName,
+          email: safeEmail,
+          department: safeDepartment,
+          profilePicture: safeProfilePicture,
+        }));
+        localStorage.setItem("name", safeName);
+        localStorage.setItem("email", safeEmail);
+        localStorage.setItem("department", safeDepartment || "Unassigned");
+        if (safeProfilePicture) {
+          localStorage.setItem("profilePicture", safeProfilePicture);
+        } else {
+          localStorage.removeItem("profilePicture");
+        }
+      } catch (err) {
+        console.error("Failed to load user profile:", err);
+      }
+    };
+    loadProfile();
 
     // Load preferences from localStorage
     const savedPrefs = localStorage.getItem(`userPreferences_${userId}`);
@@ -46,7 +95,11 @@ function Settings() {
         console.error("Error loading preferences:", e);
       }
     }
-  }, [userId]);
+
+    return () => {
+      ignore = true;
+    };
+  }, [role, userId]);
 
   useEffect(() => {
     document.body.classList.toggle("dark-mode", !!preferences.darkMode);
@@ -65,7 +118,52 @@ function Settings() {
     }));
   };
 
-  // Profile is now read-only - no update function needed
+  const handleProfileUpdate = async (e) => {
+    e.preventDefault();
+    if (!userId) {
+      showMessage("Unable to detect your account session.", "error");
+      return;
+    }
+
+    const nextName = String(userData.name || "").trim();
+    const nextDepartment = normalizeDepartment(userData.department);
+    if (!nextName) {
+      showMessage("Full name is required.", "error");
+      return;
+    }
+    if (!nextDepartment) {
+      showMessage("Department is required.", "error");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const response = await axios.patch(
+        `${BACKEND_URL}/users/${userId}`,
+        { name: nextName, department: nextDepartment, userId, role },
+        { params: { userId, role } }
+      );
+      const updated = response.data?.user || response.data || {};
+      const safeName = String(updated?.name || nextName).trim();
+      const safeDepartment = normalizeDepartment(updated?.department || nextDepartment);
+      const safeEmail = String(updated?.email || userData.email || "").trim();
+      setUserData((prev) => ({
+        ...prev,
+        name: safeName,
+        department: safeDepartment,
+        email: safeEmail,
+      }));
+      localStorage.setItem("name", safeName);
+      localStorage.setItem("department", safeDepartment || "Unassigned");
+      if (safeEmail) localStorage.setItem("email", safeEmail);
+      showMessage("Profile updated successfully!");
+    } catch (error) {
+      console.error("Profile update failed:", error);
+      showMessage(error.response?.data?.error || "Failed to update profile.", "error");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSendPasswordOtp = async () => {
     if (!userData.email) {
@@ -243,9 +341,11 @@ function Settings() {
 
     try {
       // Update user profile picture to null
-      const response = await axios.patch(`${BACKEND_URL}/users/${userId}`, {
-        profilePicture: null
-      });
+      const response = await axios.patch(
+        `${BACKEND_URL}/users/${userId}`,
+        { profilePicture: null, userId, role },
+        { params: { userId, role } }
+      );
 
       if (response.data) {
         localStorage.removeItem('profilePicture');
@@ -391,7 +491,7 @@ function Settings() {
                         className="form-control"
                         id="name"
                         value={userData.name}
-                        readOnly
+                        onChange={(e) => setUserData((prev) => ({ ...prev, name: e.target.value }))}
                       />
                     </div>
                     <div className="col-md-6">
@@ -404,10 +504,37 @@ function Settings() {
                         readOnly
                       />
                     </div>
+                    <div className="col-md-6">
+                      <label htmlFor="department" className="form-label">Department</label>
+                      <select
+                        className="form-control"
+                        id="department"
+                        value={userData.department}
+                        onChange={(e) => setUserData((prev) => ({ ...prev, department: e.target.value }))}
+                      >
+                        <option value="">Select department</option>
+                        {DEPARTMENT_OPTIONS.map((dep) => (
+                          <option key={dep} value={dep}>
+                            {dep}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                   </div>
-                  <div className="mt-3">
+                  <div className="mt-3 d-flex align-items-center gap-2">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={handleProfileUpdate}
+                      disabled={loading || !userData.name.trim() || !userData.department.trim()}
+                    >
+                      <FaSave className="me-2" />
+                      {loading ? "Saving..." : "Save Profile"}
+                    </button>
+                  </div>
+                  <div className="mt-2">
                     <small className="text-muted">
-                      Profile information cannot be modified. Contact your administrator if changes are needed.
+                      Keep your profile details updated for better assignment and reporting accuracy.
                     </small>
                   </div>
                 </div>

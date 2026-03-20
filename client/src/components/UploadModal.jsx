@@ -41,6 +41,10 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
     window.isSecureContext ||
     window.location.hostname === "localhost" ||
     window.location.hostname === "127.0.0.1";
+  const copcNamingExample = "COT_Area04_IT_Lab_Inventory_2026-03-19.pdf";
+  const fileInputAccept = isCopcContext
+    ? ".pdf"
+    : ".pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg";
 
   const shouldHideDestination = hideDestinationFolder || isCopcContext;
 
@@ -123,6 +127,11 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
     folderInputRef.current.setAttribute("webkitdirectory", "");
     folderInputRef.current.setAttribute("directory", "");
   }, []);
+
+  useEffect(() => {
+    if (!isCopcContext) return;
+    setDesiredType("pdf");
+  }, [isCopcContext]);
 
   const normalizeRelativePath = (value = "") =>
     String(value || "")
@@ -277,7 +286,7 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
       onClose();
     } catch (err) {
       console.error("Upload failed:", err);
-      alert("Upload failed. Please check backend logs.");
+      alert(err?.response?.data?.error || "Upload failed. Please check backend logs.");
     } finally {
       setUploadingSingle(false);
       endProgress();
@@ -432,7 +441,7 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
       onClose();
     } catch (err) {
       console.error("Folder upload failed:", err);
-      alert("Folder upload failed. Please check logs and try again.");
+      alert(err?.response?.data?.error || "Folder upload failed. Please check logs and try again.");
     } finally {
       setUploadingFolder(false);
       setFolderProgressText("");
@@ -510,7 +519,7 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
       onClose();
     } catch (err) {
       console.error("Camera upload failed:", err);
-      alert("Camera upload failed");
+      alert(err?.response?.data?.error || "Camera upload failed");
     }
   };
 
@@ -605,7 +614,7 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
               <input
                 type="file"
                 className="form-control"
-                accept=".pdf,.doc,.docx,.txt,.xls,.xlsx,.ppt,.pptx,.png,.jpg,.jpeg"
+                accept={fileInputAccept}
                 disabled={uploadingFolder || uploadingSingle}
                 onChange={(e) => {
                   const picked = e.target.files[0];
@@ -618,6 +627,17 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
                   }
                 }}
               />
+              {isCopcContext && (
+                <div className="alert alert-warning py-2 mt-2 mb-0">
+                  <div className="small fw-semibold mb-1">COPC File Naming Rule</div>
+                  <div className="small">
+                    Format: <code>[College]_[Area#]_[DocName]_[Date].pdf</code>
+                  </div>
+                  <div className="small">
+                    Example: <code>{copcNamingExample}</code>
+                  </div>
+                </div>
+              )}
               <div className="mt-3">
                 {!shouldHideDestination && (
                   <>
@@ -772,6 +792,7 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
                         <select
                           className="form-select"
                           value={desiredType}
+                          disabled={isCopcContext}
                           onChange={(e) => setDesiredType(e.target.value)}
                         >
                           <option value="pdf">PDF</option>
@@ -779,6 +800,11 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
                           <option value="pptx">PowerPoint (PPTX)</option>
                           <option value="xlsx">Excel (XLSX)</option>
                         </select>
+                        {isCopcContext && (
+                          <div className="small text-muted mt-1">
+                            COPC folders currently require PDF filename compliance.
+                          </div>
+                        )}
                       </div>
                       <div className="mb-2">
                         <label className="form-label">File Name (optional)</label>
