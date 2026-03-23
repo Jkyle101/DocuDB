@@ -20,6 +20,7 @@ import CopcQaReviewPage from "./pages/copcqareview";
 import CopcEvaluationPage from "./pages/copcevaluation";
 import CopcSubmissionsPage from "./pages/copcsubmissions";
 import UserCopcDashboardPage from "./pages/usercopcdashboard";
+import AdminCopcArchivedPage from "./pages/admincopcarchived";
 import Settings from "./pages/settings"; // user settings page
 import Notifications from "./pages/notifications"; // user notifications page
 import Help from "./pages/help"; // help & feedback page
@@ -314,6 +315,16 @@ function AppRoutes() {
         }
       >
         <Route index element={<UserCopcDashboardPage defaultTab="programs" />} />
+      </Route>
+      <Route
+        path="/admin/copc-archived"
+        element={
+          <ProtectedRoute allowedRoles={["superadmin"]}>
+            <Layout role="admin" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<AdminCopcArchivedPage />} />
       </Route>
       <Route
         path="/admin/copc-workflow/submissions"

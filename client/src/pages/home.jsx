@@ -28,6 +28,7 @@ import {
   FaStar,
   FaRegStar,
   FaThumbtack,
+  FaTasks,
   FaEdit,
   FaChevronDown,
   FaChevronUp,
@@ -1029,6 +1030,16 @@ export default function Home() {
                   <FaList />
                 </button>
               </div>
+              {isFaculty && (
+                <button
+                  className="btn btn-warning text-dark fw-semibold me-2 task-assigned-highlight-btn"
+                  onClick={() => navigate("/copc-dashboard?tab=tasks")}
+                  title="Open your assigned COPC tasks"
+                >
+                  <FaTasks className="me-1" />
+                  Task Assigned to Me
+                </button>
+              )}
               <button
                 className={`btn me-2 ${showFavoritesOnly ? "btn-warning" : "btn-outline-warning"}`}
                 onClick={() => setShowFavoritesOnly((v) => !v)}

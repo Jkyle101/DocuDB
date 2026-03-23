@@ -6,6 +6,7 @@ import {
   FaDatabase,
   FaUser,
   FaTimes,
+  FaArchive,
   FaTrash,
   FaUserFriends,
   FaFolder,
@@ -131,6 +132,18 @@ function SidebarSuperAdmin({ onClose }) {
                 >
                   <FaLayerGroup className="me-2" size={16} />
                   COPC Dashboard
+                </NavLink>
+              </li>
+              <li className="nav-item">
+                <NavLink
+                  to="/admin/copc-archived"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaArchive className="me-2" size={16} />
+                  Archived COPC
                 </NavLink>
               </li>
             </ul>

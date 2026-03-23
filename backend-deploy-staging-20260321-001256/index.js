@@ -8539,91 +8539,6 @@ app.delete("/copc/programs/:id", async (req, res) => {
   }
 });
 
-// Update COPC program metadata (superadmin only)
-app.patch("/copc/programs/:id", async (req, res) => {
-  try {
-    const { userId, role, programCode, programName, description } = req.body || {};
-    const actorRole = await resolveActorRole(userId, role);
-    if (actorRole !== "superadmin") {
-      return res.status(403).json({ error: "Only super admin can update COPC program details" });
-    }
-
-    const root = await Folder.findById(req.params.id).select(
-      "_id name parentFolder deletedAt complianceProfileKey copc"
-    );
-    if (!root || root.deletedAt || !root?.copc?.isProgramRoot) {
-      return res.status(404).json({ error: "COPC program root not found" });
-    }
-
-    const currentCode = String(root?.copc?.programCode || root.name || "").trim().toUpperCase();
-    const currentName = String(root?.copc?.programName || root.name || "").trim();
-    const currentDescription = String(root?.copc?.description || root?.copc?.departmentName || "").trim();
-    const nextCode = String(
-      typeof programCode === "string" ? programCode : currentCode
-    ).trim().toUpperCase();
-    const nextName = String(
-      typeof programName === "string" ? programName : currentName
-    ).trim();
-    const nextDescription = String(
-      typeof description === "string" ? description : currentDescription
-    ).trim();
-
-    if (!nextCode || !nextName) {
-      return res.status(400).json({ error: "programCode and programName are required" });
-    }
-
-    const rawYear = root?.copc?.year;
-    const yearValue = rawYear === null || rawYear === undefined || rawYear === ""
-      ? null
-      : Number(rawYear);
-    const duplicate = await Folder.findOne({
-      _id: { $ne: root._id },
-      deletedAt: null,
-      "copc.isProgramRoot": true,
-      "copc.programCode": nextCode,
-      "copc.year": yearValue,
-    }).select("_id");
-    if (duplicate) {
-      return res.status(409).json({
-        error: "COPC program workspace already exists for this code and year",
-      });
-    }
-
-    root.name = nextCode;
-    root.copc.programCode = nextCode;
-    root.copc.programName = nextName;
-    root.copc.description = nextDescription;
-    root.copc.departmentName = nextDescription;
-    root.complianceProfileKey = `COPC_${nextCode}`;
-    await root.save();
-
-    createLog(
-      "COPC_PROGRAM_UPDATE",
-      userId,
-      `Updated COPC program to ${nextCode} (${root?.copc?.year || "N/A"})`
-    );
-
-    return res.json({
-      success: true,
-      program: {
-        _id: root._id,
-        name: root.name,
-        profileKey: root.complianceProfileKey || null,
-        programCode: root?.copc?.programCode || "",
-        programName: root?.copc?.programName || root.name,
-        description: root?.copc?.description || root?.copc?.departmentName || "",
-        departmentName: root?.copc?.description || root?.copc?.departmentName || "",
-        year: root?.copc?.year || null,
-        workflowStage: root?.copc?.workflowStage || "initialized",
-        workflowStatus: root?.copc?.workflowStatus || "In Progress",
-        isLocked: !!root?.copc?.locked?.isLocked,
-      },
-    });
-  } catch (err) {
-    return res.status(500).json({ error: "Failed to update COPC program details" });
-  }
-});
-
 // Evaluator observations during internal evaluation
 app.post("/copc/programs/:id/observations", async (req, res) => {
   try {
@@ -8676,7 +8591,7 @@ app.post("/copc/programs/:id/observations", async (req, res) => {
   }
 });
 
-// Workflow actions: compile package, final approval, archive/unarchive, lock/unlock
+// Workflow actions: compile package, final approval, archive
 app.post("/copc/programs/:id/actions", async (req, res) => {
   try {
     const { userId, role, action } = req.body || {};
@@ -8773,34 +8688,6 @@ app.post("/copc/programs/:id/actions", async (req, res) => {
       root.copc.archiveMeta = {
         archiveYear: Number(root?.copc?.year || new Date().getFullYear()),
         archivedAt: now,
-      };
-    } else if (normalizedAction === "unarchive") {
-      if (actorRole !== "superadmin") {
-        return res.status(403).json({ error: "Only super admin can unarchive COPC programs" });
-      }
-      root.copc.workflowStage = "collecting_documents";
-      root.copc.workflowStatus = "Collecting Documents";
-      root.copc.archiveMeta = {
-        archiveYear: null,
-        archivedAt: null,
-      };
-    } else if (normalizedAction === "lock") {
-      if (actorRole !== "superadmin") {
-        return res.status(403).json({ error: "Only super admin can lock COPC programs" });
-      }
-      root.copc.locked = {
-        isLocked: true,
-        lockedAt: now,
-        lockedBy: userId || null,
-      };
-    } else if (normalizedAction === "unlock") {
-      if (actorRole !== "superadmin") {
-        return res.status(403).json({ error: "Only super admin can unlock COPC programs" });
-      }
-      root.copc.locked = {
-        isLocked: false,
-        lockedAt: null,
-        lockedBy: null,
       };
     } else {
       return res.status(400).json({ error: "Unknown workflow action" });

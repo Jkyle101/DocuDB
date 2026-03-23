@@ -1,22 +1,19 @@
 flowchart LR
-    faculty[Faculty / Staff]
-    chair[Department Chair]
-    qa[QA Officer / QA Admin]
-    evaluator[Evaluator]
-    admin[Superadmin / System Administrator]
+    users[Users / Clients]
+    admin[Admin]
+    external[External Applications\nMS Office, Adobe, etc.]
 
     system[DocuDB Document Management System]
 
-    db[(MongoDB Database)]
-    storage[(Document File Storage)]
-    email[SMTP Email Service]
+    email[Email Server]
+    storage[(Database / Storage)]
+    backup[(Backup System)]
 
-    faculty -->|login, upload files, manage folders,\nshare documents, respond to requests| system
-    chair -->|review submissions, approve or reject,\nassign folder tasks| system
-    qa -->|quality assurance review, tagging,\ncompliance checks, workflow monitoring| system
-    evaluator -->|view approved COPC packages,\nevaluation and reporting| system
-    admin -->|manage users, roles, groups,\nlogs, analytics, and system settings| system
+    users <--> |upload, download, organize,\nand manage documents| system
+    admin <--> |configure settings,\nmanage permissions,\nmonitor system health| system
+    external <--> |open and save files\ndirectly with DocuDB| system
 
-    system -->|stores users, metadata, versions,\ncomments, notifications, logs| db
-    system -->|saves uploaded files,\npreviews, generated reports| storage
-    system -->|sends account and activity\nnotification emails| email
+    system --> |send notifications,\nalerts, and reports| email
+    system <--> |store and retrieve files,\nmetadata, and system records| storage
+    storage --> |scheduled backup copy| backup
+    backup -.-> |recovery restore path| storage

@@ -1,72 +1,94 @@
-flowchart TD
-    A[DocuDB System]
+%%{init: {'theme': 'base', 'flowchart': {'curve': 'linear', 'nodeSpacing': 45, 'rankSpacing': 55}}}%%
+flowchart TB
+    T["Agile Software Development Project Framework<br/>DOCUDB - WEB-BASED DOCUMENT MANAGEMENT AND COPC WORKFLOW SYSTEM"]
 
-    A --> B[1. Authentication and Access Control]
-    A --> C[2. Document and File Management]
-    A --> D[3. Folder and Workspace Management]
-    A --> E[4. Collaboration and Sharing]
-    A --> F[5. Review, Compliance, and COPC Workflow]
-    A --> G[6. Search, Preview, and Navigation]
-    A --> H[7. Notifications and Communication]
-    A --> I[8. Administration and Monitoring]
-    A --> J[9. User Productivity and Profile Services]
+    subgraph REQ["Requirements"]
+        direction LR
+        FR["FUNCTIONAL REQUIREMENTS<br/>- Authentication and RBAC<br/>- Document, folder, and version management<br/>- Sharing, comments, and notifications<br/>- COPC workflow: upload, review, QA, evaluation<br/>- Search, trash, recovery, and reports"]
+        NFR["NON-FUNCTIONAL REQUIREMENTS<br/>- Performance and responsiveness<br/>- Security, privacy, and auditability<br/>- Reliability, backup, and recoverability<br/>- Scalability and maintainability<br/>- Usability and accessibility"]
+    end
 
-    B --> B1[1.1 User login]
-    B --> B2[1.2 Role-based route protection]
-    B --> B3[1.3 Account status control]
-    B --> B4[1.4 Password change request handling]
+    subgraph AN["Analysis"]
+        direction LR
+        A1["Data Requirement Analysis<br/>Users, roles, files, folders, groups"]
+        A2["UX and Workflow Analysis<br/>Role journeys and workspace flows"]
+        A3["Security and Privacy Analysis<br/>Access matrix and audit requirements"]
+        A4["Storage and Metadata Analysis<br/>Schema, lifecycle, retention"]
+        A5["Reporting and Monitoring Analysis<br/>KPIs, logs, compliance tracking"]
+        A6["Documentation Analysis<br/>Manuals, SOPs, training needs"]
+    end
 
-    C --> C1[2.1 File upload and camera upload]
-    C --> C2[2.2 File download and secure access]
-    C --> C3[2.3 File rename, move, pin, and favorite]
-    C --> C4[2.4 Version history and version restore]
-    C --> C5[2.5 Built-in document editing]
-    C --> C6[2.6 Smart forms and report generation]
-    C --> C7[2.7 Duplicate detection and reclassification]
-    C --> C8[2.8 File verification and completeness support]
+    subgraph DES["Design"]
+        direction LR
+        D1["Data Model Design<br/>MongoDB schema and indexes"]
+        D2["UI and Navigation Design<br/>Role-based dashboards"]
+        D3["Auth and Access Design<br/>JWT and RBAC rules"]
+        D4["Document Service Design<br/>Upload, share, version, recovery"]
+        D5["Dashboard and Report Design<br/>Analytics and COPC status views"]
+        D6["Documentation Package Design<br/>Guides and training assets"]
+    end
 
-    D --> D1[3.1 Folder creation and hierarchy]
-    D --> D2[3.2 Folder rename and move]
-    D --> D3[3.3 Folder assignments and task lists]
-    D --> D4[3.4 Folder versioning and restore]
-    D --> D5[3.5 Trash and recovery management]
+    subgraph IMP["Implementation"]
+        direction LR
+        I1["Operational Environment<br/>React + Vite | Node.js + Express | MongoDB<br/>File storage, email service, audit logging<br/>Docker/PM2/Nginx setup"]
+    end
 
-    E --> E1[4.1 User-to-user file sharing]
-    E --> E2[4.2 Folder sharing]
-    E --> E3[4.3 Group creation and membership]
-    E --> E4[4.4 Group announcements and notifications]
-    E --> E5[4.5 Group-based file and folder sharing]
-    E --> E6[4.6 Comments and discussion threads]
-    E --> E7[4.7 Document request workflow]
+    subgraph TST["Testing"]
+        direction LR
+        T1["Quality Validation (ISO/IEC 25010)<br/>Functional suitability, reliability, performance efficiency, security,<br/>compatibility, maintainability, and usability"]
+        T2["User Testing<br/>Role-based UAT and COPC scenario validation"]
+    end
 
-    F --> F1[5.1 Program chair review]
-    F --> F2[5.2 QA review and tagging]
-    F --> F3[5.3 Compliance dashboard]
-    F --> F4[5.4 COPC program initialization]
-    F --> F5[5.5 COPC submission tracking]
-    F --> F6[5.6 COPC observations and actions]
-    F --> F7[5.7 Approved package and evaluation report generation]
+    subgraph DEP["Deployment"]
+        direction LR
+        P1["System Deployment<br/>Build and release, DB init/migration,<br/>backup activation, monitoring, and security hardening"]
+    end
 
-    G --> G1[6.1 Global and advanced search]
-    G --> G2[6.2 Admin search]
-    G --> G3[6.3 Shared, recent, and personalized dashboards]
-    G --> G4[6.4 Preview metadata and file preview]
-    G --> G5[6.5 Breadcrumb and folder navigation]
-    G --> G6[6.6 Predict destination suggestions]
+    subgraph REV["Review"]
+        direction LR
+        R1["Feedback and Continuous Improvement<br/>Collect feedback, evaluate outcomes, prioritize fixes"]
+    end
 
-    H --> H1[7.1 In-app notifications]
-    H --> H2[7.2 Smart notification generation]
-    H --> H3[7.3 Email notification delivery]
-    H --> H4[7.4 Read and read-all notification actions]
+    T --> FR
+    T --> NFR
 
-    I --> I1[8.1 User creation and bulk provisioning]
-    I --> I2[8.2 User role and active status management]
-    I --> I3[8.3 Group administration]
-    I --> I4[8.4 Audit logs and activity tracking]
-    I --> I5[8.5 System statistics and analytics]
-    I --> I6[8.6 Admin task and password request review]
+    FR --> A1
+    NFR --> A1
+    A1 --> A2 --> A3 --> A4 --> A5 --> A6
 
-    J --> J1[9.1 Profile picture upload]
-    J --> J2[9.2 Settings and preferences]
-    J --> J3[9.3 Help and feedback]
-    J --> J4[9.4 Dashboard widgets for owned and shared work]
+    A6 --> D1
+    D1 --> D2 --> D3 --> D4 --> D5 --> D6
+    D6 --> I1
+
+    I1 --> T1
+    I1 --> T2
+    T1 --> P1
+    T2 --> P1
+    P1 --> R1
+    R1 -. Feedback loop .-> A2
+
+    classDef title fill:#f8f8f8,stroke:#3a3a3a,stroke-width:1.2px,color:#111,font-size:14px,font-weight:bold;
+    classDef req fill:#e3e3e3,stroke:#666,color:#111,font-size:12px;
+    classDef analysis fill:#f7efe1,stroke:#8d6f4c,color:#111,font-size:11px;
+    classDef design fill:#dce9f7,stroke:#4d6d8a,color:#111,font-size:11px;
+    classDef impl fill:#e8edf3,stroke:#5b6f86,color:#111,font-size:12px;
+    classDef test fill:#eef4ea,stroke:#5d7f50,color:#111,font-size:11px;
+    classDef deploy fill:#f5f0e6,stroke:#8a744f,color:#111,font-size:12px;
+    classDef review fill:#ececec,stroke:#666,color:#111,font-size:12px;
+
+    class T title;
+    class FR,NFR req;
+    class A1,A2,A3,A4,A5,A6 analysis;
+    class D1,D2,D3,D4,D5,D6 design;
+    class I1 impl;
+    class T1,T2 test;
+    class P1 deploy;
+    class R1 review;
+
+    style REQ fill:transparent,stroke:transparent
+    style AN fill:transparent,stroke:transparent
+    style DES fill:transparent,stroke:transparent
+    style IMP fill:transparent,stroke:transparent
+    style TST fill:transparent,stroke:transparent
+    style DEP fill:transparent,stroke:transparent
+    style REV fill:transparent,stroke:transparent

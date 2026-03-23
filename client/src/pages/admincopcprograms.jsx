@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
-import { FaArchive, FaEye, FaRedoAlt, FaTrash } from "react-icons/fa";
+import { FaArchive, FaEdit, FaEye, FaLock, FaLockOpen, FaRedoAlt, FaTrash } from "react-icons/fa";
 import { BACKEND_URL } from "../config";
 
 function normalizeRole(value) {
@@ -157,6 +157,70 @@ export default function AdminCopcProgramsPage() {
     }
   };
 
+  const handleToggleLock = async (program) => {
+    const programId = String(program?._id || "");
+    if (!programId) return;
+    const action = program?.isLocked ? "unlock" : "lock";
+    const label = `${program.programCode || program.name} (${program.year || "N/A"})`;
+    const promptLabel = action === "lock" ? "Lock" : "Unlock";
+    if (!window.confirm(`${promptLabel} ${label}?`)) return;
+
+    try {
+      setBusy(programId, action, true);
+      await axios.post(`${BACKEND_URL}/copc/programs/${programId}/actions`, {
+        userId,
+        role,
+        action,
+      });
+      await loadPrograms();
+    } catch (err) {
+      alert(err?.response?.data?.error || `Failed to ${action} COPC program.`);
+    } finally {
+      setBusy(programId, action, false);
+    }
+  };
+
+  const handleEditProgram = async (program) => {
+    const programId = String(program?._id || "");
+    if (!programId) return;
+
+    const currentCode = String(program?.programCode || program?.name || "").trim();
+    const currentName = String(program?.programName || "").trim();
+    const currentDescription = String(program?.description || program?.departmentName || "").trim();
+
+    const nextCodeRaw = window.prompt("Program code", currentCode);
+    if (nextCodeRaw === null) return;
+    const nextNameRaw = window.prompt("Program name", currentName);
+    if (nextNameRaw === null) return;
+    const nextDescriptionRaw = window.prompt("Program description", currentDescription);
+    if (nextDescriptionRaw === null) return;
+
+    const nextCode = String(nextCodeRaw || "").trim().toUpperCase();
+    const nextName = String(nextNameRaw || "").trim();
+    const nextDescription = String(nextDescriptionRaw || "").trim();
+
+    if (!nextCode || !nextName) {
+      alert("Program code and program name are required.");
+      return;
+    }
+
+    try {
+      setBusy(programId, "update", true);
+      await axios.patch(`${BACKEND_URL}/copc/programs/${programId}`, {
+        userId,
+        role,
+        programCode: nextCode,
+        programName: nextName,
+        description: nextDescription,
+      });
+      await loadPrograms();
+    } catch (err) {
+      alert(err?.response?.data?.error || "Failed to update COPC program details.");
+    } finally {
+      setBusy(programId, "update", false);
+    }
+  };
+
   const handleDelete = async (program) => {
     const programId = String(program?._id || "");
     if (!programId) return;
@@ -185,12 +249,21 @@ export default function AdminCopcProgramsPage() {
       <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
         <div>
           <h4 className="mb-1">COPC Program Management</h4>
-          <div className="small text-muted">Archive or delete COPC programs from one admin page.</div>
+          <div className="small text-muted">Lock/unlock, rename, update descriptions, archive, or delete COPC programs from one admin page.</div>
         </div>
-        <button className="btn btn-outline-primary" onClick={loadPrograms} disabled={loading}>
-          <FaRedoAlt className="me-1" />
-          Refresh
-        </button>
+        <div className="d-flex gap-2 flex-wrap">
+          <button
+            className="btn btn-outline-secondary"
+            onClick={() => navigate("/admin/copc-archived")}
+          >
+            <FaArchive className="me-1" />
+            Archived Programs
+          </button>
+          <button className="btn btn-outline-primary" onClick={loadPrograms} disabled={loading}>
+            <FaRedoAlt className="me-1" />
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="row g-3 mb-3">
@@ -211,12 +284,20 @@ export default function AdminCopcProgramsPage() {
           </div>
         </div>
         <div className="col-md-6 col-lg-3">
-          <div className="card shadow-sm h-100">
+          <button
+            type="button"
+            className="card shadow-sm h-100 w-100 text-start"
+            onClick={() => navigate("/admin/copc-archived")}
+            title="Open archived COPC programs"
+          >
             <div className="card-body py-3">
-              <div className="small text-muted">Archived</div>
+              <div className="small text-muted d-flex align-items-center gap-1">
+                <FaArchive />
+                Archived
+              </div>
               <div className="fw-bold fs-4">{stats.archived}</div>
             </div>
-          </div>
+          </button>
         </div>
         <div className="col-md-6 col-lg-3">
           <div className="card shadow-sm h-100">
@@ -328,7 +409,10 @@ export default function AdminCopcProgramsPage() {
                         </td>
                         <td>{program.workflowStatus || "In Progress"}</td>
                         <td>
-                          <span className={`badge ${program.isLocked ? "text-bg-danger" : "text-bg-light border"}`}>
+                          <span
+                            className={`badge d-inline-flex align-items-center gap-1 ${program.isLocked ? "text-bg-danger" : "text-bg-success"}`}
+                          >
+                            {program.isLocked ? <FaLock /> : <FaLockOpen />}
                             {program.isLocked ? "Locked" : "Unlocked"}
                           </span>
                         </td>
@@ -344,6 +428,28 @@ export default function AdminCopcProgramsPage() {
                             >
                               <FaEye className="me-1" />
                               Open
+                            </button>
+                            <button
+                              className="btn btn-sm btn-outline-warning"
+                              disabled={busy.length > 0}
+                              onClick={() => handleEditProgram(program)}
+                            >
+                              <FaEdit className="me-1" />
+                              {busy === "update" ? "Saving..." : "Edit"}
+                            </button>
+                            <button
+                              className={`btn btn-sm ${program.isLocked ? "btn-success" : "btn-danger"}`}
+                              disabled={busy.length > 0}
+                              onClick={() => handleToggleLock(program)}
+                            >
+                              {program.isLocked ? <FaLockOpen className="me-1" /> : <FaLock className="me-1" />}
+                              {busy === "lock"
+                                ? "Locking..."
+                                : busy === "unlock"
+                                  ? "Unlocking..."
+                                  : program.isLocked
+                                    ? "Unlock"
+                                    : "Lock"}
                             </button>
                             <button
                               className="btn btn-sm btn-outline-secondary"

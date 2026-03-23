@@ -408,6 +408,46 @@
   border: none;
 }
 
+.task-assigned-highlight-btn {
+  border: 1px solid #d89a00 !important;
+  background: linear-gradient(135deg, #ffe27a 0%, #ffc107 62%, #f3a712 100%) !important;
+  box-shadow:
+    0 0 0 0.18rem rgba(255, 193, 7, 0.32),
+    0 0 14px rgba(255, 193, 7, 0.55),
+    0 0 28px rgba(255, 193, 7, 0.38);
+  animation: taskAssignedGlow 1.9s ease-in-out infinite;
+}
+
+.action-buttons .task-assigned-highlight-btn:hover {
+  animation-play-state: paused;
+  box-shadow:
+    0 0 0 0.22rem rgba(255, 214, 74, 0.5),
+    0 0 22px rgba(255, 193, 7, 0.76),
+    0 0 38px rgba(255, 157, 0, 0.44);
+}
+
+@keyframes taskAssignedGlow {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 0.18rem rgba(255, 193, 7, 0.32),
+      0 0 14px rgba(255, 193, 7, 0.55),
+      0 0 28px rgba(255, 193, 7, 0.38);
+  }
+  50% {
+    box-shadow:
+      0 0 0 0.24rem rgba(255, 214, 74, 0.48),
+      0 0 25px rgba(255, 193, 7, 0.8),
+      0 0 42px rgba(255, 193, 7, 0.56);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-assigned-highlight-btn {
+    animation: none;
+  }
+}
+
 .page-header {
   border: 1px solid #e2e8f0;
   border-radius: 14px;
@@ -1122,6 +1162,15 @@ body.dark-mode .data-table .table tbody tr:hover,
 body.dark-mode .context-menu-item:hover,
 body.dark-mode .dashboard-mini-item:hover {
   background-color: #172d4a !important;
+}
+
+body.dark-mode .task-assigned-highlight-btn {
+  color: #1b1400 !important;
+  border-color: #ffca28 !important;
+  box-shadow:
+    0 0 0 0.2rem rgba(255, 193, 7, 0.38),
+    0 0 16px rgba(255, 214, 83, 0.64),
+    0 0 30px rgba(255, 193, 7, 0.45);
 }
 
 .dashboard-panels-compact {
