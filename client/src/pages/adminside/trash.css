@@ -1,0 +1,514 @@
+.admin-trash-page {
+  --trash-bg: #f4f6fb;
+  --trash-panel: #ffffff;
+  --trash-ink: #161d2e;
+  --trash-muted: #6a758d;
+  --trash-border: #e3e8f3;
+  --trash-primary: #1e5ece;
+  --trash-primary-soft: #dfe9ff;
+  --trash-danger: #b42318;
+  --trash-danger-soft: #fee4e2;
+  color: var(--trash-ink);
+}
+
+.trash-hero-panel {
+  background: linear-gradient(135deg, #f7f9ff 0%, #eef2fc 100%);
+  border: 1px solid var(--trash-border);
+  border-radius: 24px;
+  padding: 1.4rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.2rem;
+  margin-bottom: 1rem;
+}
+
+.trash-title {
+  margin: 0;
+  font-size: clamp(1.6rem, 1.2rem + 1.3vw, 2.3rem);
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  color: #111728;
+}
+
+.trash-subtitle {
+  margin: 0.55rem 0 0;
+  color: var(--trash-muted);
+  max-width: 700px;
+  font-size: 1.02rem;
+}
+
+.trash-hero-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.trash-search-shell {
+  min-width: min(440px, 84vw);
+  max-width: 460px;
+  height: 56px;
+  border-radius: 18px;
+  border: 1px solid var(--trash-border);
+  background: #eef1fa;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0 1rem;
+  color: #818ba2;
+}
+
+.trash-search-shell input {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #2a3244;
+  font-size: 1rem;
+}
+
+.trash-search-shell input:focus {
+  outline: none;
+}
+
+.trash-view-toggle {
+  display: inline-flex;
+  border-radius: 14px;
+  border: 1px solid var(--trash-border);
+  background: #fff;
+  overflow: hidden;
+}
+
+.trash-view-toggle button {
+  width: 46px;
+  height: 46px;
+  border: 0;
+  background: transparent;
+  color: #607089;
+  transition: 0.2s ease;
+}
+
+.trash-view-toggle button:hover {
+  background: #edf2ff;
+  color: #2c4e99;
+}
+
+.trash-view-toggle button.is-active {
+  background: #1f5ecf;
+  color: #fff;
+}
+
+.trash-toolbar-panel {
+  background: var(--trash-panel);
+  border: 1px solid var(--trash-border);
+  border-radius: 18px;
+  padding: 0.85rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.1rem;
+  flex-wrap: wrap;
+}
+
+.trash-select-block {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.trash-select-toggle {
+  border: 1px solid #d5ddee;
+  background: #f1f4fb;
+  color: #2b3550;
+  height: 44px;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0 0.95rem;
+  font-weight: 600;
+}
+
+.trash-selection-meta {
+  color: #53627a;
+  font-weight: 500;
+}
+
+.trash-bulk-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.trash-action-btn {
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 1rem;
+  font-weight: 700;
+  transition: 0.2s ease;
+}
+
+.trash-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.trash-action-btn.restore {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.trash-action-btn.restore:not(:disabled):hover {
+  background: #bbf7d0;
+}
+
+.trash-action-btn.delete {
+  background: #fee7e6;
+  color: #ad221a;
+}
+
+.trash-action-btn.delete:not(:disabled):hover {
+  background: #fdd8d5;
+}
+
+.trash-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 1rem;
+}
+
+.trash-item-card {
+  background: #fff;
+  border: 1px solid var(--trash-border);
+  border-radius: 20px;
+  padding: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.62rem;
+  animation: trash-card-in 0.22s ease both;
+}
+
+.trash-item-card.is-selected {
+  border-color: #9db8ec;
+  box-shadow: 0 0 0 2px #dee8ff inset;
+}
+
+.trash-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.trash-check-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid #d5deef;
+  background: #f4f7ff;
+  color: #5f6f89;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.trash-check-btn.is-selected {
+  color: #1e5ece;
+  border-color: #aac2ef;
+  background: #e8efff;
+}
+
+.trash-kind-pill {
+  font-size: 0.73rem;
+  font-weight: 700;
+  padding: 0.22rem 0.52rem;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+  border: 1px solid transparent;
+}
+
+.trash-kind-pill.kind-folder {
+  color: #1e4f9f;
+  background: #e8efff;
+  border-color: #c9dafd;
+}
+
+.trash-kind-pill.kind-file {
+  color: #7a3f15;
+  background: #fff2e6;
+  border-color: #f9d9ba;
+}
+
+.trash-icon-shell {
+  width: 58px;
+  height: 58px;
+  border-radius: 16px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.trash-icon-shell.kind-folder {
+  background: #e9efff;
+}
+
+.trash-icon-shell.kind-file {
+  background: #f4f0ff;
+}
+
+.trash-file-icon {
+  font-size: 1.55rem;
+}
+
+.trash-item-name {
+  margin: 0.05rem 0;
+  font-size: 1.42rem;
+  line-height: 1.22;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  color: #161d2e;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-meta-line {
+  display: flex;
+  align-items: center;
+  gap: 0.48rem;
+  color: #64748b;
+  font-size: 0.95rem;
+}
+
+.trash-meta-line span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-card-actions {
+  margin-top: 0.35rem;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.trash-restore-btn {
+  flex: 1;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: #dcfce7;
+  color: #166534;
+  font-weight: 800;
+  transition: 0.2s ease;
+}
+
+.trash-restore-btn:hover {
+  background: #bbf7d0;
+}
+
+.trash-delete-icon-btn {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: #fde5e3;
+  color: #ad221a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: 0.2s ease;
+}
+
+.trash-delete-icon-btn:hover {
+  background: #fbd7d4;
+}
+
+.trash-delete-icon-btn.compact,
+.trash-restore-btn.compact {
+  height: 36px;
+}
+
+.trash-delete-icon-btn.compact {
+  width: 36px;
+}
+
+.trash-cleanup-card {
+  border: 2px dashed #b7cefb;
+  background: linear-gradient(135deg, #e9f0ff 0%, #dce8ff 100%);
+  border-radius: 22px;
+  padding: 1.3rem;
+  min-height: 230px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.75rem;
+}
+
+.trash-cleanup-icon {
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: #f3f7ff;
+  color: #1e5ece;
+  font-size: 1.6rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.trash-cleanup-card h4 {
+  margin: 0;
+  font-size: 1.9rem;
+  font-weight: 800;
+  color: #18253f;
+}
+
+.trash-cleanup-card p {
+  margin: 0;
+  color: #4d5f7c;
+  max-width: 34ch;
+  font-size: 1.02rem;
+}
+
+.trash-table-shell {
+  border: 1px solid var(--trash-border);
+  border-radius: 18px;
+  overflow: hidden;
+  background: #fff;
+}
+
+.trash-list-table thead th {
+  background: #eef2fb;
+  color: #4f5f79;
+  border-bottom: 1px solid var(--trash-border);
+  font-weight: 700;
+  font-size: 0.86rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.trash-list-table tbody td {
+  border-color: #edf1f7;
+  color: #2a3346;
+}
+
+.trash-list-table tbody tr.is-selected td {
+  background: #f1f6ff;
+}
+
+.trash-col-check {
+  width: 42px;
+}
+
+.trash-table-name {
+  display: flex;
+  align-items: center;
+  gap: 0.52rem;
+  min-width: 0;
+}
+
+.trash-table-name span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.trash-row-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.trash-empty-state {
+  border: 1px dashed #c7d7f4;
+  border-radius: 20px;
+  min-height: 250px;
+  background: #f7faff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.6rem;
+  color: #4f6283;
+}
+
+.trash-empty-state svg {
+  font-size: 2.5rem;
+  color: #6e89bd;
+}
+
+.trash-empty-state h5 {
+  margin: 0;
+  font-size: 1.45rem;
+  color: #1d2a43;
+}
+
+.trash-empty-state p {
+  margin: 0;
+  max-width: 48ch;
+}
+
+@media (max-width: 992px) {
+  .trash-hero-panel {
+    flex-direction: column;
+  }
+
+  .trash-hero-tools {
+    width: 100%;
+  }
+
+  .trash-search-shell {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+  }
+
+  .trash-toolbar-panel {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .trash-bulk-actions {
+    width: 100%;
+  }
+}
+
+@media (max-width: 576px) {
+  .admin-trash-page {
+    padding-left: 0.45rem;
+    padding-right: 0.45rem;
+  }
+
+  .trash-item-name {
+    font-size: 1.22rem;
+  }
+
+  .trash-cleanup-card h4 {
+    font-size: 1.52rem;
+  }
+}
+
+@keyframes trash-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}

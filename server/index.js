@@ -1103,6 +1103,57 @@ function isFileFullyApprovedForCopc(file) {
   return chairApproved && qaApproved && workflowApproved;
 }
 
+async function autoApproveFacultyTasksAfterVerifiedUpload(file, reviewerId = null) {
+  const folderId = toObjectIdString(file?.parentFolder);
+  const uploaderId = toObjectIdString(file?.userId || file?.owner);
+  if (!folderId || !uploaderId) {
+    return { updated: false, changedCount: 0 };
+  }
+  if (!isFileFullyApprovedForCopc(file)) {
+    return { updated: false, changedCount: 0 };
+  }
+
+  const folder = await Folder.findById(folderId);
+  if (!folder || folder.deletedAt) {
+    return { updated: false, changedCount: 0 };
+  }
+
+  let changedCount = 0;
+  const now = new Date();
+  const walk = (tasks = []) => {
+    for (const task of tasks || []) {
+      const currentStatus = normalizeTaskStatus(task?.status, "pending");
+      const taskFacultyAssignees = roleScopedTaskAssigneeIds(task, "faculty");
+      const isUploaderAssigned = includesUserInAssignmentList(taskFacultyAssignees, uploaderId);
+      const isOngoing = currentStatus === "in_progress" || currentStatus === "for_review";
+      if (isUploaderAssigned && isOngoing) {
+        task.status = "approved";
+        task.percentage = 100;
+        task.updatedAt = now;
+        task.history = Array.isArray(task.history) ? task.history : [];
+        const historyEntry = buildTaskHistoryEntry({
+          action: "auto_approved_from_verified_upload",
+          fromStatus: currentStatus,
+          toStatus: "approved",
+          notes: `Auto-approved after "${String(file?.originalName || "uploaded file")}" passed department and QA verification.`,
+          actor: reviewerId || null,
+        });
+        if (historyEntry) task.history.push(historyEntry);
+        changedCount += 1;
+      }
+      walk(task?.children || []);
+    }
+  };
+
+  walk(folder.complianceTasks || []);
+  if (changedCount < 1) {
+    return { updated: false, changedCount: 0 };
+  }
+
+  await folder.save();
+  return { updated: true, changedCount };
+}
+
 function normalizePermissionRole(permission, fallback = "viewer") {
   const value = String(permission || "").toLowerCase();
   if (value === "owner") return "owner";
@@ -5808,6 +5859,17 @@ app.patch("/files/:id/review/qa", async (req, res) => {
 
     file.reviewWorkflow = workflow;
     await file.save();
+    let autoApprovedTaskResult = { updated: false, changedCount: 0 };
+    if (effectiveAction === "approve") {
+      autoApprovedTaskResult = await autoApproveFacultyTasksAfterVerifiedUpload(file, userId);
+      if (autoApprovedTaskResult.updated && autoApprovedTaskResult.changedCount > 0) {
+        createLog(
+          "AUTO_APPROVE_TASK_FROM_FILE_REVIEW",
+          userId,
+          `Auto-approved ${autoApprovedTaskResult.changedCount} task(s) after QA approval for ${file.originalName}`
+        );
+      }
+    }
     if (file.parentFolder) {
       await updateCopcStage(
         file.parentFolder,

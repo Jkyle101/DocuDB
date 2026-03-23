@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -12,18 +12,38 @@ import {
   FaFileImage,
   FaFileArchive,
   FaFileVideo,
-  FaCloudDownloadAlt,
-  FaEye,
   FaTrashRestore,
   FaTimes,
   FaCheckSquare,
   FaSquare,
   FaTrash,
-  FaExclamationTriangle,
-  FaUser
+  FaUser,
+  FaSearch,
+  FaClock,
+  FaShieldAlt,
 } from "react-icons/fa";
 import { BACKEND_URL } from "../../config";
+import "./trash.css";
 
+function formatFileSize(bytes) {
+  if (!bytes) return "0 Bytes";
+  const k = 1024;
+  const sizes = ["Bytes", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+}
+
+function formatDeletedLabel(value) {
+  if (!value) return "Deleted date unavailable";
+  const deletedAt = new Date(value);
+  if (Number.isNaN(deletedAt.getTime())) return "Deleted date unavailable";
+  const diffMs = Math.max(0, Date.now() - deletedAt.getTime());
+  const hours = Math.floor(diffMs / (1000 * 60 * 60));
+  const days = Math.floor(hours / 24);
+  if (days >= 1) return `Deleted ${days} day${days === 1 ? "" : "s"} ago`;
+  if (hours >= 1) return `Deleted ${hours} hour${hours === 1 ? "" : "s"} ago`;
+  return "Deleted just now";
+}
 
 export default function AdminTrash() {
   const userId = localStorage.getItem("userId");
@@ -33,8 +53,8 @@ export default function AdminTrash() {
   const [folders, setFolders] = useState([]);
   const [view, setView] = useState("grid");
   const [selectedItems, setSelectedItems] = useState(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
 
-  // Fetch trash contents
   const fetchTrash = useCallback(async () => {
     try {
       const res = await axios.get(`${BACKEND_URL}/trash`, {
@@ -51,41 +71,30 @@ export default function AdminTrash() {
     fetchTrash();
   }, [fetchTrash]);
 
-  // File icons
   const iconByMime = useMemo(
     () => (mimetype) => {
-      if (!mimetype) return <FaFileAlt className="file-icon text-secondary" />;
-      if (mimetype.includes("pdf"))
-        return <FaFilePdf className="file-icon text-danger" />;
-      if (mimetype.includes("word") || mimetype.includes("doc"))
-        return <FaFileWord className="file-icon text-primary" />;
-      if (mimetype.includes("excel") || mimetype.includes("spreadsheet"))
-        return <FaFileExcel className="file-icon text-success" />;
-      if (mimetype.includes("image"))
-        return <FaFileImage className="file-icon text-warning" />;
-      if (mimetype.includes("zip") || mimetype.includes("rar"))
-        return <FaFileArchive className="file-icon text-muted" />;
-      if (mimetype.includes("video"))
-        return <FaFileVideo className="file-icon text-info" />;
-      return <FaFileAlt className="file-icon text-secondary" />;
+      if (!mimetype) return <FaFileAlt className="trash-file-icon text-secondary" />;
+      if (mimetype.includes("pdf")) return <FaFilePdf className="trash-file-icon text-danger" />;
+      if (mimetype.includes("word") || mimetype.includes("doc")) {
+        return <FaFileWord className="trash-file-icon text-primary" />;
+      }
+      if (mimetype.includes("excel") || mimetype.includes("spreadsheet")) {
+        return <FaFileExcel className="trash-file-icon text-success" />;
+      }
+      if (mimetype.includes("image")) return <FaFileImage className="trash-file-icon text-warning" />;
+      if (mimetype.includes("zip") || mimetype.includes("rar")) {
+        return <FaFileArchive className="trash-file-icon text-muted" />;
+      }
+      if (mimetype.includes("video")) return <FaFileVideo className="trash-file-icon text-info" />;
+      return <FaFileAlt className="trash-file-icon text-secondary" />;
     },
     []
   );
 
-  // Format file size
-  const formatFileSize = (bytes) => {
-    if (!bytes) return "0 Bytes";
-    const k = 1024;
-    const sizes = ["Bytes", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
-  };
-
-  // Restore file/folder
   const restoreItem = async (type, id) => {
     try {
       await axios.patch(`${BACKEND_URL}/trash/${type}/${id}/restore`, null, {
-        params: { role }
+        params: { role },
       });
       fetchTrash();
     } catch (err) {
@@ -93,13 +102,11 @@ export default function AdminTrash() {
     }
   };
 
-  // Permanent delete file/folder
   const deleteItem = async (type, id) => {
-    if (!window.confirm("This will permanently delete the item. Continue?"))
-      return;
+    if (!window.confirm("This will permanently delete the item. Continue?")) return;
     try {
       await axios.delete(`${BACKEND_URL}/trash/${type}/${id}`, {
-        params: { role }
+        params: { role },
       });
       fetchTrash();
     } catch (err) {
@@ -107,24 +114,20 @@ export default function AdminTrash() {
     }
   };
 
-  // Selection handlers
   const toggleItemSelection = (type, id) => {
     const itemKey = `${type}-${id}`;
-    setSelectedItems(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(itemKey)) {
-        newSet.delete(itemKey);
-      } else {
-        newSet.add(itemKey);
-      }
-      return newSet;
+    setSelectedItems((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemKey)) next.delete(itemKey);
+      else next.add(itemKey);
+      return next;
     });
   };
 
   const selectAllItems = () => {
     const allItems = new Set();
-    folders.forEach(folder => allItems.add(`folder-${folder._id}`));
-    files.forEach(file => allItems.add(`file-${file._id}`));
+    folders.forEach((folder) => allItems.add(`folder-${folder._id}`));
+    files.forEach((file) => allItems.add(`file-${file._id}`));
     setSelectedItems(allItems);
   };
 
@@ -132,345 +135,360 @@ export default function AdminTrash() {
     setSelectedItems(new Set());
   };
 
-  // Bulk operations
   const bulkRestore = async () => {
     if (selectedItems.size === 0) return;
+    if (!window.confirm(`Restore ${selectedItems.size} selected item(s)?`)) return;
 
-    const confirmMessage = `Restore ${selectedItems.size} selected item(s)?`;
-    if (!window.confirm(confirmMessage)) return;
-
-    const promises = [];
-    selectedItems.forEach(itemKey => {
-      const [type, id] = itemKey.split('-');
-      const endpoint = type === 'folder' ? 'folders' : 'files';
-      promises.push(axios.patch(`${BACKEND_URL}/trash/${endpoint}/${id}/restore`, null, {
-        params: { role }
-      }));
+    const requests = [];
+    selectedItems.forEach((itemKey) => {
+      const [type, id] = itemKey.split("-");
+      const endpoint = type === "folder" ? "folders" : "files";
+      requests.push(
+        axios.patch(`${BACKEND_URL}/trash/${endpoint}/${id}/restore`, null, {
+          params: { role },
+        })
+      );
     });
 
     try {
-      await Promise.all(promises);
+      await Promise.all(requests);
       setSelectedItems(new Set());
       fetchTrash();
-      alert(`Successfully restored ${selectedItems.size} item(s)`);
+      alert(`Successfully restored ${selectedItems.size} item(s).`);
     } catch (err) {
       console.error("Bulk restore failed:", err);
-      alert("Some items could not be restored");
+      alert("Some items could not be restored.");
     }
   };
 
   const bulkDelete = async () => {
     if (selectedItems.size === 0) return;
+    if (!window.confirm(`Permanently delete ${selectedItems.size} selected item(s)? This action cannot be undone.`)) {
+      return;
+    }
 
-    const confirmMessage = `Permanently delete ${selectedItems.size} selected item(s)? This action cannot be undone.`;
-    if (!window.confirm(confirmMessage)) return;
-
-    const promises = [];
-    selectedItems.forEach(itemKey => {
-      const [type, id] = itemKey.split('-');
-      const endpoint = type === 'folder' ? 'folders' : 'files';
-      promises.push(axios.delete(`${BACKEND_URL}/trash/${endpoint}/${id}`, {
-        params: { role }
-      }));
+    const requests = [];
+    selectedItems.forEach((itemKey) => {
+      const [type, id] = itemKey.split("-");
+      const endpoint = type === "folder" ? "folders" : "files";
+      requests.push(
+        axios.delete(`${BACKEND_URL}/trash/${endpoint}/${id}`, {
+          params: { role },
+        })
+      );
     });
 
     try {
-      await Promise.all(promises);
+      await Promise.all(requests);
       setSelectedItems(new Set());
       fetchTrash();
-      alert(`Successfully deleted ${selectedItems.size} item(s)`);
+      alert(`Successfully deleted ${selectedItems.size} item(s).`);
     } catch (err) {
       console.error("Bulk delete failed:", err);
-      alert("Some items could not be deleted");
+      alert("Some items could not be deleted.");
     }
   };
 
-  // Check if all items are selected
-  const allItemsSelected = useMemo(() => {
-    const totalItems = folders.length + files.length;
-    return selectedItems.size === totalItems && totalItems > 0;
-  }, [selectedItems, folders, files]);
+  const normalizedQuery = String(searchQuery || "").trim().toLowerCase();
+  const matchesSearch = useCallback(
+    (name, ownerEmail) => {
+      if (!normalizedQuery) return true;
+      return (
+        String(name || "").toLowerCase().includes(normalizedQuery) ||
+        String(ownerEmail || "").toLowerCase().includes(normalizedQuery)
+      );
+    },
+    [normalizedQuery]
+  );
+
+  const visibleFolders = useMemo(
+    () =>
+      folders.filter((folder) =>
+        matchesSearch(folder.name, folder?.owner?.email || "Unknown")
+      ),
+    [folders, matchesSearch]
+  );
+
+  const visibleFiles = useMemo(
+    () =>
+      files.filter((file) =>
+        matchesSearch(file.originalName, file?.owner?.email || "Unknown")
+      ),
+    [files, matchesSearch]
+  );
+
+  const combinedVisibleItems = useMemo(() => {
+    const folderItems = visibleFolders.map((folder) => ({
+      key: `folder-${folder._id}`,
+      id: folder._id,
+      endpoint: "folders",
+      kind: "folder",
+      name: folder.name,
+      owner: folder?.owner?.email || "Unknown",
+      sizeLabel: "-",
+      deletedAt: folder.deletedAt,
+      typeLabel: "Folder",
+      icon: <FaFolder className="trash-file-icon text-primary" />,
+    }));
+
+    const fileItems = visibleFiles.map((file) => {
+      const extension = String(file?.mimetype || "").split("/")[1] || "File";
+      return {
+        key: `file-${file._id}`,
+        id: file._id,
+        endpoint: "files",
+        kind: "file",
+        name: file.originalName,
+        owner: file?.owner?.email || "Unknown",
+        sizeLabel: formatFileSize(file.size),
+        deletedAt: file.deletedAt,
+        typeLabel: extension.toUpperCase(),
+        icon: iconByMime(file.mimetype),
+      };
+    });
+
+    return [...folderItems, ...fileItems].sort((a, b) => {
+      const left = new Date(a.deletedAt || 0).getTime();
+      const right = new Date(b.deletedAt || 0).getTime();
+      return right - left;
+    });
+  }, [visibleFolders, visibleFiles, iconByMime]);
+
+  const totalItems = folders.length + files.length;
+  const selectedCount = selectedItems.size;
+  const hasItems = totalItems > 0;
+  const hasVisibleItems = combinedVisibleItems.length > 0;
+
+  const allItemsSelected = useMemo(
+    () => hasItems && selectedItems.size === totalItems,
+    [hasItems, selectedItems, totalItems]
+  );
 
   return (
-    <div className="container-fluid py-3 file-manager-container">
-      {/* Header */}
-      <div className="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
-        <div>
-          <h4 className="fw-bold text-danger mb-0">Admin Trash Management</h4>
-          <small className="text-muted">Manage trashed files and folders for all users</small>
+    <div className="container-fluid py-3 admin-trash-page">
+      <section className="trash-hero-panel">
+        <div className="trash-hero-copy">
+          <h1 className="trash-title">Trash Repository</h1>
+          <p className="trash-subtitle">
+            Review and manage deleted academic resources and administrative records.
+          </p>
         </div>
-        <div className="btn-group">
-          <button
-            className={`btn ${
-              view === "grid" ? "btn-primary" : "btn-outline-primary"
-            }`}
-            onClick={() => setView("grid")}
-            title="Grid View"
-          >
-            <FaTh />
-          </button>
-          <button
-            className={`btn ${
-              view === "list" ? "btn-primary" : "btn-outline-primary"
-            }`}
-            onClick={() => setView("list")}
-            title="List View"
-          >
-            <FaList />
-          </button>
-        </div>
-      </div>
-
-      {/* Bulk Actions Toolbar */}
-      {(folders.length > 0 || files.length > 0) && (
-        <div className="card mb-4">
-          <div className="card-body py-3">
-            <div className="row align-items-center">
-              <div className="col-md-6">
-                <div className="d-flex align-items-center gap-3">
-                  <button
-                    className="btn btn-sm btn-outline-secondary"
-                    onClick={allItemsSelected ? selectNoneItems : selectAllItems}
-                    title={allItemsSelected ? "Select None" : "Select All"}
-                  >
-                    {allItemsSelected ? <FaCheckSquare /> : <FaSquare />} {allItemsSelected ? "Select None" : "Select All"}
-                  </button>
-                  {selectedItems.size > 0 && (
-                    <span className="text-muted small">
-                      {selectedItems.size} item(s) selected
-                    </span>
-                  )}
-                </div>
-              </div>
-              <div className="col-md-6 text-md-end mt-3 mt-md-0">
-                {selectedItems.size > 0 && (
-                  <div className="btn-group">
-                    <button
-                      className="btn btn-sm btn-success"
-                      onClick={bulkRestore}
-                      title="Restore Selected Items"
-                    >
-                      <FaTrashRestore className="me-1" />
-                      Restore ({selectedItems.size})
-                    </button>
-                    <button
-                      className="btn btn-sm btn-danger"
-                      onClick={bulkDelete}
-                      title="Permanently Delete Selected Items"
-                    >
-                      <FaTrash className="me-1" />
-                      Delete All ({selectedItems.size})
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
+        <div className="trash-hero-tools">
+          <label className="trash-search-shell" htmlFor="trash-search-input">
+            <FaSearch aria-hidden="true" />
+            <input
+              id="trash-search-input"
+              type="search"
+              placeholder="Search trashed items..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </label>
+          <div className="trash-view-toggle" role="group" aria-label="Trash view mode">
+            <button
+              type="button"
+              className={view === "grid" ? "is-active" : ""}
+              onClick={() => setView("grid")}
+              title="Grid View"
+            >
+              <FaTh />
+            </button>
+            <button
+              type="button"
+              className={view === "list" ? "is-active" : ""}
+              onClick={() => setView("list")}
+              title="List View"
+            >
+              <FaList />
+            </button>
           </div>
         </div>
+      </section>
+
+      {hasItems && (
+        <section className="trash-toolbar-panel">
+          <div className="trash-select-block">
+            <button
+              type="button"
+              className="trash-select-toggle"
+              onClick={allItemsSelected ? selectNoneItems : selectAllItems}
+            >
+              {allItemsSelected ? <FaCheckSquare /> : <FaSquare />}
+              <span>{allItemsSelected ? "Select None" : "Select All"}</span>
+            </button>
+            <span className="trash-selection-meta">
+              {selectedCount > 0 ? `${selectedCount} item(s) selected` : `${totalItems} item(s) in trash`}
+            </span>
+          </div>
+          <div className="trash-bulk-actions">
+            <button
+              type="button"
+              className="trash-action-btn restore"
+              onClick={bulkRestore}
+              disabled={selectedCount === 0}
+            >
+              <FaTrashRestore />
+              <span>Restore Selected</span>
+            </button>
+            <button
+              type="button"
+              className="trash-action-btn delete"
+              onClick={bulkDelete}
+              disabled={selectedCount === 0}
+            >
+              <FaTrash />
+              <span>Delete Selected</span>
+            </button>
+          </div>
+        </section>
       )}
 
-      {/* GRID VIEW */}
-      {view === "grid" ? (
-        <div className="row g-4">
-          {/* Folders */}
-          {folders.map((folder) => {
-            const isSelected = selectedItems.has(`folder-${folder._id}`);
+      {hasVisibleItems && view === "grid" && (
+        <section className="trash-grid">
+          {combinedVisibleItems.map((item) => {
+            const isSelected = selectedItems.has(item.key);
             return (
-              <div key={folder._id} className="col-6 col-sm-4 col-md-3 col-xl-2">
-                <div className={`card folder-card h-100 ${isSelected ? 'border-primary' : ''}`}>
-                  <div className="card-header d-flex align-items-center justify-content-between bg-light">
-                    <input
-                      type="checkbox"
-                      className="form-check-input"
-                      checked={isSelected}
-                      onChange={() => toggleItemSelection('folder', folder._id)}
-                    />
-                    {isSelected && <FaCheckSquare className="text-primary" />}
-                  </div>
-                  <div className="card-body text-center">
-                    <FaFolder size={42} className="text-warning mb-3" />
-                    <h6 className="card-title text-truncate">{folder.name}</h6>
-                    <p className="text-muted small">
-                      <FaUser className="me-1" />
-                      {folder.owner?.email || 'Unknown'}
-                    </p>
-                    <p className="text-muted small">Folder</p>
-                    <div className="btn-group w-100">
-                      <button
-                        className="btn btn-sm btn-outline-success"
-                        onClick={() => restoreItem("folders", folder._id)}
-                      >
-                        <FaTrashRestore /> Restore
-                      </button>
-                      <button
-                        className="btn btn-sm btn-outline-danger"
-                        onClick={() => deleteItem("folders", folder._id)}
-                      >
-                        <FaTimes /> Delete
-                      </button>
-                    </div>
-                  </div>
+              <article key={item.key} className={`trash-item-card ${isSelected ? "is-selected" : ""}`}>
+                <div className="trash-card-head">
+                  <button
+                    type="button"
+                    className={`trash-check-btn ${isSelected ? "is-selected" : ""}`}
+                    onClick={() => toggleItemSelection(item.kind, item.id)}
+                    aria-label={`Select ${item.name}`}
+                  >
+                    {isSelected ? <FaCheckSquare /> : <FaSquare />}
+                  </button>
+                  <span className={`trash-kind-pill kind-${item.kind}`}>{item.typeLabel}</span>
                 </div>
-              </div>
+
+                <div className={`trash-icon-shell kind-${item.kind}`}>{item.icon}</div>
+                <h3 className="trash-item-name" title={item.name}>{item.name}</h3>
+                <div className="trash-meta-line">
+                  <FaUser />
+                  <span title={item.owner}>{item.owner}</span>
+                </div>
+                <div className="trash-meta-line">
+                  <FaClock />
+                  <span>{formatDeletedLabel(item.deletedAt)}</span>
+                </div>
+
+                <div className="trash-card-actions">
+                  <button
+                    type="button"
+                    className="trash-restore-btn"
+                    onClick={() => restoreItem(item.endpoint, item.id)}
+                  >
+                    Restore
+                  </button>
+                  <button
+                    type="button"
+                    className="trash-delete-icon-btn"
+                    onClick={() => deleteItem(item.endpoint, item.id)}
+                    aria-label={`Permanently delete ${item.name}`}
+                    title="Permanent delete"
+                  >
+                    <FaTimes />
+                  </button>
+                </div>
+              </article>
             );
           })}
 
-          {/* Files */}
-          {files.map((file) => {
-            const isSelected = selectedItems.has(`file-${file._id}`);
-            return (
-              <div key={file._id} className="col-6 col-sm-4 col-md-3 col-xl-2">
-                <div className={`card file-card h-100 ${isSelected ? 'border-primary' : ''}`}>
-                  <div className="card-header d-flex align-items-center justify-content-between bg-light">
-                    <input
-                      type="checkbox"
-                      className="form-check-input"
-                      checked={isSelected}
-                      onChange={() => toggleItemSelection('file', file._id)}
-                    />
-                    {isSelected && <FaCheckSquare className="text-primary" />}
-                  </div>
-                  <div className="card-body text-center">
-                    <div className="mb-3">{iconByMime(file.mimetype)}</div>
-                    <h6 className="card-title text-truncate">{file.originalName}</h6>
-                    <p className="text-muted small">
-                      <FaUser className="me-1" />
-                      {file.owner?.email || 'Unknown'}
-                    </p>
-                    <p className="text-muted small">{formatFileSize(file.size)}</p>
-                    <div className="btn-group w-100">
-                      <button
-                        className="btn btn-sm btn-outline-success"
-                        onClick={() => restoreItem("files", file._id)}
-                      >
-                        <FaTrashRestore /> Restore
-                      </button>
-                      <button
-                        className="btn btn-sm btn-outline-danger"
-                        onClick={() => deleteItem("files", file._id)}
-                      >
-                        <FaTimes /> Delete
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        // LIST VIEW
-        <div className="table-container">
-          <table className="table table-hover align-middle">
-            <thead className="table-light">
+          <aside className="trash-cleanup-card">
+            <div className="trash-cleanup-icon">
+              <FaShieldAlt />
+            </div>
+            <h4>Auto-Cleanup Active</h4>
+            <p>
+              Items in trash are automatically deleted forever after 30 days of retention.
+            </p>
+          </aside>
+        </section>
+      )}
+
+      {hasVisibleItems && view === "list" && (
+        <section className="trash-table-shell">
+          <table className="table align-middle mb-0 trash-list-table">
+            <thead>
               <tr>
-                <th style={{width: '50px'}}>
+                <th className="trash-col-check">
                   <input
                     type="checkbox"
                     className="form-check-input"
                     checked={allItemsSelected}
                     onChange={allItemsSelected ? selectNoneItems : selectAllItems}
-                    title={allItemsSelected ? "Select None" : "Select All"}
                   />
                 </th>
                 <th>Name</th>
                 <th>Owner</th>
                 <th>Type</th>
                 <th>Size</th>
-                <th>Deleted At</th>
-                <th className="text-center">Actions</th>
+                <th>Deleted</th>
+                <th className="text-end">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {folders.map((folder) => {
-                const isSelected = selectedItems.has(`folder-${folder._id}`);
+              {combinedVisibleItems.map((item) => {
+                const isSelected = selectedItems.has(item.key);
                 return (
-                  <tr key={folder._id} className={isSelected ? 'table-active' : ''}>
+                  <tr key={item.key} className={isSelected ? "is-selected" : ""}>
                     <td>
                       <input
                         type="checkbox"
                         className="form-check-input"
                         checked={isSelected}
-                        onChange={() => toggleItemSelection('folder', folder._id)}
+                        onChange={() => toggleItemSelection(item.kind, item.id)}
                       />
                     </td>
                     <td>
-                      <FaFolder className="text-warning me-2" />
-                      {folder.name}
+                      <div className="trash-table-name">
+                        {item.icon}
+                        <span title={item.name}>{item.name}</span>
+                      </div>
                     </td>
-                    <td>{folder.owner?.email || 'Unknown'}</td>
-                    <td>Folder</td>
-                    <td>â€”</td>
-                    <td>{new Date(folder.deletedAt).toLocaleDateString()}</td>
-                    <td className="text-center">
-                      <button
-                        className="btn btn-sm btn-outline-success me-2"
-                        onClick={() => restoreItem("folders", folder._id)}
-                      >
-                        <FaTrashRestore /> Restore
-                      </button>
-                      <button
-                        className="btn btn-sm btn-outline-danger"
-                        onClick={() => deleteItem("folders", folder._id)}
-                      >
-                        <FaTimes /> Delete
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-              {files.map((file) => {
-                const isSelected = selectedItems.has(`file-${file._id}`);
-                return (
-                  <tr key={file._id} className={isSelected ? 'table-active' : ''}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        className="form-check-input"
-                        checked={isSelected}
-                        onChange={() => toggleItemSelection('file', file._id)}
-                      />
-                    </td>
-                    <td>
-                      {iconByMime(file.mimetype)} {file.originalName}
-                    </td>
-                    <td>{file.owner?.email || 'Unknown'}</td>
-                    <td>{file.mimetype.split("/")[1]}</td>
-                    <td>{formatFileSize(file.size)}</td>
-                    <td>{new Date(file.deletedAt).toLocaleDateString()}</td>
-                    <td className="text-center">
-                      <button
-                        className="btn btn-sm btn-outline-success me-2"
-                        onClick={() => restoreItem("files", file._id)}
-                      >
-                        <FaTrashRestore /> Restore
-                      </button>
-                      <button
-                        className="btn btn-sm btn-outline-danger"
-                        onClick={() => deleteItem("files", file._id)}
-                      >
-                        <FaTimes /> Delete
-                      </button>
+                    <td title={item.owner}>{item.owner}</td>
+                    <td>{item.typeLabel}</td>
+                    <td>{item.sizeLabel}</td>
+                    <td>{formatDeletedLabel(item.deletedAt)}</td>
+                    <td className="text-end">
+                      <div className="trash-row-actions">
+                        <button
+                          type="button"
+                          className="trash-restore-btn compact"
+                          onClick={() => restoreItem(item.endpoint, item.id)}
+                        >
+                          Restore
+                        </button>
+                        <button
+                          type="button"
+                          className="trash-delete-icon-btn compact"
+                          onClick={() => deleteItem(item.endpoint, item.id)}
+                          aria-label={`Permanently delete ${item.name}`}
+                          title="Permanent delete"
+                        >
+                          <FaTimes />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 );
               })}
             </tbody>
           </table>
-        </div>
+        </section>
       )}
 
-      {/* Empty state */}
-      {files.length === 0 && folders.length === 0 && (
-        <div className="text-center py-5 empty-state">
-          <FaTrashRestore className="text-muted mb-3" size={48} />
-          <h5 className="text-muted">Trash is empty</h5>
-          <p className="text-muted">
-            No trashed items from any users.
+      {!hasVisibleItems && (
+        <section className="trash-empty-state">
+          <FaTrashRestore />
+          <h5>{hasItems ? "No trashed items match your search" : "Trash is empty"}</h5>
+          <p>
+            {hasItems
+              ? "Try another keyword or clear the search field."
+              : "No trashed files or folders from any users."}
           </p>
-        </div>
+        </section>
       )}
     </div>
   );
 }
-

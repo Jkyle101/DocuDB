@@ -407,12 +407,24 @@ export default function CopcWorkflowPage() {
       if (value === null || value === undefined || value === "") return;
       params.set(key, String(value));
     });
-    navigate(`/copc-dashboard?${params.toString()}`);
+    const basePath = location.pathname.startsWith("/admin/")
+      ? "/admin/copc-dashboard"
+      : "/copc-dashboard";
+    navigate(`${basePath}?${params.toString()}`);
   };
 
   const openSummaryFolder = (folderId) => {
     const targetFolderId = String(folderId || "");
     if (!selectedProgramId || !targetFolderId) return;
+    if (location.pathname.startsWith("/admin/")) {
+      const params = new URLSearchParams({
+        folderId: targetFolderId,
+      });
+      params.set("from", "copc_workflow");
+      params.set("programId", String(selectedProgramId));
+      navigate(`/admin/drive?${params.toString()}`);
+      return;
+    }
     openDashboardTab("upload", { folderId: targetFolderId });
   };
 

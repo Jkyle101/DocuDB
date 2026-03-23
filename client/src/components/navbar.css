@@ -981,3 +981,49 @@ body.dark-mode .dropdown-menu-google,
 body.dark-mode .suggestions-google {
   background: color-mix(in srgb, var(--glass-bg, rgba(14, 26, 48, 0.58)) 92%, #071323);
 }
+
+/* Plain white search dropdown (non-glass) */
+.suggestions-google,
+.mobile-suggestions-google {
+  background: #ffffff !important;
+  border: 1px solid #d7deea !important;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.14) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  color: #1f2937;
+}
+
+body.dark-mode .suggestions-google,
+body.dark-mode .mobile-suggestions-google {
+  background: #ffffff !important;
+  border-color: #d7deea !important;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16) !important;
+}
+
+.suggestions-google .suggestion-header-google,
+.mobile-suggestions-google .suggestion-header-google,
+.suggestions-google .suggestion-meta-google,
+.mobile-suggestions-google .suggestion-meta-google,
+.suggestions-google .suggestion-icon-google,
+.mobile-suggestions-google .suggestion-icon-google,
+.suggestions-google .no-results-google,
+.mobile-suggestions-google .no-results-google {
+  color: #64748b !important;
+}
+
+.suggestions-google .suggestion-title-google,
+.mobile-suggestions-google .suggestion-title-google {
+  color: #1f2937 !important;
+}
+
+.suggestions-google .suggestion-item-google:hover,
+.mobile-suggestions-google .suggestion-item-google:hover {
+  background-color: #f5f7fb !important;
+  border-left-color: #93a4ba !important;
+}
+
+.suggestions-google .suggestion-item-google.selected-google,
+.mobile-suggestions-google .suggestion-item-google.selected-google {
+  background-color: #eaf2ff !important;
+  border-left-color: #3b82f6 !important;
+}

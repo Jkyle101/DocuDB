@@ -8,9 +8,7 @@ import "./task-management.css";
 const STATUS_META = {
   pending: { label: "Pending", className: "bg-secondary" },
   in_progress: { label: "In Progress", className: "bg-warning text-dark" },
-  for_review: { label: "For Review", className: "bg-info text-dark" },
   approved: { label: "Approved", className: "bg-success" },
-  rejected: { label: "Rejected", className: "bg-danger" },
 };
 const LEGACY_STATUS_MAP = {
   not_started: "pending",
@@ -19,7 +17,9 @@ const LEGACY_STATUS_MAP = {
 
 const normalizeTaskStatus = (value) => {
   const key = String(value || "").toLowerCase();
-  return LEGACY_STATUS_MAP[key] || key || "pending";
+  const normalized = LEGACY_STATUS_MAP[key] || key || "pending";
+  if (normalized === "for_review" || normalized === "rejected") return "in_progress";
+  return normalized;
 };
 
 const emptySummary = {
@@ -39,9 +39,7 @@ const emptySummary = {
 const ASSIGNED_KANBAN_COLUMNS = [
   { key: "pending", title: "To Do", emptyLabel: "No pending tasks." },
   { key: "in_progress", title: "In Progress", emptyLabel: "No tasks in progress." },
-  { key: "for_review", title: "For Review", emptyLabel: "No tasks waiting for review." },
   { key: "approved", title: "Approved", emptyLabel: "No approved tasks yet." },
-  { key: "rejected", title: "Needs Revision", emptyLabel: "No rejected tasks." },
 ];
 
 const roleLabel = (role) => {
@@ -223,6 +221,8 @@ export default function CopcAssignedTasksPage() {
     return grouped;
   }, [assignedTasks]);
 
+  const inProgressDisplayCount = Number(summary.inProgress || 0) + Number(summary.forReview || 0) + Number(summary.rejected || 0);
+
   const openFolderInUploadWorkspace = (folderId) => {
     const params = new URLSearchParams();
     params.set("tab", "upload");
@@ -311,8 +311,8 @@ export default function CopcAssignedTasksPage() {
           <div className="col-sm-6 col-md-2">
             <div className="card shadow-sm h-100 assigned-summary-card">
               <div className="card-body py-2">
-                <div className="small text-muted">For Review</div>
-                <div className="fw-bold fs-4 text-info">{summary.forReview || 0}</div>
+                <div className="small text-muted">In Progress</div>
+                <div className="fw-bold fs-4 text-warning">{inProgressDisplayCount}</div>
               </div>
             </div>
           </div>

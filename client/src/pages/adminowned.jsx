@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { useNavigate, useOutletContext } from "react-router-dom";
+import { useNavigate, useOutletContext, useSearchParams } from "react-router-dom";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -34,6 +34,8 @@ import ShareModal from "../components/ShareModal";
 import RenameModal from "../components/RenameModal";
 import { BACKEND_URL } from "../config";
 import { isExternalFileDrag, uploadDroppedEntries } from "../utils/dropUpload";
+
+const OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
 
 const PREDEFINED_FOLDER_SETS = {
   copc_bsit: [
@@ -121,7 +123,11 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
   const normalizedDefaultScope = defaultScope === "all" ? "all" : "owned";
   const [contentScope, setContentScope] = useState(normalizedDefaultScope);
   const isOwnedScope = contentScope === "owned";
-  const { searchResults } = useOutletContext();
+  const outletContext = useOutletContext() || {};
+  const searchResults = Array.isArray(outletContext.searchResults) ? outletContext.searchResults : null;
+  const [searchParams] = useSearchParams();
+  const requestedFolderIdRaw = String(searchParams.get("folderId") || "").trim();
+  const requestedFolderId = OBJECT_ID_PATTERN.test(requestedFolderIdRaw) ? requestedFolderIdRaw : "";
   const navigate = useNavigate();
   const CHECKLIST_PANEL_WIDTH = 420;
   const CHECKLIST_PANEL_TOP = 92;
@@ -180,15 +186,22 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
   const fetchContents = useCallback(async (folderId) => {
     try {
       const params = { role, parentFolder: folderId || "" };
-      const [fdrRes, filRes, bcRes] = await Promise.all([
+      const [fdrRes, filRes] = await Promise.all([
         axios.get(`${BACKEND_URL}/folders`, { params }),
         axios.get(`${BACKEND_URL}/files`, { params }),
-        axios.get(`${BACKEND_URL}/breadcrumbs`, { params: { folderId } }),
       ]);
+      let breadcrumbData = [];
+      if (folderId) {
+        try {
+          const bcRes = await axios.get(`${BACKEND_URL}/breadcrumbs`, { params: { folderId } });
+          breadcrumbData = Array.isArray(bcRes.data) ? bcRes.data : [];
+        } catch {
+          breadcrumbData = [];
+        }
+      }
 
       const foldersData = Array.isArray(fdrRes.data) ? fdrRes.data : [];
       const filesData = Array.isArray(filRes.data) ? filRes.data : [];
-      const breadcrumbData = Array.isArray(bcRes.data) ? bcRes.data : [];
       setFolders(foldersData);
       setFiles(filesData);
       setBreadcrumbs(breadcrumbData);
@@ -245,9 +258,17 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
   }, [currentFolderId]);
 
   useEffect(() => {
+    if (requestedFolderId) return;
     setCurrentFolderId(null);
     setFolderQuery("");
-  }, [contentScope]);
+  }, [contentScope, requestedFolderId]);
+
+  useEffect(() => {
+    if (!requestedFolderId) return;
+    setContentScope("all");
+    setCurrentFolderId(requestedFolderId);
+    setFolderQuery("");
+  }, [requestedFolderId]);
 
   useEffect(() => {
     const handlePointerMove = (event) => {
