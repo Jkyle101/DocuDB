@@ -24,7 +24,7 @@ export default function CopcDepartmentReviewPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   const [programs, setPrograms] = useState([]);
   const [selectedProgramId, setSelectedProgramId] = useState("");
@@ -199,7 +199,7 @@ export default function CopcDepartmentReviewPage() {
         </div>
 
         {!selectedProgramId && (
-          <div className="alert alert-info mb-0">Select a COPC program to review faculty submissions.</div>
+          <div className="alert alert-info mb-0">Select a COPC program to review user submissions.</div>
         )}
 
         {selectedProgramId && programMeta && (
@@ -263,7 +263,7 @@ export default function CopcDepartmentReviewPage() {
         {!loading && selectedProgramId && filteredSubmissions.length === 0 && (
           <div className="copc-review-empty">
             <FaFileAlt size={44} />
-            <h5>No faculty submissions found in this view.</h5>
+            <h5>No user submissions found in this view.</h5>
           </div>
         )}
 

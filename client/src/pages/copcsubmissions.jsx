@@ -63,7 +63,7 @@ export default function CopcSubmissionsPage() {
   const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   const requestedProgramId = String(searchParams.get("programId") || "");
   const requestedStatus = normalizeSubmissionStatus(searchParams.get("status"));

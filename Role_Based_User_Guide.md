@@ -9,7 +9,7 @@ This guide explains how each role uses DocuDB. The system has two main working a
 
 The roles covered in this guide are:
 
-- `faculty`
+- `user`
 - `dept_chair`
 - `qa_admin`
 - `evaluator`
@@ -34,11 +34,11 @@ The roles covered in this guide are:
 - `Settings`: Profile picture and password request page
 - `COPC Workflow`: Program workflow overview
 
-## Faculty Guide
+## User Guide
 
 ### Main Access
 
-Faculty users can access:
+Users can access:
 
 - `My Drive`
 - `Shared with me`
@@ -60,7 +60,7 @@ Faculty users can access:
 - Submit required COPC files
 - Revise documents when review feedback is given
 
-### How Faculty Use the Google Drive-like Side
+### How Users Use the Google Drive-like Side
 
 1. Open `My Drive`.
 2. Create a folder if needed.
@@ -72,7 +72,7 @@ Faculty users can access:
 8. Open `Groups` for team collaboration.
 9. Use `Smart Forms` to generate documents from templates.
 
-### How Faculty Use the COPC Side
+### How Users Use the COPC Side
 
 1. Open `COPC Workflow` to view the status of assigned programs.
 2. Open `COPC Upload` to submit required files.
@@ -81,24 +81,24 @@ Faculty users can access:
 5. Monitor notifications for requested revisions or approval progress.
 6. Re-upload or update documents when a department chair or QA reviewer requests changes.
 
-### Important Notes for Faculty
+### Important Notes for Users
 
-- Faculty can upload files, but access still depends on assigned folders and permissions.
-- Evaluator-only pages are not available to faculty.
+- Users can upload files, but access still depends on assigned folders and permissions.
+- Evaluator-only pages are not available to users.
 - Password change requests are submitted through `Settings` and reviewed by an administrator.
 
 ## Department Chair Guide
 
 ### Main Access
 
-Department chairs can access everything available to faculty, plus:
+Department chairs can access everything available to users, plus:
 
 - `COPC Review`
 - Folder task and assignment features for review-related work
 
 ### Main Responsibilities
 
-- Review faculty submissions
+- Review user submissions
 - Monitor folder tasks and assigned checklist work
 - Request missing or incomplete documents
 - Approve or reject submissions during department review
@@ -111,7 +111,7 @@ Department chairs can access everything available to faculty, plus:
 3. Upload and organize department-level documents when needed.
 4. Open comments and shared files for collaboration.
 5. Use `Groups`, `Shared with me`, and `Recent` to manage related files.
-6. Request missing documents from faculty when requirements are incomplete.
+6. Request missing documents from users when requirements are incomplete.
 
 ### How Department Chairs Use the COPC Side
 
@@ -119,7 +119,7 @@ Department chairs can access everything available to faculty, plus:
 2. Select a program from the list.
 3. Review submission counts and progress indicators.
 4. Open `COPC Review`.
-5. Check faculty submissions against the checklist.
+5. Check user submissions against the checklist.
 6. Approve documents that satisfy requirements.
 7. Reject documents that need revision and provide notes.
 8. Monitor the program until submissions move to the QA stage.

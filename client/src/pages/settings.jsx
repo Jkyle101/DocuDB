@@ -70,7 +70,7 @@ function Settings() {
   const [passwordResetCode, setPasswordResetCode] = useState("");
 
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   useEffect(() => {
     const email = localStorage.getItem("email");

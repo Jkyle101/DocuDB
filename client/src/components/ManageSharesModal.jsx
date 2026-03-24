@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import { FaTimes } from "react-icons/fa";
 import { BACKEND_URL } from "../config";
@@ -7,7 +7,7 @@ export default function ManageSharesModal({ onClose, target, onUpdated }) {
   const [sharedWith, setSharedWith] = useState([]);
   const [loading, setLoading] = useState(true);
   const actorId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   const fetchSharedUsers = useCallback(async () => {
     if (!target?.item?._id || !target?.type) return;

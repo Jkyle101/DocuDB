@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
 
@@ -12,7 +12,7 @@ export default function ShareModal({ onClose, target }) {
   const inputRef = useRef(null);
   const suggestionsRef = useRef(null);
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   // Fetch all users when modal opens
   useEffect(() => {
@@ -86,7 +86,7 @@ export default function ShareModal({ onClose, target }) {
 
   const submit = async () => {
     try {
-      // backend will resolve emails â†’ userIds
+      // backend will resolve emails → userIds
       const body = {
         emails: emails
           .split(",")

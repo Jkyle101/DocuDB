@@ -28,7 +28,7 @@ const normalizeDepartment = (value) => {
 
 export default function ManageUsers() {
   const roleOptions = [
-    { value: "faculty", label: "Faculty" },
+    { value: "user", label: "User" },
     { value: "dept_chair", label: "Dept Chair" },
     { value: "qa_admin", label: "QA Admin" },
     { value: "evaluator", label: "Evaluator" },
@@ -48,7 +48,7 @@ export default function ManageUsers() {
   // User creation states
   const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [showBulkImportModal, setShowBulkImportModal] = useState(false);
-  const [newUser, setNewUser] = useState({ email: "", password: "", name: "", department: "", role: "faculty" });
+  const [newUser, setNewUser] = useState({ email: "", password: "", name: "", department: "", role: "user" });
   const [bulkUsers, setBulkUsers] = useState([]);
   const [bulkImportResults, setBulkImportResults] = useState(null);
   const [importing, setImporting] = useState(false);
@@ -62,7 +62,7 @@ export default function ManageUsers() {
   const normalizeRole = (value) => {
     const raw = String(value || "").toLowerCase();
     if (raw === "admin") return "superadmin";
-    if (raw === "user") return "faculty";
+    if (raw === "faculty") return "user";
     if (["program_chair", "department_chair", "program_head"].includes(raw)) return "dept_chair";
     if (["qa_officer", "quality_assurance_admin", "copc_reviewer"].includes(raw)) return "qa_admin";
     if (raw === "reviewer") return "evaluator";
@@ -318,7 +318,7 @@ export default function ManageUsers() {
         { ...newUser, department: normalizedDepartment }
       );
       alert("User added successfully!");
-      setNewUser({ email: "", password: "", name: "", department: "", role: "faculty" });
+      setNewUser({ email: "", password: "", name: "", department: "", role: "user" });
       setShowAddUserModal(false);
       fetchUsers();
     } catch (err) {
@@ -372,7 +372,7 @@ export default function ManageUsers() {
         const rows = Array.isArray(data) ? data : [data];
         return rows.map((row, index) => ({
           ...row,
-          role: row?.role || "faculty",
+          role: row?.role || "user",
           department: normalizeDepartment(row?.department),
           lineNumber: row?.lineNumber || index + 1
         }));
@@ -399,7 +399,7 @@ export default function ManageUsers() {
             password: values[passwordIndex],
             name: nameIndex >= 0 ? values[nameIndex] : '',
             department: normalizeDepartment(departmentIndex >= 0 ? values[departmentIndex] : ''),
-            role: roleIndex >= 0 ? values[roleIndex] || "faculty" : 'faculty',
+            role: roleIndex >= 0 ? values[roleIndex] || "user" : "user",
             lineNumber: index + 2
           };
         });
@@ -1076,7 +1076,7 @@ export default function ManageUsers() {
                   <br />
                   <strong>Optional Columns:</strong> name, role
                   <br />
-                  <strong>Default Role:</strong> faculty
+                  <strong>Default Role:</strong> user
                 </div>
 
                 <div className="mb-3">

@@ -1,4 +1,4 @@
-﻿// âœ… RenameModal.jsx
+// ✅ RenameModal.jsx
 import React, { useState } from "react";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
@@ -8,7 +8,7 @@ export default function RenameModal({ item, onClose, onRenamed }) {
     item.type === "file" ? item.data.originalName : item.data.name
   );
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   const handleRename = async () => {
     if (!newName.trim()) {
@@ -26,10 +26,10 @@ export default function RenameModal({ item, onClose, onRenamed }) {
 
       const res = await axios.put(endpoint, { newName, userId, role });
 
-      // âœ… Refresh parent state
+      // ✅ Refresh parent state
       onRenamed(res.data);
 
-      // âœ… Log rename success
+      // ✅ Log rename success
       console.log("Rename success:", res.data);
     } catch (err) {
       console.error("Rename error:", err);

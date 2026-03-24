@@ -49,8 +49,9 @@ const complianceTaskSchema = new mongoose.Schema(
     assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "users", default: null },
     assignedRole: {
       type: String,
-      enum: ["faculty", "dept_chair", "qa_admin", "superadmin", "evaluator", ""],
-      default: "faculty",
+      // Keep legacy "faculty" for backward compatibility with existing task nodes.
+      enum: ["user", "faculty", "dept_chair", "qa_admin", "superadmin", "evaluator", ""],
+      default: "user",
     },
     priority: {
       type: String,

@@ -7,8 +7,9 @@ const UserSchema = new mongoose.Schema({
   department: { type: String, default: "Unassigned" },
   role: {
     type: String,
-    enum: ["superadmin", "qa_admin", "dept_chair", "faculty", "evaluator"],
-    default: "faculty",
+    // Keep legacy "faculty" for backward compatibility with existing records.
+    enum: ["superadmin", "qa_admin", "dept_chair", "user", "faculty", "evaluator"],
+    default: "user",
   },
   active: { type: Boolean, default: true }, // user account status
   profilePicture: { type: String, default: null }, // profile picture filename

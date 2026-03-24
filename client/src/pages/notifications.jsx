@@ -7,7 +7,7 @@ import { BACKEND_URL } from "../config";
 const normalizeRole = (value) => {
   const raw = String(value || "").toLowerCase();
   if (raw === "admin") return "superadmin";
-  if (raw === "user") return "faculty";
+  if (raw === "faculty") return "user";
   if (["program_chair", "department_chair", "program_head"].includes(raw)) return "dept_chair";
   if (["qa_officer", "quality_assurance_admin", "copc_reviewer"].includes(raw)) return "qa_admin";
   if (raw === "reviewer") return "evaluator";
@@ -21,7 +21,7 @@ function Notifications() {
   const navigate = useNavigate();
 
   const userId = localStorage.getItem("userId");
-  const userRole = normalizeRole(localStorage.getItem("role") || "faculty");
+  const userRole = normalizeRole(localStorage.getItem("role") || "user");
 
   useEffect(() => {
     fetchNotifications();

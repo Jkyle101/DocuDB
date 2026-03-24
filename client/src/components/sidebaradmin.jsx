@@ -11,6 +11,7 @@ import {
   FaUserFriends,
   FaFolder,
   FaLayerGroup,
+  FaCloudUploadAlt,
 } from "react-icons/fa";
 import Upload from "../pages/upload";
 import "bootstrap/dist/css/bootstrap.min.css";
@@ -144,6 +145,18 @@ function SidebarSuperAdmin({ onClose }) {
                 >
                   <FaArchive className="me-2" size={16} />
                   Archived COPC
+                </NavLink>
+              </li>
+              <li className="nav-item">
+                <NavLink
+                  to="/admin/copc-recent-uploads"
+                  className={({ isActive }) =>
+                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                  }
+                  onClick={handleLinkClick}
+                >
+                  <FaCloudUploadAlt className="me-2" size={16} />
+                  Recent COPC Uploads
                 </NavLink>
               </li>
             </ul>

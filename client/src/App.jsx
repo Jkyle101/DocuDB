@@ -21,6 +21,7 @@ import CopcEvaluationPage from "./pages/copcevaluation";
 import CopcSubmissionsPage from "./pages/copcsubmissions";
 import UserCopcDashboardPage from "./pages/usercopcdashboard";
 import AdminCopcArchivedPage from "./pages/admincopcarchived";
+import AdminCopcRecentUploadsPage from "./pages/admincopcrecentuploads";
 import Settings from "./pages/settings"; // user settings page
 import Notifications from "./pages/notifications"; // user notifications page
 import Help from "./pages/help"; // help & feedback page
@@ -32,7 +33,7 @@ const USER_ALLOWED_ROLES = [
   "superadmin",
   "qa_admin",
   "dept_chair",
-  "faculty",
+  "user",
   "evaluator",
 ];
 
@@ -166,7 +167,7 @@ function AppRoutes() {
       <Route
         path="/copc-workflow/upload"
         element={
-          <ProtectedRoute allowedRoles={["superadmin", "qa_admin", "dept_chair", "faculty"]}>
+          <ProtectedRoute allowedRoles={["superadmin", "qa_admin", "dept_chair", "user"]}>
             <Layout role="user" />
           </ProtectedRoute>
         }
@@ -212,6 +213,16 @@ function AppRoutes() {
         }
       >
         <Route index element={<CopcSubmissionsPage />} />
+      </Route>
+      <Route
+        path="/copc-recent-uploads"
+        element={
+          <ProtectedRoute allowedRoles={["superadmin", "dept_chair", "qa_admin"]}>
+            <Layout role="user" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<AdminCopcRecentUploadsPage />} />
       </Route>
 
       {/* Admin Protected Routes */}
@@ -325,6 +336,16 @@ function AppRoutes() {
         }
       >
         <Route index element={<AdminCopcArchivedPage />} />
+      </Route>
+      <Route
+        path="/admin/copc-recent-uploads"
+        element={
+          <ProtectedRoute allowedRoles={["superadmin"]}>
+            <Layout role="admin" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<AdminCopcRecentUploadsPage />} />
       </Route>
       <Route
         path="/admin/copc-workflow/submissions"

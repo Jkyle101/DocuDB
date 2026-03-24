@@ -1,10 +1,10 @@
-﻿import React, { useEffect, useState } from "react";
+import React, { useEffect, useState } from "react";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
 
 export default function MoveModal({ onClose, target, currentFolder, onMoved }) {
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   const [allFolders, setAllFolders] = useState([]);
   const [dest, setDest] = useState(currentFolder || "");
@@ -33,7 +33,7 @@ export default function MoveModal({ onClose, target, currentFolder, onMoved }) {
           role,
         });
       }
-      if (onMoved) onMoved(currentFolder); // ðŸ”‘ refresh parent folder
+      if (onMoved) onMoved(currentFolder); // refresh parent folder
       // Modal closes automatically after successful move
       onClose();
     } catch (err) {

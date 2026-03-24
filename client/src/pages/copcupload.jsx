@@ -85,7 +85,7 @@ export default function CopcUploadPage() {
   const requestedProgramId = String(searchParams.get("programId") || "");
   const requestedFolderId = String(searchParams.get("folderId") || "");
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
   const normalizedRole = String(role || "").toLowerCase();
 
   const [programs, setPrograms] = useState([]);
@@ -491,7 +491,7 @@ export default function CopcUploadPage() {
             });
             const normalizedTasks = Array.isArray(taskRes?.data?.tasks) ? taskRes.data.tasks : [];
             const hasApprovedUpload =
-              normalizedRole === "faculty"
+              normalizedRole === "user"
                 ? Number(folder?.approvedOwnFileCount || 0) > 0
                 : Number(folder?.approvedFileCount || 0) > 0;
             return {

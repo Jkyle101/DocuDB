@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback } from "react";
 import { FaSearch, FaSignOutAlt, FaBars, FaTimes, FaFolder, FaFileAlt, FaFilePdf, FaFileWord, FaFileExcel, FaFileImage, FaFileArchive, FaFileVideo, FaHistory, FaTimes as FaTimesIcon, FaUser, FaUsers, FaClipboardList, FaCog, FaQuestionCircle, FaBell, FaMoon, FaSun, FaSlidersH } from "react-icons/fa";
 import { useNavigate, useLocation } from "react-router-dom";
 import { Link } from "react-router-dom";
@@ -61,7 +61,7 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
   });
 
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
   const isAdminPage = location.pathname.startsWith('/admin');
   const searchRef = useRef(null);
   const suggestionsRef = useRef(null);

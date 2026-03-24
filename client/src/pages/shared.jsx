@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState, useCallback } from "react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -179,7 +179,7 @@ export default function Shared() {
 
     try {
       await axios.delete(`${BACKEND_URL}/files/${file._id}`, {
-        params: { userId, role: localStorage.getItem("role") || "faculty" }
+        params: { userId, role: localStorage.getItem("role") || "user" }
       });
       fetchGroupShared(); // Refresh group shares
     } catch (err) {
@@ -375,7 +375,7 @@ export default function Shared() {
                     <div className="d-flex justify-content-center gap-1 mb-2">
                       <a
                         className="btn btn-sm btn-outline-primary"
-                        href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${localStorage.getItem("role") || "faculty"}`}
+                        href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${localStorage.getItem("role") || "user"}`}
                         target="_blank"
                         rel="noreferrer"
                         title="View"
@@ -451,7 +451,7 @@ export default function Shared() {
                       <td className="py-3">
                         <span className="badge bg-light text-dark">Folder</span>
                       </td>
-                      <td className="py-3 text-muted">{folder.ownerEmail || "â€”"}</td>
+                      <td className="py-3 text-muted">{folder.ownerEmail || "—"}</td>
                       {activeTab === "groups" && (
                         <td className="py-3">
                           <span className="badge bg-info">
@@ -512,7 +512,7 @@ export default function Shared() {
                           {file.mimetype?.split("/")[1]?.toUpperCase() || "FILE"}
                         </span>
                       </td>
-                      <td className="py-3 text-muted">{file.ownerEmail || "â€”"}</td>
+                      <td className="py-3 text-muted">{file.ownerEmail || "—"}</td>
                       {activeTab === "groups" && (
                         <td className="py-3">
                           <span className="badge bg-info">
@@ -525,7 +525,7 @@ export default function Shared() {
                         <div className="d-flex justify-content-center gap-1 flex-wrap">
                           <a
                             className="btn btn-sm btn-outline-primary"
-                            href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${localStorage.getItem("role") || "faculty"}`}
+                            href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${localStorage.getItem("role") || "user"}`}
                             target="_blank"
                             rel="noreferrer"
                             title="View"

@@ -271,7 +271,7 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
     const formData = new FormData();
     formData.append("file", uploadFile);
     formData.append("userId", userId || "");
-    formData.append("role", role || "faculty");
+    formData.append("role", role || "user");
     if (parentId) formData.append("parentFolder", parentId);
     return formData;
   };
@@ -491,7 +491,7 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
         await uploadWithCopcRetry({
           sourceFile: item.file,
           userId,
-          role: role || "faculty",
+          role: role || "user",
           parentId,
           onUploadProgress: (evt) => {
             const loadedCurrent = evt.loaded || 0;

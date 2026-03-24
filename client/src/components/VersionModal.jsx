@@ -16,7 +16,7 @@ export default function VersionModal({ onClose, target, onRestored }) {
   const fileInputRef = useRef(null);
 
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   const ownerId =
     target?.item?.owner?._id?.toString?.() ||

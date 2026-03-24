@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { useNavigate, useParams } from "react-router-dom";
 import { BACKEND_URL } from "../config";
@@ -68,7 +68,7 @@ export default function EditorPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   const [file, setFile] = useState(null);
   const [kind, setKind] = useState("text");

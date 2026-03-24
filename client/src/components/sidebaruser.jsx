@@ -8,6 +8,7 @@ import {
   FaHome,
   FaFileSignature,
   FaLayerGroup,
+  FaCloudUploadAlt,
 } from "react-icons/fa";
 import { NavLink } from "react-router-dom";
 import "bootstrap/dist/css/bootstrap.min.css";
@@ -16,14 +17,26 @@ import { BACKEND_URL } from "../config";
 
 const PROFILE_PICTURE_EVENT = "profile-picture-updated";
 
+function normalizeRole(value) {
+  const raw = String(value || "").toLowerCase();
+  if (raw === "admin") return "superadmin";
+  if (raw === "faculty") return "user";
+  if (["program_chair", "department_chair", "program_head"].includes(raw)) return "dept_chair";
+  if (["qa_officer", "quality_assurance_admin", "copc_reviewer"].includes(raw)) return "qa_admin";
+  if (raw === "reviewer") return "evaluator";
+  return raw;
+}
+
 function Sidebar({ onClose }) {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 992);
   const [email, setEmail] = useState(localStorage.getItem("email") || "");
-  const [role, setRole] = useState(localStorage.getItem("role") || "faculty");
+  const [role, setRole] = useState(localStorage.getItem("role") || "user");
   const [profilePicture, setProfilePicture] = useState(localStorage.getItem("profilePicture") || "");
   const [profilePictureVersion, setProfilePictureVersion] = useState(
     Number(localStorage.getItem("profilePictureUpdatedAt") || 0)
   );
+  const normalizedRole = normalizeRole(role);
+  const canViewCopcUploadActivity = ["superadmin", "dept_chair", "qa_admin"].includes(normalizedRole);
 
   useEffect(() => {
     const handleResize = () => {
@@ -37,7 +50,7 @@ function Sidebar({ onClose }) {
   useEffect(() => {
     const syncProfile = () => {
       setEmail(localStorage.getItem("email") || "");
-      setRole(localStorage.getItem("role") || "faculty");
+      setRole(localStorage.getItem("role") || "user");
       setProfilePicture(localStorage.getItem("profilePicture") || "");
       const updatedAt = Number(localStorage.getItem("profilePictureUpdatedAt") || 0);
       setProfilePictureVersion(Number.isFinite(updatedAt) ? updatedAt : 0);
@@ -49,7 +62,7 @@ function Sidebar({ onClose }) {
       setProfilePicture(nextProfilePicture);
       setProfilePictureVersion(Number.isFinite(nextUpdatedAt) ? nextUpdatedAt : Date.now());
       setEmail(localStorage.getItem("email") || "");
-      setRole(localStorage.getItem("role") || "faculty");
+      setRole(localStorage.getItem("role") || "user");
     };
 
     const handleStorageEvent = (event) => {
@@ -220,6 +233,20 @@ function Sidebar({ onClose }) {
                   COPC Dashboard
                 </NavLink>
               </li>
+              {canViewCopcUploadActivity && (
+                <li className="nav-item">
+                  <NavLink
+                    to="/copc-recent-uploads"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaCloudUploadAlt className="me-2" size={16} />
+                    COPC Upload Activity
+                  </NavLink>
+                </li>
+              )}
             </ul>
           </div>
 

@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import "bootstrap/dist/css/bootstrap.min.css";
 import {
@@ -31,7 +31,7 @@ import CommentsModal from "../components/CommentsModal";
 
 export default function Recent() {
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
   
   const [files, setFiles] = useState([]);
   const [view, setView] = useState("grid");
@@ -187,7 +187,7 @@ export default function Recent() {
                   <p className="text-muted small">
                     {file.owner?._id?.toString() === userId || file.owner?.toString() === userId
                       ? "You own the file"
-                      : `Owner: ${file.owner?.email || "â€”"}`}
+                      : `Owner: ${file.owner?.email || "—"}`}
                   </p>
                   <div className="btn-group btn-group-sm">
                     <a
@@ -256,7 +256,7 @@ export default function Recent() {
                   <td>
                     {file.owner?._id?.toString() === userId || file.owner?.toString() === userId
                       ? "You own the file"
-                      : file.owner?.email || "â€”"}
+                      : file.owner?.email || "—"}
                   </td>
                   <td className="text-center">
                     <div className="btn-group btn-group-sm">

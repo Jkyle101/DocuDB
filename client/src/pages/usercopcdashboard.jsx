@@ -23,7 +23,7 @@ import "./admincopcdashboard.css";
 const normalizeRole = (value) => {
   const raw = String(value || "").toLowerCase();
   if (raw === "admin") return "superadmin";
-  if (raw === "user") return "faculty";
+  if (raw === "faculty") return "user";
   if (["program_chair", "department_chair", "program_head"].includes(raw)) return "dept_chair";
   if (["qa_officer", "quality_assurance_admin", "copc_reviewer"].includes(raw)) return "qa_admin";
   if (raw === "reviewer") return "evaluator";
@@ -34,7 +34,7 @@ const ROLE_LABELS = {
   superadmin: "Super Admin",
   qa_admin: "QA Admin",
   dept_chair: "Department Chair",
-  faculty: "Faculty",
+  user: "User",
   evaluator: "Evaluator",
 };
 
@@ -66,7 +66,7 @@ const TAB_CONFIG = {
   department_review: {
     label: "Department Review",
     icon: FaCheckCircle,
-    description: "Validate faculty submissions before QA-level compliance checks.",
+    description: "Validate user submissions before QA-level compliance checks.",
     tone: "review",
   },
   qa_review: {
@@ -94,8 +94,8 @@ export default function UserCopcDashboardPage({ defaultTab = "workflow" }) {
   const location = useLocation();
   const [searchParams] = useSearchParams();
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
-  const userRole = normalizeRole(localStorage.getItem("role") || "faculty");
+  const role = localStorage.getItem("role") || "user";
+  const userRole = normalizeRole(localStorage.getItem("role") || "user");
   const roleDisplay = ROLE_LABELS[userRole] || "COPC User";
   const isAdminContext = location.pathname.startsWith("/admin/");
   const selectedProgramId = String(searchParams.get("programId") || "");

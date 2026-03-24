@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import {
   FaChartBar,
@@ -97,7 +97,7 @@ const SMART_TEMPLATES = [
 
 export default function FormsPage() {
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   const [ribbonTab, setRibbonTab] = useState("home");
   const [mode, setMode] = useState("create");

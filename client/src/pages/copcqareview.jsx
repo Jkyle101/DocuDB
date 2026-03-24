@@ -36,7 +36,7 @@ export default function CopcQaReviewPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   const [programs, setPrograms] = useState([]);
   const [selectedProgramId, setSelectedProgramId] = useState("");

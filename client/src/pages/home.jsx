@@ -50,11 +50,11 @@ import { isExternalFileDrag, uploadDroppedEntries } from "../utils/dropUpload";
 
 export default function Home() {
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
   const normalizeRole = (value) => {
     const raw = String(value || "").toLowerCase();
     if (raw === "admin") return "superadmin";
-    if (raw === "user") return "faculty";
+    if (raw === "faculty") return "user";
     if (["program_chair", "department_chair", "program_head"].includes(raw)) return "dept_chair";
     if (["qa_officer", "quality_assurance_admin", "copc_reviewer"].includes(raw)) return "qa_admin";
     if (raw === "reviewer") return "evaluator";
@@ -63,8 +63,8 @@ export default function Home() {
   const isAdmin = normalizeRole(role) === "superadmin";
   const isProgramChair = normalizeRole(role) === "dept_chair";
   const isQaReviewer = normalizeRole(role) === "qa_admin";
-  const isFaculty = normalizeRole(role) === "faculty";
-  const canUploadByRole = ["superadmin", "qa_admin", "dept_chair", "faculty"].includes(normalizeRole(role));
+  const isFaculty = normalizeRole(role) === "user";
+  const canUploadByRole = ["superadmin", "qa_admin", "dept_chair", "user"].includes(normalizeRole(role));
   const canDeleteByRole = ["superadmin", "qa_admin"].includes(normalizeRole(role));
   const canCheckTasks = isAdmin || isProgramChair || isQaReviewer;
   const LEGACY_TASK_STATUS_MAP = { not_started: "pending", complete: "approved" };
@@ -288,7 +288,7 @@ export default function Home() {
         if (id) output.add(String(id));
       });
       const assignedRole = String(task?.assignedRole || "").toLowerCase();
-      if (assignedRole === "faculty" && task?.assignedTo) {
+      if (assignedRole === "user" && task?.assignedTo) {
         const assignedToId = task.assignedTo?._id || task.assignedTo;
         if (assignedToId) output.add(String(assignedToId));
       }
@@ -843,7 +843,7 @@ export default function Home() {
 
   const sendDocumentRequest = async () => {
     if (!isAdmin || !currentFolder) return;
-    const target = window.prompt("Enter faculty user ID to request document from:");
+    const target = window.prompt("Enter user ID to request document from:");
     if (!target) return;
     const docName = window.prompt("Document name (e.g., PRC License):", "PRC License");
     if (!docName) return;

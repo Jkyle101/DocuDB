@@ -72,7 +72,7 @@ export default function CopcAssignedTasksPage() {
   const [searchParams] = useSearchParams();
   const requestedProgramId = String(searchParams.get("programId") || "");
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   const [programs, setPrograms] = useState([]);
   const [selectedProgramId, setSelectedProgramId] = useState("");

@@ -25,11 +25,11 @@ export default function CopcWorkflowPage() {
   const [searchParams] = useSearchParams();
   const requestedProgramId = String(searchParams.get("programId") || "");
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
   const normalizedRole = useMemo(() => {
     const raw = String(role || "").toLowerCase();
     if (raw === "admin") return "superadmin";
-    if (raw === "user") return "faculty";
+    if (raw === "faculty") return "user";
     if (["program_chair", "department_chair", "program_head"].includes(raw)) return "dept_chair";
     if (["qa_officer", "quality_assurance_admin", "copc_reviewer"].includes(raw)) return "qa_admin";
     if (raw === "reviewer") return "evaluator";
@@ -256,7 +256,7 @@ export default function CopcWorkflowPage() {
       if (targetRole === "dept_chair") return ["dept_chair", "program_chair", "department_chair"].includes(r);
       if (targetRole === "qa_admin") return ["qa_admin", "qa_officer", "quality_assurance_admin"].includes(r);
       if (targetRole === "evaluator") return ["evaluator", "reviewer"].includes(r);
-      if (targetRole === "uploader") return ["faculty", "user", "dept_chair", "program_chair", "department_chair", "qa_admin", "qa_officer", "quality_assurance_admin", "superadmin", "admin"].includes(r);
+      if (targetRole === "uploader") return ["user", "faculty", "dept_chair", "program_chair", "department_chair", "qa_admin", "qa_officer", "quality_assurance_admin", "superadmin", "admin"].includes(r);
       return true;
     });
 
@@ -264,7 +264,7 @@ export default function CopcWorkflowPage() {
     const r = String(value || "").toLowerCase();
     if (["dept_chair", "program_chair", "department_chair"].includes(r)) return "Dept Chair";
     if (["qa_admin", "qa_officer", "quality_assurance_admin"].includes(r)) return "QA Admin";
-    if (r === "faculty" || r === "user") return "Faculty";
+    if (r === "user" || r === "faculty") return "User";
     if (r === "evaluator" || r === "reviewer") return "Evaluator";
     if (r === "superadmin" || r === "admin") return "Super Admin";
     return value;
@@ -459,7 +459,7 @@ export default function CopcWorkflowPage() {
               onClick={() => openDashboardTab("department_review")}
             >
               <FaCheckCircle className="me-1" />
-              Review Faculty Submissions
+              Review User Submissions
             </button>
           )}
           {canReviewComplianceSubmissions && (
@@ -842,7 +842,7 @@ export default function CopcWorkflowPage() {
                   <div className="d-flex gap-2 mt-1">
                     <input
                       className="form-control"
-                      placeholder="e.g. Missing PRC License for one faculty member"
+                      placeholder="e.g. Missing PRC License for one user"
                       value={observationText}
                       onChange={(e) => setObservationText(e.target.value)}
                     />

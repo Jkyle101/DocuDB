@@ -153,7 +153,7 @@ export async function uploadDroppedEntries({
     const formData = new FormData();
     formData.append("file", file);
     formData.append("userId", userId);
-    formData.append("role", role || "faculty");
+    formData.append("role", role || "user");
     if (parentId) formData.append("parentFolder", parentId);
     return axios.post(`${BACKEND_URL}/upload`, formData, {
       headers: { "Content-Type": "multipart/form-data" },

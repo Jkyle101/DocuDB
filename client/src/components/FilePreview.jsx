@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
 import { FaDownload, FaRegStickyNote } from "react-icons/fa";
@@ -11,7 +11,7 @@ export default function FilePreview({ file, onClose }) {
   const [activePdfPage, setActivePdfPage] = useState(1);
 
   const userId = localStorage.getItem("userId");
-  const role = localStorage.getItem("role") || "faculty";
+  const role = localStorage.getItem("role") || "user";
 
   const fileUrl = `${BACKEND_URL}/view/${file.filename}?userId=${userId}&role=${role}`;
   const previewUrl = `${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${role}`;
