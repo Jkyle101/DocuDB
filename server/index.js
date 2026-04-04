@@ -35,6 +35,239 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
+function isReadableFile(filePath) {
+  try {
+    return !!filePath && fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function uniqueStrings(values) {
+  return Array.from(
+    new Set(
+      (Array.isArray(values) ? values : [])
+        .map((value) => String(value || "").trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function buildUploadSearchDirs() {
+  const repoRoot = path.resolve(__dirname, "..");
+  let stagingUploadDirs = [];
+  try {
+    stagingUploadDirs = fs
+      .readdirSync(repoRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && entry.name.startsWith("backend-deploy-staging-"))
+      .map((entry) => path.join(repoRoot, entry.name, "uploads"));
+  } catch {
+    stagingUploadDirs = [];
+  }
+
+  return uniqueStrings([
+    uploadsDir,
+    path.join(repoRoot, "backend-structured-staging", "uploads"),
+    path.join(repoRoot, "tmp-backend-deploy-test", "uploads"),
+    ...stagingUploadDirs,
+  ]).filter((dirPath) => {
+    try {
+      return fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory();
+    } catch {
+      return false;
+    }
+  });
+}
+
+const uploadSearchDirs = buildUploadSearchDirs();
+const STORAGE_INTEGRITY_CACHE_MS = 60 * 1000;
+let storageIntegrityCacheValue = null;
+let storageIntegrityCacheExpiresAt = 0;
+let storageIntegrityCachePromise = null;
+let storageIntegrityStartupAuditStarted = false;
+
+async function resolveStoredFileReference(fileOrName, options = {}) {
+  const candidateNames = [];
+  const pushCandidate = (value) => {
+    const normalized = String(value || "").trim();
+    if (normalized && !candidateNames.includes(normalized)) {
+      candidateNames.push(normalized);
+    }
+  };
+
+  if (typeof fileOrName === "string") {
+    pushCandidate(fileOrName);
+  } else if (fileOrName && typeof fileOrName === "object") {
+    pushCandidate(fileOrName.filename);
+
+    if (options.includeDuplicate !== false && fileOrName.duplicateOf) {
+      const canonical = await File.findById(fileOrName.duplicateOf).select("filename").lean();
+      pushCandidate(canonical?.filename);
+    }
+
+    if (options.includeVersions !== false && fileOrName._id) {
+      const currentVersion = await FileVersion.findOne({
+        fileId: fileOrName._id,
+        isCurrent: true,
+      })
+        .sort({ versionNumber: -1 })
+        .select("filename")
+        .lean();
+      pushCandidate(currentVersion?.filename);
+
+      if (!currentVersion) {
+        const latestVersion = await FileVersion.findOne({ fileId: fileOrName._id })
+          .sort({ versionNumber: -1 })
+          .select("filename")
+          .lean();
+        pushCandidate(latestVersion?.filename);
+      }
+    }
+  }
+
+  for (const candidateName of candidateNames) {
+    for (const dirPath of uploadSearchDirs) {
+      const resolvedPath = path.join(dirPath, candidateName);
+      if (isReadableFile(resolvedPath)) {
+        return {
+          filePath: resolvedPath,
+          filename: candidateName,
+          directory: dirPath,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function buildStorageIntegrityLikelyCauseMessage(missingFilesCount) {
+  if (!missingFilesCount) return "";
+  return "Database records exist, but their uploaded blobs were not found in the configured uploads directories. This usually happens after a backend deploy or restore that copied MongoDB data without copying the uploads folder.";
+}
+
+async function buildStorageIntegrityReport({ sampleLimit = 25 } = {}) {
+  const activeFiles = await File.find({ deletedAt: null })
+    .select("originalName filename mimetype size uploadDate owner userId")
+    .sort({ uploadDate: -1 })
+    .lean();
+
+  let directlyPresentCount = 0;
+  let fallbackRecoveredCount = 0;
+  const sampleMissingFiles = [];
+
+  for (const file of activeFiles) {
+    const directFile = await resolveStoredFileReference(String(file?.filename || ""), {
+      includeDuplicate: false,
+      includeVersions: false,
+    });
+    if (directFile) {
+      directlyPresentCount += 1;
+      continue;
+    }
+
+    const recoveredFile = await resolveStoredFileReference(file);
+    if (recoveredFile) {
+      fallbackRecoveredCount += 1;
+      continue;
+    }
+
+    if (sampleMissingFiles.length < sampleLimit) {
+      sampleMissingFiles.push({
+        _id: String(file?._id || ""),
+        filename: String(file?.filename || ""),
+        originalName: String(file?.originalName || file?.filename || "Untitled File"),
+        mimetype: String(file?.mimetype || ""),
+        size: Number(file?.size || 0),
+        uploadDate: file?.uploadDate || null,
+        ownerId: String(file?.owner || file?.userId || ""),
+      });
+    }
+  }
+
+  const totalActiveFiles = activeFiles.length;
+  const readableFilesCount = directlyPresentCount + fallbackRecoveredCount;
+  const missingFilesCount = Math.max(0, totalActiveFiles - readableFilesCount);
+
+  return {
+    checkedAt: new Date(),
+    healthy: missingFilesCount === 0,
+    totalActiveFiles,
+    readableFilesCount,
+    directlyPresentCount,
+    fallbackRecoveredCount,
+    missingFilesCount,
+    uploadSearchDirs: [...uploadSearchDirs],
+    likelyCause: buildStorageIntegrityLikelyCauseMessage(missingFilesCount),
+    sampleMissingFiles,
+  };
+}
+
+async function getStorageIntegrityReport({ force = false, sampleLimit = 25 } = {}) {
+  const now = Date.now();
+  if (!force && storageIntegrityCacheValue && storageIntegrityCacheExpiresAt > now) {
+    return {
+      ...storageIntegrityCacheValue,
+      sampleMissingFiles: (storageIntegrityCacheValue.sampleMissingFiles || []).slice(0, sampleLimit),
+    };
+  }
+
+  if (!force && storageIntegrityCachePromise) {
+    const pending = await storageIntegrityCachePromise;
+    return {
+      ...pending,
+      sampleMissingFiles: (pending.sampleMissingFiles || []).slice(0, sampleLimit),
+    };
+  }
+
+  storageIntegrityCachePromise = buildStorageIntegrityReport({
+    sampleLimit: Math.max(sampleLimit, 25),
+  })
+    .then((report) => {
+      storageIntegrityCacheValue = report;
+      storageIntegrityCacheExpiresAt = Date.now() + STORAGE_INTEGRITY_CACHE_MS;
+      return report;
+    })
+    .finally(() => {
+      storageIntegrityCachePromise = null;
+    });
+
+  const report = await storageIntegrityCachePromise;
+  return {
+    ...report,
+    sampleMissingFiles: (report.sampleMissingFiles || []).slice(0, sampleLimit),
+  };
+}
+
+async function runStorageIntegrityStartupAudit() {
+  if (storageIntegrityStartupAuditStarted) return;
+  storageIntegrityStartupAuditStarted = true;
+
+  try {
+    const report = await getStorageIntegrityReport({ force: true, sampleLimit: 5 });
+    if (report.missingFilesCount > 0) {
+      const sampleNames = (report.sampleMissingFiles || [])
+        .map((file) => file.originalName)
+        .filter(Boolean)
+        .slice(0, 3)
+        .join(", ");
+      const message = `Detected ${report.missingFilesCount} active file record(s) with missing uploaded blobs. ${report.likelyCause}`;
+      console.warn(message);
+      createLog(
+        "STORAGE_INTEGRITY_WARNING",
+        null,
+        sampleNames ? `${message} Sample: ${sampleNames}` : message
+      );
+    } else {
+      console.log(`Storage integrity check passed for ${report.totalActiveFiles} active file(s).`);
+    }
+  } catch (err) {
+    const message = `Storage integrity audit failed: ${err?.message || err}`;
+    console.error(message);
+    createLog("STORAGE_INTEGRITY_ERROR", null, message);
+  }
+}
+
 function normalizeOrigin(value) {
   return String(value || "").trim().replace(/\/+$/, "");
 }
@@ -109,6 +342,8 @@ app.use(express.json());
 
 // Serve uploaded files
 app.use("/uploads", express.static(uploadsDir));
+// Keep legacy /api/uploads asset paths working for existing bundles and proxies.
+app.use("/api/uploads", express.static(uploadsDir));
 // Serve built frontend when backend and UI are deployed together.
 if (fs.existsSync(publicDir)) {
   app.use(express.static(publicDir));
@@ -918,6 +1153,49 @@ async function ensureFileReviewWorkflow(file, cache = new Map()) {
   file.reviewWorkflow = hydrated;
   await file.save();
   return hydrated;
+}
+
+async function getFileWorkflowForAccess(file, cache = new Map()) {
+  const existing = file?.reviewWorkflow && typeof file.reviewWorkflow === "object"
+    ? file.reviewWorkflow
+    : {};
+  const inferred = await inferReviewWorkflowForFile(file, cache);
+
+  if (!inferred?.requiresReview) {
+    if (existing && Object.keys(existing).length > 0) return existing;
+    return buildNoReviewWorkflow();
+  }
+
+  if (!existing?.requiresReview) {
+    return inferred;
+  }
+
+  return {
+    ...inferred,
+    ...existing,
+    assignedProgramChairs: cleanObjectIdList(
+      Array.isArray(existing?.assignedProgramChairs) && existing.assignedProgramChairs.length
+        ? existing.assignedProgramChairs
+        : inferred.assignedProgramChairs || []
+    ),
+    assignedQaOfficers: cleanObjectIdList(
+      Array.isArray(existing?.assignedQaOfficers) && existing.assignedQaOfficers.length
+        ? existing.assignedQaOfficers
+        : inferred.assignedQaOfficers || []
+    ),
+    programChair: {
+      ...(inferred?.programChair || {}),
+      ...(existing?.programChair || {}),
+    },
+    qaOfficer: {
+      ...(inferred?.qaOfficer || {}),
+      ...(existing?.qaOfficer || {}),
+    },
+    verificationBadge: {
+      ...(inferred?.verificationBadge || {}),
+      ...(existing?.verificationBadge || {}),
+    },
+  };
 }
 
 function collectTaskAssignmentUserIds(tasks = [], key = "assignedUploaders", out = new Set()) {
@@ -1973,6 +2251,9 @@ mongoose
   .then(() => {
     console.log("? MongoDB connected");
     createLog("SYSTEM", null, "MongoDB connected");
+    setTimeout(() => {
+      runStorageIntegrityStartupAudit();
+    }, 1500);
     migrateLegacyCopcTemplateFolderNames()
       .then((renamedCount) => {
         if (renamedCount > 0) {
@@ -2258,26 +2539,53 @@ async function reconcileDuplicateGroup(contentHash) {
   await File.findByIdAndUpdate(canonicalId, { duplicateOf: null });
 }
 
-async function userHasFileAccess(file, userId, role) {
+async function userHasFileAccess(file, userId, role, options = {}) {
   if (!file || !userId) return false;
-  if (normalizeRole(role) === "superadmin") return true;
+  const normalizedRole = normalizeRole(role);
+  if (normalizedRole === "superadmin") return true;
 
   const ownerId = file.owner?._id?.toString?.() || file.owner?.toString?.() || file.userId?.toString?.() || file.userId;
   if (ownerId?.toString() === userId.toString()) return true;
 
-  const workflow = file.reviewWorkflow || {};
-  const assignedProgramChairs = Array.isArray(workflow.assignedProgramChairs)
+  let workflow = file.reviewWorkflow || {};
+  let assignedProgramChairs = Array.isArray(workflow.assignedProgramChairs)
     ? workflow.assignedProgramChairs
     : [];
-  const assignedQaOfficers = Array.isArray(workflow.assignedQaOfficers)
+  let assignedQaOfficers = Array.isArray(workflow.assignedQaOfficers)
     ? workflow.assignedQaOfficers
     : [];
+  if (
+    options?.hydrateWorkflowAssignments &&
+    file.parentFolder &&
+    ["dept_chair", "qa_admin"].includes(normalizedRole) &&
+    !(
+      isUserAssignedTo(userId, assignedProgramChairs) ||
+      isUserAssignedTo(userId, assignedQaOfficers)
+    )
+  ) {
+    workflow = await getFileWorkflowForAccess(file, options?.workflowCache || new Map());
+    assignedProgramChairs = Array.isArray(workflow?.assignedProgramChairs)
+      ? workflow.assignedProgramChairs
+      : [];
+    assignedQaOfficers = Array.isArray(workflow?.assignedQaOfficers)
+      ? workflow.assignedQaOfficers
+      : [];
+  }
   if (
     isUserAssignedTo(userId, assignedProgramChairs) ||
     isUserAssignedTo(userId, assignedQaOfficers)
   ) {
     return true;
   }
+
+  const isDirectShare = !!file.sharedWith?.some((id) => {
+    const sharedId = id?.toString ? id.toString() : id;
+    return sharedId?.toString() === userId.toString();
+  });
+  if (isDirectShare) return true;
+
+  const groupPermission = await getGroupSharePermissionForFile(userId, file._id);
+  if (groupPermission === "viewer" || groupPermission === "editor") return true;
 
   // Once fully approved in COPC flow, expose to all users authorized on the COPC program scope.
   if (file.parentFolder && isFileFullyApprovedForCopc(file)) {
@@ -2291,13 +2599,7 @@ async function userHasFileAccess(file, userId, role) {
     const canViewParent = await canUserAccessFolderByAssignment(file.parentFolder, userId, role);
     if (!canViewParent) return false;
   }
-  const isDirectShare = !!file.sharedWith?.some((id) => {
-    const sharedId = id?.toString ? id.toString() : id;
-    return sharedId?.toString() === userId.toString();
-  });
-  if (isDirectShare) return true;
-  const groupPermission = await getGroupSharePermissionForFile(userId, file._id);
-  return groupPermission === "viewer" || groupPermission === "editor";
+  return true;
 }
 
 function isFlaggedByUser(ids, userId) {
@@ -3460,15 +3762,65 @@ app.patch("/users/:id", async (req, res) => {
 /* ========================
    FILES
 ======================== */
+function buildSiblingFileQuery(parentFolder, originalName, excludeId = null) {
+  const query = {
+    originalName: new RegExp(`^${escapeRegexForExactMatch(originalName)}$`, "i"),
+    deletedAt: null,
+  };
+  query.parentFolder = parentFolder || null;
+  if (excludeId) {
+    query._id = { $ne: excludeId };
+  }
+  return query;
+}
+
+async function findExistingSiblingFile(parentFolder, originalName, excludeId = null) {
+  if (!originalName) return null;
+  return File.findOne(buildSiblingFileQuery(parentFolder, originalName, excludeId))
+    .sort({ uploadDate: -1 });
+}
+
+function splitFileNameParts(originalName = "") {
+  const raw = String(originalName || "").trim();
+  const extension = path.extname(raw);
+  const basename = extension ? raw.slice(0, -extension.length) : raw;
+  return {
+    basename: basename || "Untitled",
+    extension,
+  };
+}
+
+async function buildUniqueSiblingFileName(parentFolder, originalName, excludeId = null) {
+  const { basename, extension } = splitFileNameParts(originalName);
+  let counter = 1;
+  let candidate = `${basename} (${counter})${extension}`;
+
+  while (await findExistingSiblingFile(parentFolder, candidate, excludeId)) {
+    counter += 1;
+    candidate = `${basename} (${counter})${extension}`;
+  }
+
+  return candidate;
+}
+
 // Upload file
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
-    const { userId, role, parentFolder, isUpdate, fileId, changeDescription } = req.body;
+    let {
+      userId,
+      role,
+      parentFolder,
+      isUpdate,
+      fileId,
+      changeDescription,
+      duplicateAction,
+    } = req.body;
     const uploadOriginalName = String(req.file.originalname || "").trim();
     let effectiveOriginalName = uploadOriginalName;
     let namingCheckResult = null;
+    const duplicateActionKey = String(duplicateAction || "").trim().toLowerCase();
     if (!userId) return res.status(400).json({ error: "Missing userId" });
     const actorRole = await resolveActorRole(userId, role);
     if (!canUploadDocuments(actorRole)) {
@@ -3486,6 +3838,47 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       }
       if (!canUploadToFolder(targetFolder, userId, actorRole)) {
         return res.status(403).json({ error: "You are not assigned to upload in this folder" });
+      }
+    }
+
+    if (targetFolder?._id) {
+      namingCheckResult = await validateCopcFilenameForFolder(targetFolder._id, effectiveOriginalName);
+      if (!namingCheckResult.valid) {
+        const uploadedFilePath = path.join(__dirname, "uploads", req.file.filename);
+        try {
+          fs.unlinkSync(uploadedFilePath);
+        } catch {}
+        return res.status(400).json({
+          error: namingCheckResult.error,
+          code: "COPC_FILENAME_INVALID",
+        });
+      }
+      effectiveOriginalName = namingCheckResult.correctedName || effectiveOriginalName;
+    }
+
+    if (!isUpdate) {
+      const existingSibling = await findExistingSiblingFile(parentFolder || null, effectiveOriginalName);
+      if (existingSibling) {
+        if (duplicateActionKey === "replace_existing") {
+          isUpdate = true;
+          fileId = existingSibling._id.toString();
+        } else if (duplicateActionKey === "keep_both") {
+          effectiveOriginalName = await buildUniqueSiblingFileName(parentFolder || null, effectiveOriginalName);
+        } else {
+          const uploadedFilePath = path.join(__dirname, "uploads", req.file.filename);
+          try {
+            fs.unlinkSync(uploadedFilePath);
+          } catch {}
+          return res.status(409).json({
+            error: `${effectiveOriginalName} already exists in this location.`,
+            code: "FILE_ALREADY_EXISTS",
+            existingFile: {
+              _id: existingSibling._id,
+              originalName: existingSibling.originalName,
+              parentFolder: existingSibling.parentFolder || null,
+            },
+          });
+        }
       }
     }
 
@@ -3510,19 +3903,6 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       }
       if (targetFolder && !canUploadToFolder(targetFolder, userId, actorRole)) {
         return res.status(403).json({ error: "You are not assigned to upload in this folder" });
-      }
-      if (targetFolder?._id) {
-        namingCheckResult = await validateCopcFilenameForFolder(targetFolder._id, effectiveOriginalName);
-        if (!namingCheckResult.valid) {
-          try {
-            fs.unlinkSync(uploadedFilePath);
-          } catch {}
-          return res.status(400).json({
-            error: namingCheckResult.error,
-            code: "COPC_FILENAME_INVALID",
-          });
-        }
-        effectiveOriginalName = namingCheckResult.correctedName || effectiveOriginalName;
       }
 
       const isOwner =
@@ -3594,19 +3974,6 @@ app.post("/upload", upload.single("file"), async (req, res) => {
       await file.save();
     } else {
       // New file upload
-      if (targetFolder?._id) {
-        namingCheckResult = await validateCopcFilenameForFolder(targetFolder._id, effectiveOriginalName);
-        if (!namingCheckResult.valid) {
-          try {
-            fs.unlinkSync(uploadedFilePath);
-          } catch {}
-          return res.status(400).json({
-            error: namingCheckResult.error,
-            code: "COPC_FILENAME_INVALID",
-          });
-        }
-        effectiveOriginalName = namingCheckResult.correctedName || effectiveOriginalName;
-      }
       const extractedText = await extractTextForClassification(
         uploadedFilePath,
         req.file.mimetype,
@@ -3729,6 +4096,7 @@ app.post("/upload", upload.single("file"), async (req, res) => {
         status: duplicateStatus,
         count: duplicateCount,
         duplicateOf: file.duplicateOf || null,
+        resolution: duplicateActionKey || "none",
       },
       naming: {
         isCopc: !!namingCheckResult?.isCopc,
@@ -4291,7 +4659,7 @@ app.get("/files/:id/preview-metadata", async (req, res) => {
 
     const actorRole = await resolveActorRole(userId, role);
     const isAdmin = hasGlobalViewAccess(actorRole);
-    if (!isAdmin && !(await userHasFileAccess(doc, userId, actorRole))) {
+    if (!isAdmin && !(await userHasFileAccess(doc, userId, actorRole, { hydrateWorkflowAssignments: true }))) {
       return res.status(403).json({ error: "Forbidden" });
     }
 
@@ -4300,11 +4668,11 @@ app.get("/files/:id/preview-metadata", async (req, res) => {
     let pageCount = 1;
 
     if (isPdf) {
-      const filePath = path.join(__dirname, "uploads", doc.filename);
-      if (fs.existsSync(filePath)) {
+      const storedFile = await resolveStoredFileReference(doc);
+      if (storedFile) {
         try {
           const pdfParse = require("pdf-parse");
-          const data = await pdfParse(fs.readFileSync(filePath));
+          const data = await pdfParse(fs.readFileSync(storedFile.filePath));
           pageCount = Number.isFinite(data?.numpages) ? data.numpages : 1;
         } catch (e) {
           pageCount = 1;
@@ -4917,7 +5285,7 @@ app.get("/view/:filename", async (req, res) => {
     const actorRole = await resolveActorRole(userId, role);
     const isAdmin = hasGlobalViewAccess(actorRole);
     if (!isAdmin) {
-      if (!(await userHasFileAccess(doc, userId, actorRole))) {
+      if (!(await userHasFileAccess(doc, userId, actorRole, { hydrateWorkflowAssignments: true }))) {
         return res.status(403).send("You don't have permission to view this file");
       }
     }
@@ -4928,7 +5296,11 @@ app.get("/view/:filename", async (req, res) => {
       createLog("ACCESS_FILE", userId, encodeAccessDetails("VIEW", doc));
     }
 
-    const filePath = path.join(__dirname, "uploads", req.params.filename);
+    const storedFile = await resolveStoredFileReference(doc);
+    if (!storedFile) {
+      return res.status(404).send("File missing on server");
+    }
+    const filePath = storedFile.filePath;
 
     // Compute a reliable content type for inline preview.
     // Prefer detected MIME; only fall back to extension when MIME is generic/empty.
@@ -4961,13 +5333,15 @@ app.get("/preview/:filename", async (req, res) => {
     const actorRole = await resolveActorRole(userId, role);
     const isAdmin = hasGlobalViewAccess(actorRole);
     if (!isAdmin) {
-      if (!(await userHasFileAccess(doc, userId, actorRole))) return res.status(403).send("Forbidden");
+      if (!(await userHasFileAccess(doc, userId, actorRole, { hydrateWorkflowAssignments: true }))) return res.status(403).send("Forbidden");
     }
 
     const ext = (doc.originalName || "").toLowerCase();
     const filename = req.params.filename;
-    const filePath = path.join(__dirname, "uploads", filename);
-    const downloadLink = `/download/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`;
+    const storedFile = await resolveStoredFileReference(doc);
+    const filePath = storedFile?.filePath || "";
+    const apiRoute = (pathname) => `/api${pathname}`;
+    const downloadLink = apiRoute(`/download/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`);
     const extOnly = path.extname(ext);
     const normalizedMime = String(doc.mimetype || "").toLowerCase();
     const hasSpecificMime = normalizedMime && normalizedMime !== "application/octet-stream";
@@ -4991,22 +5365,27 @@ app.get("/preview/:filename", async (req, res) => {
       ? normalizedMime.includes("presentationml")
       : [".pptx", ".ppt"].includes(extOnly);
 
+    if (!storedFile) {
+      const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>body{font:16px/1.5 system-ui,Segoe UI,Roboto,Helvetica,Arial;padding:24px;color:#1f2937;background:#f8fafc}.card{border:1px solid #e2e8f0;border-radius:12px;padding:20px;max-width:720px;margin:10vh auto;background:#fff;box-shadow:0 12px 30px rgba(15,23,42,.08)}h2{margin:0 0 12px}p{margin:.5em 0}</style></head><body><div class="card"><h2>Preview unavailable</h2><p><strong>${doc.originalName}</strong> still has a database record, but its uploaded file is missing from the server storage.</p><p>Please restore it from backup or upload the file again.</p></div></body></html>`;
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.status(404).send(html);
+    }
+
     if (isPdf) {
-      const url = `/view/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`;
+      const url = apiRoute(`/view/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`);
       const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>html,body{height:100%;margin:0}embed,iframe{width:100%;height:100%;border:0}</style></head><body><embed src="${url}" type="application/pdf"/></body></html>`;
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return res.send(html);
     }
 
     if (isImage) {
-      const url = `/view/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`;
+      const url = apiRoute(`/view/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`);
       const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>html,body{height:100%;margin:0}img{max-width:100%;max-height:100%;display:block;margin:auto}</style></head><body><img src="${url}" alt="preview"/></body></html>`;
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return res.send(html);
     }
 
     if (isText) {
-      if (!fs.existsSync(filePath)) return res.status(404).send("File not found");
       const raw = fs.readFileSync(filePath, "utf8");
       const escaped = raw.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>html,body{height:100%;margin:0}pre{white-space:pre-wrap;word-wrap:break-word;padding:16px;font-family:ui-monospace,monospace}</style></head><body><pre>${escaped}</pre></body></html>`;
@@ -5015,7 +5394,6 @@ app.get("/preview/:filename", async (req, res) => {
     }
 
     if (isDocx) {
-      if (!fs.existsSync(filePath)) return res.status(404).send("File not found");
       const mammoth = require("mammoth");
       try {
         const result = await mammoth.convertToHtml({ path: filePath });
@@ -5031,7 +5409,6 @@ app.get("/preview/:filename", async (req, res) => {
     }
 
     if (isXlsx) {
-      if (!fs.existsSync(filePath)) return res.status(404).send("File not found");
       try {
         const XLSX = require("xlsx");
         const workbook = XLSX.readFile(filePath, { cellHTML: false, cellText: true });
@@ -5057,7 +5434,7 @@ app.get("/preview/:filename", async (req, res) => {
       return res.send(html);
     }
 
-    const url = `/view/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`;
+    const url = apiRoute(`/view/${encodeURIComponent(filename)}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`);
     const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${doc.originalName}</title><style>html,body{height:100%;margin:0}iframe{width:100%;height:100%;border:0}</style></head><body><iframe src="${url}"></iframe></body></html>`;
     res.setHeader("Content-Type", "text/html; charset=utf-8");
     res.send(html);
@@ -5076,7 +5453,7 @@ app.get("/download/:filename", async (req, res) => {
     const actorRole = await resolveActorRole(userId, role);
     const isAdmin = hasGlobalViewAccess(actorRole);
     if (!isAdmin) {
-      if (!(await userHasFileAccess(doc, userId, actorRole))) {
+      if (!(await userHasFileAccess(doc, userId, actorRole, { hydrateWorkflowAssignments: true }))) {
         return res.status(403).send("You don't have permission to download this file");
       }
     }
@@ -5087,7 +5464,11 @@ app.get("/download/:filename", async (req, res) => {
       createLog("ACCESS_FILE", userId, encodeAccessDetails("DOWNLOAD", doc));
     }
 
-    const filePath = path.join(__dirname, "uploads", req.params.filename);
+    const storedFile = await resolveStoredFileReference(doc);
+    if (!storedFile) {
+      return res.status(404).send("File missing on server");
+    }
+    const filePath = storedFile.filePath;
     const finalName = ensureExtension(doc.originalName, doc.mimetype);
     const safeName = finalName.replace(/[\\"]/g, "_").replace(/\r?\n/g, "");
     const contentType = getContentType(finalName, doc.mimetype);
@@ -5111,11 +5492,13 @@ app.delete("/files/:id", async (req, res) => {
     const isAdmin = canDeleteDocuments(actorRole);
     const file = await File.findById(req.params.id);
     if (!file) return res.status(404).json({ error: "File not found" });
+    const ownerId = file.owner?.toString?.() || file.userId?.toString?.() || file.userId;
+    const isOwner = !!userId && ownerId?.toString() === userId.toString();
     if (file.parentFolder && await isFolderWithinLockedCopc(file.parentFolder)) {
       return res.status(423).json({ error: "This COPC scope is locked after final approval" });
     }
 
-    if (!isAdmin) {
+    if (!isOwner && !isAdmin) {
       return res.status(403).json({ error: "Not authorized to delete documents" });
     }
 
@@ -5218,7 +5601,7 @@ app.get("/files/:id/content", async (req, res) => {
     const { userId, role } = req.query;
     const file = await File.findById(req.params.id).populate("owner");
     if (!file) return res.status(404).json({ error: "File not found" });
-    if (!(await userHasFileAccess(file, userId, role))) {
+    if (!(await userHasFileAccess(file, userId, role, { hydrateWorkflowAssignments: true }))) {
       return res.status(403).json({ error: "Not authorized to view file content" });
     }
     if (!isEditableDocument(file)) {
@@ -5231,10 +5614,11 @@ app.get("/files/:id/content", async (req, res) => {
       createLog("ACCESS_FILE", userId, encodeAccessDetails("EDITOR_OPEN", file));
     }
 
-    const filePath = path.join(__dirname, "uploads", file.filename);
-    if (!fs.existsSync(filePath)) {
+    const storedFile = await resolveStoredFileReference(file);
+    if (!storedFile) {
       return res.status(404).json({ error: "File missing on disk" });
     }
+    const filePath = storedFile.filePath;
 
     const { kind, content } = await extractEditableContent(filePath, file);
     res.json({
@@ -5275,10 +5659,11 @@ app.patch("/files/:id/content", async (req, res) => {
       return res.status(403).json({ error: "Not authorized to edit this file" });
     }
 
-    const filePath = path.join(__dirname, "uploads", file.filename);
-    if (!fs.existsSync(filePath)) {
+    const storedFile = await resolveStoredFileReference(file);
+    if (!storedFile) {
       return res.status(404).json({ error: "File missing on disk" });
     }
+    const filePath = storedFile.filePath;
 
     await writeEditedContent(filePath, file, content);
     const previousHash = file.contentHash || null;
@@ -5692,11 +6077,14 @@ app.delete("/folders/:id", async (req, res) => {
   try {
     const { userId, role } = req.query;
     const actorRole = await resolveActorRole(userId, role);
-    if (!canDeleteDocuments(actorRole)) {
-      return res.status(403).json({ error: "Not authorized to delete folders" });
-    }
+    const isAdmin = canDeleteDocuments(actorRole);
     const folder = await Folder.findById(req.params.id);
     if (!folder) return res.status(404).json({ error: "Folder not found" });
+    const ownerId = folder.owner?.toString?.() || folder.owner;
+    const isOwner = !!userId && ownerId?.toString() === userId.toString();
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({ error: "Not authorized to delete folders" });
+    }
     if (await isFolderWithinLockedCopc(folder._id)) {
       return res.status(423).json({ error: "This COPC scope is locked after final approval" });
     }
@@ -10602,6 +10990,25 @@ app.get("/users/stats", async (req, res) => {
   }
 });
 
+app.get("/admin/storage-integrity", async (req, res) => {
+  try {
+    const { userId, role, force } = req.query || {};
+    const actorRole = await resolveActorRole(userId, role);
+    if (!canEditAnyDocuments(actorRole)) {
+      return res.status(403).json({ error: "Not authorized to view storage integrity" });
+    }
+
+    const report = await getStorageIntegrityReport({
+      force: parseBoolean(force),
+      sampleLimit: 100,
+    });
+    res.json(report);
+  } catch (err) {
+    console.error("Storage integrity error:", err);
+    res.status(500).json({ error: "Failed to audit storage integrity" });
+  }
+});
+
 app.get("/stats", async (req, res) => {
   try {
     // Basic counts
@@ -10768,6 +11175,7 @@ app.get("/stats", async (req, res) => {
       .populate("user", "email")
       .sort({ date: -1 })
       .limit(50);
+    const storageIntegrity = await getStorageIntegrityReport({ sampleLimit: 8 });
 
     res.json({
       // Basic stats
@@ -10792,6 +11200,7 @@ app.get("/stats", async (req, res) => {
       // Top users
       mostActiveUsers: userActivity,
       topStorageUsers: userStorage,
+      storageIntegrity,
 
       // Recent activity
       recentActivity: recentActivity.map(log => ({

@@ -6,10 +6,7 @@ import {
   FaUser, FaSync, FaInfoCircle, FaHistory,
   FaFileAlt, FaFolder
 } from "react-icons/fa";
-import {
-  PieChart, Pie, Cell, ResponsiveContainer,
-  BarChart, Bar, XAxis, YAxis, Tooltip, Legend
-} from "recharts";
+import { BarChart, PieChart } from "@mui/x-charts";
 import "bootstrap/dist/css/bootstrap.min.css";
 import { BACKEND_URL } from "../../config";
 import "./admin-analytics.css";
@@ -86,6 +83,17 @@ export default function ManageGroups() {
 
     return activityTypes;
   }, [groupStats]);
+
+  const activityPieData = useMemo(
+    () => activityData.map((entry) => ({
+      id: entry.name,
+      label: entry.name,
+      value: entry.value,
+      color: entry.color,
+    })),
+    [activityData]
+  );
+  const totalActivitySlices = activityPieData.reduce((sum, item) => sum + item.value, 0);
 
   const sharedFilesCount = useMemo(
     () => groups.reduce((sum, group) => sum + (group.sharedFiles?.length || 0), 0),
@@ -505,6 +513,18 @@ export default function ManageGroups() {
     () => [...groups].sort((a, b) => (b.members?.length || 0) - (a.members?.length || 0)).slice(0, 3),
     [groups]
   );
+  const topGroupsChartData = useMemo(
+    () => topGroupsByMembers.map((group) => ({
+      name: group.name?.length > 14 ? `${group.name.slice(0, 14)}...` : (group.name || "Unnamed"),
+      members: group.members?.length || 0,
+      assets: (group.sharedFiles?.length || 0) + (group.sharedFolders?.length || 0),
+    })),
+    [topGroupsByMembers]
+  );
+  const activityBreakdownData = useMemo(
+    () => [...activityData].sort((a, b) => b.value - a.value),
+    [activityData]
+  );
 
   const kpiCards = [
     { label: "Total Groups", value: groupStats.totalGroups, note: "Active departments", tone: "is-blue" },
@@ -786,19 +806,26 @@ export default function ManageGroups() {
                     <h6 className="mb-1">Activity Volume (7 Days)</h6>
                     <small className="text-muted">{weeklyActivityTotal} events logged this week</small>
                   </div>
-                  <div className="gm-chart-wrap">
-                    <ResponsiveContainer width="100%" height={260}>
-                      <BarChart data={weeklyVolumeData}>
-                        <XAxis dataKey="day" axisLine={false} tickLine={false} />
-                        <YAxis allowDecimals={false} axisLine={false} tickLine={false} />
-                        <Tooltip
-                          cursor={{ fill: "rgba(10, 102, 255, 0.08)" }}
-                          contentStyle={{ borderRadius: "12px", borderColor: "rgba(148, 163, 184, 0.4)" }}
-                        />
-                        <Legend />
-                        <Bar dataKey="value" name="Activity" fill="#0a66ff" radius={[10, 10, 0, 0]} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                  <div className="gm-chart-wrap analytics-chart-shell">
+                    <BarChart
+                      dataset={weeklyVolumeData}
+                      height={260}
+                      margin={{ top: 20, right: 20, bottom: 36, left: 42 }}
+                      grid={{ horizontal: true }}
+                      xAxis={[{ id: "weekly-activity-days", scaleType: "band", dataKey: "day" }]}
+                      series={[{
+                        id: "weekly-activity",
+                        dataKey: "value",
+                        label: "Activity",
+                        color: "#0a66ff",
+                        valueFormatter: (value) => `${value ?? 0} events`,
+                      }]}
+                    />
+                  </div>
+                  <div className="gm-chart-foot">
+                    <span className="gm-chart-chip">{weeklyActivityTotal} total events</span>
+                    <span className="gm-chart-chip is-accent">Peak day: {weeklyPeakDay.day}</span>
+                    <span className="gm-chart-chip is-muted">{filteredActivityTimeline.length} timeline items</span>
                   </div>
                 </article>
               </div>
@@ -903,18 +930,74 @@ export default function ManageGroups() {
                   </div>
                   <div className="gm-insight-chart">
                     {activityData.some((item) => item.value > 0) ? (
-                      <ResponsiveContainer width="100%" height={150}>
-                        <PieChart>
-                          <Pie data={activityData} dataKey="value" innerRadius={38} outerRadius={58}>
-                            {activityData.map((entry) => (
-                              <Cell key={entry.name} fill={entry.color} />
-                            ))}
-                          </Pie>
-                          <Tooltip />
-                        </PieChart>
-                      </ResponsiveContainer>
+                      <div className="analytics-chart-shell analytics-chart-shell--compact analytics-pie-stack">
+                        <div className="analytics-pie-shell analytics-pie-shell--compact">
+                          <PieChart
+                            height={154}
+                            hideLegend
+                            margin={{ top: 12, right: 12, bottom: 12, left: 12 }}
+                            series={[{
+                              data: activityPieData,
+                              innerRadius: 40,
+                              outerRadius: 58,
+                              paddingAngle: 2,
+                              cornerRadius: 4,
+                            }]}
+                          />
+                          <div className="analytics-pie-center analytics-pie-center--compact">
+                            <strong>{totalActivitySlices}</strong>
+                            <span>signals</span>
+                          </div>
+                        </div>
+                        <div className="analytics-breakdown-list">
+                          {activityBreakdownData.map((activity) => (
+                            <div key={activity.name} className="analytics-breakdown-row">
+                              <div className="analytics-breakdown-label">
+                                <span className="analytics-breakdown-dot" style={{ background: activity.color }}></span>
+                                <span>{activity.name}</span>
+                              </div>
+                              <strong>{activity.value}</strong>
+                              <small>
+                                {totalActivitySlices > 0 ? `${Math.round((activity.value / totalActivitySlices) * 100)}%` : "0%"}
+                              </small>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
                     ) : (
                       <div className="gm-empty-state-inline">No activity distribution yet.</div>
+                    )}
+                  </div>
+                  <div className="gm-mini-chart-block">
+                    <small className="gm-top-groups-label">Top Group Footprint</small>
+                    {topGroupsChartData.length > 0 ? (
+                      <div className="analytics-chart-shell analytics-chart-shell--compact">
+                        <BarChart
+                          dataset={topGroupsChartData}
+                          height={190}
+                          margin={{ top: 18, right: 14, bottom: 36, left: 34 }}
+                          grid={{ horizontal: true }}
+                          xAxis={[{ id: "top-groups-chart", scaleType: "band", dataKey: "name" }]}
+                          series={[
+                            {
+                              id: "top-groups-members",
+                              dataKey: "members",
+                              label: "Members",
+                              color: "#0a66ff",
+                              valueFormatter: (value) => `${value ?? 0} members`,
+                            },
+                            {
+                              id: "top-groups-assets",
+                              dataKey: "assets",
+                              label: "Assets",
+                              color: "#0f8fa7",
+                              valueFormatter: (value) => `${value ?? 0} assets`,
+                            },
+                          ]}
+                        />
+                      </div>
+                    ) : (
+                      <div className="gm-empty-state-inline">Top group chart will appear once groups have members.</div>
                     )}
                   </div>
                   <div className="gm-top-groups">

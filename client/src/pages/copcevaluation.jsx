@@ -10,6 +10,7 @@ import {
   FaTh,
 } from "react-icons/fa";
 import { BACKEND_URL } from "../config";
+import { updateCopcSearchParams } from "../utils/copcSearchParams";
 
 const REVIEW_AREAS = [
   "Verified documents",
@@ -20,7 +21,8 @@ const REVIEW_AREAS = [
 
 export default function CopcEvaluationPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedProgramId = String(searchParams.get("programId") || "");
   const userId = localStorage.getItem("userId");
   const role = localStorage.getItem("role") || "user";
 
@@ -37,21 +39,24 @@ export default function CopcEvaluationPage() {
   const [view, setView] = useState("list");
   const [query, setQuery] = useState("");
 
+  const syncProgramQuery = (programId) =>
+    updateCopcSearchParams(searchParams, setSearchParams, { programId });
+
   const loadPrograms = async () => {
     const { data } = await axios.get(`${BACKEND_URL}/copc/programs`, { params: { userId, role } });
     const list = Array.isArray(data) ? data : [];
     setPrograms(list);
-    if (!list.length) {
-      setSelectedProgramId("");
-      return;
+    const selectedExists = selectedProgramId && list.some((item) => String(item._id) === String(selectedProgramId));
+    const requestedExists = requestedProgramId && list.some((item) => String(item._id) === requestedProgramId);
+    let nextProgramId = "";
+    if (requestedExists) nextProgramId = requestedProgramId;
+    else if (selectedExists) nextProgramId = String(selectedProgramId);
+    else if (list.length > 0) nextProgramId = String(list[0]._id);
+
+    setSelectedProgramId(nextProgramId);
+    if (nextProgramId !== requestedProgramId) {
+      syncProgramQuery(nextProgramId);
     }
-    const queryProgramId = String(searchParams.get("programId") || "");
-    const hasQueryProgram = queryProgramId && list.some((p) => String(p._id) === queryProgramId);
-    setSelectedProgramId((prev) => {
-      if (prev && list.some((p) => String(p._id) === String(prev))) return prev;
-      if (hasQueryProgram) return queryProgramId;
-      return String(list[0]._id);
-    });
   };
 
   const loadWorkflow = async (programId) => {
@@ -101,6 +106,12 @@ export default function CopcEvaluationPage() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!requestedProgramId) return;
+    const exists = programs.some((item) => String(item._id) === requestedProgramId);
+    if (exists) setSelectedProgramId(requestedProgramId);
+  }, [requestedProgramId, programs]);
 
   useEffect(() => {
     loadWorkflow(selectedProgramId).catch(() => setWorkflow(null));
@@ -169,7 +180,11 @@ export default function CopcEvaluationPage() {
             className="form-select"
             style={{ minWidth: "260px", width: "100%", maxWidth: "460px" }}
             value={selectedProgramId}
-            onChange={(e) => setSelectedProgramId(e.target.value)}
+            onChange={(e) => {
+              const nextProgramId = e.target.value;
+              setSelectedProgramId(nextProgramId);
+              syncProgramQuery(nextProgramId);
+            }}
           >
             <option value="">Select Program</option>
             {programs.map((program) => (

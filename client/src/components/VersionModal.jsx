@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
 import { BACKEND_URL } from "../config";
 import { FaHistory, FaUndo, FaUpload, FaFileUpload, FaColumns, FaTimes } from "react-icons/fa";
+import UniversalDocViewer from "./UniversalDocViewer";
 
 export default function VersionModal({ onClose, target, onRestored }) {
   const [versions, setVersions] = useState([]);
@@ -245,11 +246,14 @@ export default function VersionModal({ onClose, target, onRestored }) {
                               {new Date(v.createdAt).toLocaleString()} - {v.createdBy?.email || "Unknown"}
                             </div>
                           </div>
-                          <iframe
-                            src={`${BACKEND_URL}/preview/${v.filename}?userId=${userId}&role=${role}`}
-                            title={`compare-${v._id}`}
-                            style={{ width: "100%", height: 420, border: "none", background: "#fff" }}
-                          />
+                          <div className="p-2">
+                            <UniversalDocViewer
+                              file={v}
+                              viewUrl={`${BACKEND_URL}/view/${v.filename}?userId=${userId}&role=${role}`}
+                              previewUrl={`${BACKEND_URL}/preview/${v.filename}?userId=${userId}&role=${role}`}
+                              minHeight={420}
+                            />
+                          </div>
                         </div>
                       </div>
                     ))}

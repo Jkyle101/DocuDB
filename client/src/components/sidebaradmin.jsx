@@ -60,156 +60,156 @@ function SidebarSuperAdmin({ onClose }) {
     <>
       <div className="d-flex flex-column sidebar-admin-clean app-sidebar-shell">
         {/* Mobile close button */}
-        {isMobile && (
-          <div className="d-flex justify-content-end p-2 border-bottom">
-            <button
-              className="btn btn-sm btn-outline-secondary"
-              onClick={onClose}
-              aria-label="Close sidebar"
-            >
-              <FaTimes />
-            </button>
-          </div>
-        )}
+          {isMobile && (
+            <div className="d-flex justify-content-end p-2 border-bottom">
+              <button
+                className="btn btn-sm btn-outline-secondary"
+                onClick={onClose}
+                aria-label="Close sidebar"
+              >
+                <FaTimes />
+              </button>
+            </div>
+          )}
 
         {/* Header */}
-        <div className="p-3 border-bottom sidebar-header-block flex-shrink-0">
-          <h5 className="mb-1 text-primary">Admin Panel</h5>
-          <small className="text-muted">Management Console</small>
-        </div>
+          <div className="p-3 border-bottom sidebar-header-block flex-shrink-0">
+            <h5 className="mb-1 text-primary">Admin Panel</h5>
+            <small className="text-muted">Management Console</small>
+          </div>
 
         {/* User Info */}
-        <div className="p-3 border-bottom flex-shrink-0">
-          <div className="d-flex align-items-center">
-            <div className="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center me-3"
-                 style={{width: '40px', height: '40px'}}>
-              <FaUser size={16} />
-            </div>
-            <div className="flex-grow-1">
-              <div className="fw-medium small text-truncate" style={{maxWidth: '160px'}}>
-                {userEmail}
+          <div className="p-3 border-bottom flex-shrink-0">
+            <div className="d-flex align-items-center">
+              <div className="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center me-3"
+                   style={{width: '40px', height: '40px'}}>
+                <FaUser size={16} />
               </div>
-              <div className="small text-muted">{userRole.charAt(0).toUpperCase() + userRole.slice(1)}</div>
+              <div className="flex-grow-1">
+                <div className="fw-medium small text-truncate" style={{maxWidth: '160px'}}>
+                  {userEmail}
+                </div>
+                <div className="small text-muted">{userRole.charAt(0).toUpperCase() + userRole.slice(1)}</div>
+              </div>
             </div>
           </div>
-        </div>
 
         {/* Navigation - Scrollable */}
-        <nav className="flex-grow-1 p-2 overflow-auto">
-          <div className="mb-3">
-            <ul className="nav nav-pills flex-column gap-1">
-              <li className="nav-item">
-                <NavLink
-                  to="/admin/manageusers"
-                  className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
-                  }
-                  onClick={handleLinkClick}
-                >
-                  <FaUsers className="me-2" size={16} />
-                  Manage Users
-                </NavLink>
-              </li>
+          <nav className="flex-grow-1 p-2 overflow-auto">
+            <div className="mb-3">
+              <ul className="nav nav-pills flex-column gap-1">
+                <li className="nav-item">
+                  <NavLink
+                    to="/admin/manageusers"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaUsers className="me-2" size={16} />
+                    Manage Users
+                  </NavLink>
+                </li>
 
-              <li className="nav-item">
-                <NavLink
-                  to="/admin/groups"
-                  className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
-                  }
-                  onClick={handleLinkClick}
-                >
-                  <FaUserFriends className="me-2" size={16} />
-                  Groups
-                </NavLink>
-              </li>
-              <li className="nav-item">
-                <NavLink
-                  to="/admin/copc-dashboard"
-                  className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
-                  }
-                  onClick={handleLinkClick}
-                >
-                  <FaLayerGroup className="me-2" size={16} />
-                  COPC Dashboard
-                </NavLink>
-              </li>
-              <li className="nav-item">
-                <NavLink
-                  to="/admin/copc-archived"
-                  className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
-                  }
-                  onClick={handleLinkClick}
-                >
-                  <FaArchive className="me-2" size={16} />
-                  Archived COPC
-                </NavLink>
-              </li>
-              <li className="nav-item">
-                <NavLink
-                  to="/admin/copc-recent-uploads"
-                  className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
-                  }
-                  onClick={handleLinkClick}
-                >
-                  <FaCloudUploadAlt className="me-2" size={16} />
-                  Recent COPC Uploads
-                </NavLink>
-              </li>
-            </ul>
-          </div>
+                <li className="nav-item">
+                  <NavLink
+                    to="/admin/groups"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaUserFriends className="me-2" size={16} />
+                    Groups
+                  </NavLink>
+                </li>
+                <li className="nav-item">
+                  <NavLink
+                    to="/admin/copc-dashboard"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaLayerGroup className="me-2" size={16} />
+                    COPC Dashboard
+                  </NavLink>
+                </li>
+                <li className="nav-item">
+                  <NavLink
+                    to="/admin/copc-archived"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaArchive className="me-2" size={16} />
+                    Archived COPC
+                  </NavLink>
+                </li>
+                <li className="nav-item">
+                  <NavLink
+                    to="/admin/copc-recent-uploads"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaCloudUploadAlt className="me-2" size={16} />
+                    Recent COPC Uploads
+                  </NavLink>
+                </li>
+              </ul>
+            </div>
 
-          <div>
-            <h6 className="px-3 py-2 mb-2 text-muted small fw-bold text-uppercase"
-                style={{letterSpacing: '0.5px'}}>
-              System
-            </h6>
-            <ul className="nav nav-pills flex-column gap-1">
-              <li className="nav-item">
-                <NavLink
-                  to="/admin"
-                  className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
-                  }
-                  onClick={handleLinkClick}
-                >
-                  <FaFolder className="me-2" size={16} />
-                  Admin Files
-                </NavLink>
-              </li>
+            <div>
+              <h6 className="px-3 py-2 mb-2 text-muted small fw-bold text-uppercase"
+                  style={{letterSpacing: '0.5px'}}>
+                System
+              </h6>
+              <ul className="nav nav-pills flex-column gap-1">
+                <li className="nav-item">
+                  <NavLink
+                    to="/admin"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaFolder className="me-2" size={16} />
+                    Admin Files
+                  </NavLink>
+                </li>
 
-              <li className="nav-item">
-                <NavLink
-                  to="/admin/trash"
-                  className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
-                  }
-                  onClick={handleLinkClick}
-                >
-                  <FaTrash className="me-2" size={16} />
-                  Trash Management
-                </NavLink>
-              </li>
+                <li className="nav-item">
+                  <NavLink
+                    to="/admin/trash"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaTrash className="me-2" size={16} />
+                    Trash Management
+                  </NavLink>
+                </li>
 
-              <li className="nav-item">
-                <NavLink
-                  to="/admin/systemlogs"
-                  className={({ isActive }) =>
-                    `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
-                  }
-                  onClick={handleLinkClick}
-                >
-                  <FaDatabase className="me-2" size={16} />
-                  System Logs
-                </NavLink>
-              </li>
-            </ul>
-          </div>
-        </nav>
-      </div>
+                <li className="nav-item">
+                  <NavLink
+                    to="/admin/systemlogs"
+                    className={({ isActive }) =>
+                      `nav-link d-flex align-items-center px-3 py-2 ${isActive ? "active text-white" : "text-dark"}`
+                    }
+                    onClick={handleLinkClick}
+                  >
+                    <FaDatabase className="me-2" size={16} />
+                    System Logs
+                  </NavLink>
+                </li>
+              </ul>
+            </div>
+          </nav>
+        </div>
 
       {/* Upload Modal */}
       {showUpload && (

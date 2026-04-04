@@ -603,3 +603,159 @@
     min-height: auto;
   }
 }
+
+body.dark-mode .task-management-page,
+body.dark-mode .task-assigned-page {
+  --task-surface-dark: color-mix(in srgb, var(--glass-bg-strong, rgba(14, 27, 49, 0.74)) 90%, #081325);
+  --task-surface-soft-dark: color-mix(in srgb, var(--glass-bg, rgba(14, 26, 48, 0.58)) 88%, #091426);
+  --task-surface-muted-dark: color-mix(in srgb, var(--glass-bg, rgba(14, 26, 48, 0.58)) 76%, #0b1830);
+  --task-border-dark: var(--glass-stroke, rgba(116, 149, 194, 0.32));
+  color: var(--text-strong);
+}
+
+body.dark-mode .task-management-page .task-management-hero {
+  border-color: var(--task-border-dark);
+  background:
+    radial-gradient(circle at 88% 15%, rgba(56, 189, 248, 0.18), transparent 42%),
+    linear-gradient(130deg, #0a1a30 0%, #0d2238 100%);
+}
+
+body.dark-mode .task-assigned-page .assigned-hero {
+  border-color: var(--task-border-dark);
+  background:
+    radial-gradient(circle at 92% 18%, rgba(74, 222, 128, 0.16), transparent 42%),
+    linear-gradient(120deg, #0a1b24 0%, #10261b 100%);
+}
+
+body.dark-mode .task-management-page .task-context-card,
+body.dark-mode .task-management-page .task-empty-card,
+body.dark-mode .task-management-page .task-summary-card,
+body.dark-mode .task-management-page .task-create-card,
+body.dark-mode .task-management-page .task-assignment-card,
+body.dark-mode .task-management-page .task-list-card,
+body.dark-mode .task-management-page .task-hub-shell,
+body.dark-mode .task-management-page .task-hub-topbar,
+body.dark-mode .task-management-page .task-hub-sidebar,
+body.dark-mode .task-management-page .task-side-card,
+body.dark-mode .task-management-page .task-kanban-column,
+body.dark-mode .task-management-page .task-kanban-header,
+body.dark-mode .task-management-page .task-kanban-empty,
+body.dark-mode .task-management-page .task-board-card,
+body.dark-mode .task-management-page .task-board-empty,
+body.dark-mode .task-assigned-page .assigned-summary-card,
+body.dark-mode .task-assigned-page .assigned-folder-card,
+body.dark-mode .task-assigned-page .assigned-kanban-column,
+body.dark-mode .task-assigned-page .assigned-kanban-header,
+body.dark-mode .task-assigned-page .assigned-task-card,
+body.dark-mode .task-assigned-page .assigned-kanban-empty {
+  background: var(--task-surface-dark);
+  border-color: var(--task-border-dark);
+  color: var(--text-strong);
+  box-shadow: 0 16px 30px rgba(2, 7, 20, 0.34);
+}
+
+body.dark-mode .task-management-page .task-hub-main {
+  background: var(--task-surface-soft-dark);
+}
+
+body.dark-mode .task-management-page .task-hub-topbar,
+body.dark-mode .task-management-page .task-kanban-header,
+body.dark-mode .task-assigned-page .assigned-kanban-header {
+  border-color: var(--task-border-dark);
+}
+
+body.dark-mode .task-management-page .task-hub-sidebar {
+  border-right-color: var(--task-border-dark);
+}
+
+body.dark-mode .task-management-page .task-progress-rail,
+body.dark-mode .task-assigned-page .assigned-folder-progress,
+body.dark-mode .task-management-page .task-board-empty,
+body.dark-mode .task-management-page .task-kanban-empty,
+body.dark-mode .task-assigned-page .assigned-kanban-empty {
+  background: var(--task-surface-muted-dark);
+}
+
+body.dark-mode .task-management-page .task-management-eyebrow,
+body.dark-mode .task-management-page .task-progress-value,
+body.dark-mode .task-assigned-page .assigned-task-link {
+  color: #8cc8ff;
+}
+
+body.dark-mode .task-assigned-page .assigned-task-link:hover {
+  color: #b9ddff;
+}
+
+body.dark-mode .task-management-page .task-hub-brand,
+body.dark-mode .task-management-page .task-hub-nav-item.is-active,
+body.dark-mode .task-management-page .task-side-progress strong,
+body.dark-mode .task-management-page .task-card-title,
+body.dark-mode .task-management-page .task-folder-item,
+body.dark-mode .task-management-page .task-folder-item.is-active {
+  color: var(--text-strong);
+}
+
+body.dark-mode .task-management-page .task-side-title,
+body.dark-mode .task-management-page .task-hub-nav-item,
+body.dark-mode .task-management-page .task-board-summary,
+body.dark-mode .task-management-page .task-card-description,
+body.dark-mode .task-management-page .task-card-meta,
+body.dark-mode .task-assigned-page .assigned-board-meta,
+body.dark-mode .task-assigned-page .assigned-task-description,
+body.dark-mode .task-assigned-page .assigned-kanban-empty,
+body.dark-mode .task-management-page .task-kanban-empty,
+body.dark-mode .task-management-page .task-board-empty {
+  color: var(--text-muted);
+}
+
+body.dark-mode .task-management-page .task-card-meta {
+  border-top-color: color-mix(in srgb, var(--task-border-dark) 75%, #12233d);
+}
+
+body.dark-mode .task-management-page .task-folder-item {
+  background: rgba(10, 21, 38, 0.72);
+  border-color: color-mix(in srgb, var(--task-border-dark) 82%, #10233e);
+}
+
+body.dark-mode .task-management-page .task-folder-item:hover {
+  background: rgba(37, 99, 235, 0.18);
+  border-color: #5c87c0;
+}
+
+body.dark-mode .task-management-page .task-hub-nav-item.is-active {
+  background: rgba(37, 99, 235, 0.16);
+}
+
+body.dark-mode .task-management-page .task-folder-item.is-active {
+  background: rgba(13, 148, 136, 0.18);
+  border-color: rgba(45, 212, 191, 0.42);
+}
+
+body.dark-mode .task-management-page .task-card-scope {
+  background: rgba(245, 204, 21, 0.14);
+  color: #f5d76e;
+}
+
+body.dark-mode .task-management-page .task-board-card.status-in_progress {
+  border-color: rgba(96, 165, 250, 0.4);
+}
+
+body.dark-mode .task-management-page .task-board-card.status-complete {
+  border-color: rgba(74, 222, 128, 0.4);
+}
+
+body.dark-mode .task-assigned-page .assigned-task-card.status-in_progress {
+  border-color: rgba(245, 158, 11, 0.36);
+}
+
+body.dark-mode .task-assigned-page .assigned-task-card.status-for_review {
+  border-color: rgba(56, 189, 248, 0.34);
+}
+
+body.dark-mode .task-assigned-page .assigned-task-card.status-approved {
+  border-color: rgba(74, 222, 128, 0.34);
+}
+
+body.dark-mode .task-assigned-page .assigned-task-card.status-rejected {
+  border-color: rgba(248, 113, 113, 0.34);
+}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
-import { BACKEND_URL } from "../config";
+import { BACKEND_URL, buildUploadUrl } from "../config";
 import { FaComment, FaReply, FaTrash, FaEdit } from "react-icons/fa";
 
 export default function CommentsModal({ onClose, target }) {
@@ -150,7 +150,7 @@ export default function CommentsModal({ onClose, target }) {
                             <span className="rounded-circle overflow-hidden" style={{ width: 28, height: 28, display: "inline-block" }}>
                               {comment.createdBy?.profilePicture ? (
                                 <img
-                                  src={`${BACKEND_URL}/uploads/${comment.createdBy.profilePicture}`}
+                                  src={buildUploadUrl(comment.createdBy.profilePicture)}
                                   alt=""
                                   style={{ width: "100%", height: "100%", objectFit: "cover" }}
                                 />
@@ -259,7 +259,7 @@ export default function CommentsModal({ onClose, target }) {
                                     <span className="rounded-circle overflow-hidden" style={{ width: 22, height: 22, display: "inline-block" }}>
                                       {reply.createdBy?.profilePicture ? (
                                         <img
-                                          src={`${BACKEND_URL}/uploads/${reply.createdBy.profilePicture}`}
+                                          src={buildUploadUrl(reply.createdBy.profilePicture)}
                                           alt=""
                                           style={{ width: "100%", height: "100%", objectFit: "cover" }}
                                         />

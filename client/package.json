@@ -11,14 +11,21 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/material": "^7.3.9",
+    "@mui/x-charts": "^8.28.2",
     "axios": "^1.11.0",
     "bootstrap": "^5.3.7",
+    "jspdf": "^4.2.1",
+    "pdfmake": "^0.3.7",
     "react": "^19.1.1",
     "react-bootstrap": "^2.10.10",
+    "react-doc-viewer": "^0.1.16",
     "react-dom": "^19.1.1",
     "react-icons": "^5.5.0",
-    "react-router-dom": "^7.8.1",
-    "recharts": "^3.2.1"
+    "react-pdf": "^10.4.1",
+    "react-router-dom": "^7.8.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.33.0",

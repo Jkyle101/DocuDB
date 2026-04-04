@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import { FaBell, FaShareAlt, FaComment, FaKey, FaFile, FaFolder, FaUsers, FaCheckCircle, FaTimesCircle, FaClock, FaEye, FaExclamationTriangle } from "react-icons/fa";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
@@ -23,16 +23,7 @@ function Notifications() {
   const userId = localStorage.getItem("userId");
   const userRole = normalizeRole(localStorage.getItem("role") || "user");
 
-  useEffect(() => {
-    fetchNotifications();
-
-    // Set up polling for real-time updates every 30 seconds
-    const interval = setInterval(fetchNotifications, 30000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  const fetchNotifications = async () => {
+  const fetchNotifications = useCallback(async () => {
     try {
       setLoading(true);
       const response = await axios.get(`${BACKEND_URL}/notifications/${userId}`);
@@ -45,7 +36,16 @@ function Notifications() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId]);
+
+  useEffect(() => {
+    fetchNotifications();
+
+    // Set up polling for real-time updates every 30 seconds
+    const interval = setInterval(fetchNotifications, 30000);
+
+    return () => clearInterval(interval);
+  }, [fetchNotifications]);
 
   const markAsRead = async (notificationId) => {
     try {
@@ -170,13 +170,17 @@ function Notifications() {
     const buildTaskPath = () => {
       if (userRole === "superadmin") {
         return appendQuery("/admin/tasks", {
-          tab: "task_management",
+          tab: "tasks",
           programId,
           folderId,
         });
       }
       const tab = userRole === "dept_chair" ? "task_management" : "tasks";
-      return buildCopcPath(tab);
+      return appendQuery(copcBasePath, {
+        tab,
+        programId,
+        folderId,
+      });
     };
 
     const hasQaSignal = combinedText.includes("qa");
@@ -310,19 +314,21 @@ function Notifications() {
                   { key: "share", label: "Shares", icon: FaShareAlt },
                   { key: "comment", label: "Comments", icon: FaComment },
                   { key: "password", label: "Password", icon: FaKey },
-                  { key: "group", label: "Groups", icon: FaUsers }
-                  ,
-                  { key: "action", label: "Action", icon: FaExclamationTriangle }
-                ].map(({ key, label, icon: Icon }) => (
-                  <button
-                    key={key}
-                    className={`btn ${activeFilter === key ? 'btn-primary' : 'btn-outline-primary'} btn-sm`}
-                    onClick={() => setActiveFilter(key)}
-                  >
-                    <Icon className="me-1" />
-                    {label}
-                  </button>
-                ))}
+                  { key: "group", label: "Groups", icon: FaUsers },
+                  { key: "action", label: "Action", icon: FaExclamationTriangle },
+                ].map((filterOption) => {
+                  const FilterIcon = filterOption.icon;
+                  return (
+                    <button
+                      key={filterOption.key}
+                      className={`btn ${activeFilter === filterOption.key ? 'btn-primary' : 'btn-outline-primary'} btn-sm`}
+                      onClick={() => setActiveFilter(filterOption.key)}
+                    >
+                      <FilterIcon className="me-1" />
+                      {filterOption.label}
+                    </button>
+                  );
+                })}
               </div>
             </div>
           </div>

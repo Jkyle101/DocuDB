@@ -1,0 +1,4 @@
+TCFTR Searchable Seed File
+ALPHA123 searchable content for content-search, editor, and recent activity tests.
+This version represents the initial upload baseline for version history coverage.
+Keywords: syllabus, compliance, curriculum, reviewer, analytics.

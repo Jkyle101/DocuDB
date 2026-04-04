@@ -2,6 +2,186 @@
   padding-bottom: 1.25rem;
 }
 
+.analytics-chart-shell {
+  position: relative;
+  border-radius: 18px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke, rgba(148, 163, 184, 0.34)) 82%, #ffffff);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(243, 248, 255, 0.84) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    0 12px 22px rgba(15, 23, 42, 0.06);
+  padding: 0.78rem 0.82rem 0.66rem;
+  overflow: hidden;
+}
+
+.analytics-chart-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at top right, rgba(10, 102, 255, 0.08), transparent 38%),
+    radial-gradient(circle at bottom left, rgba(14, 165, 233, 0.08), transparent 34%);
+}
+
+.analytics-chart-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+.analytics-chart-shell--compact {
+  padding-bottom: 0.5rem;
+}
+
+.analytics-pie-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.72rem;
+}
+
+.analytics-pie-shell {
+  position: relative;
+  min-height: 208px;
+}
+
+.analytics-pie-shell--compact {
+  min-height: 152px;
+}
+
+.analytics-pie-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  text-align: center;
+}
+
+.analytics-pie-center strong {
+  font-size: 1.72rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #173153;
+}
+
+.analytics-pie-center span {
+  margin-top: 0.18rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 800;
+  color: #5f7696;
+}
+
+.analytics-pie-center--compact strong {
+  font-size: 1.2rem;
+}
+
+.analytics-pie-center--compact span {
+  font-size: 0.64rem;
+}
+
+.analytics-chart-caption {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.25rem;
+}
+
+.analytics-chart-caption span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 0.22rem 0.58rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #557194;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke, rgba(148, 163, 184, 0.34)) 84%, #ffffff);
+  background: rgba(255, 255, 255, 0.64);
+}
+
+.analytics-breakdown-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+  margin-top: 0.68rem;
+}
+
+.analytics-breakdown-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 0.5rem;
+  align-items: center;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke, rgba(148, 163, 184, 0.34)) 84%, #ffffff);
+  background: rgba(255, 255, 255, 0.68);
+  padding: 0.46rem 0.58rem;
+}
+
+.analytics-breakdown-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-width: 0;
+  font-size: 0.79rem;
+  font-weight: 700;
+  color: #263a56;
+}
+
+.analytics-breakdown-label > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analytics-breakdown-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.7);
+}
+
+.analytics-breakdown-row strong {
+  font-size: 0.82rem;
+  color: #10233d;
+}
+
+.analytics-breakdown-row small {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #5f7696;
+}
+
+.analytics-chart-shell .MuiChartsAxis-line,
+.analytics-chart-shell .MuiChartsAxis-tickContainer line {
+  stroke: rgba(148, 163, 184, 0.42);
+}
+
+.analytics-chart-shell .MuiChartsAxis-tickLabel,
+.analytics-chart-shell .MuiChartsLegend-label {
+  fill: #5b708f;
+  font-size: 0.74rem;
+  font-family: inherit;
+  font-weight: 600;
+}
+
+.analytics-chart-shell .MuiChartsGrid-line {
+  stroke: rgba(148, 163, 184, 0.2);
+  stroke-dasharray: 4 6;
+}
+
+.analytics-chart-shell .MuiPieArcLabel-root {
+  fill: #173153;
+  font-size: 0.72rem;
+  font-weight: 800;
+  font-family: inherit;
+}
+
 .admin-analytics-page .analytics-hero {
   border-radius: 20px;
   border: 1px solid var(--glass-stroke, rgba(148, 163, 184, 0.34));
@@ -116,6 +296,57 @@ body.dark-mode .admin-analytics-page .analytics-chip {
   color: #c3d7f3;
   border-color: rgba(116, 149, 194, 0.45);
   background: rgba(14, 27, 49, 0.48);
+}
+
+body.dark-mode .analytics-chart-shell {
+  background:
+    linear-gradient(180deg, rgba(10, 22, 41, 0.86) 0%, rgba(9, 18, 34, 0.78) 100%);
+  border-color: rgba(116, 149, 194, 0.34);
+  box-shadow:
+    inset 0 1px 0 rgba(214, 228, 250, 0.06),
+    0 12px 22px rgba(2, 8, 18, 0.28);
+}
+
+body.dark-mode .analytics-chart-caption span,
+body.dark-mode .analytics-breakdown-row {
+  background: rgba(10, 22, 41, 0.58);
+  border-color: rgba(116, 149, 194, 0.3);
+}
+
+body.dark-mode .analytics-chart-caption span,
+body.dark-mode .analytics-breakdown-row small {
+  color: #96b5de;
+}
+
+body.dark-mode .analytics-breakdown-label,
+body.dark-mode .analytics-breakdown-row strong {
+  color: #edf4ff;
+}
+
+body.dark-mode .analytics-pie-center strong {
+  color: #eef5ff;
+}
+
+body.dark-mode .analytics-pie-center span {
+  color: #9eb4d4;
+}
+
+body.dark-mode .analytics-chart-shell .MuiChartsAxis-line,
+body.dark-mode .analytics-chart-shell .MuiChartsAxis-tickContainer line {
+  stroke: rgba(148, 183, 226, 0.34);
+}
+
+body.dark-mode .analytics-chart-shell .MuiChartsAxis-tickLabel,
+body.dark-mode .analytics-chart-shell .MuiChartsLegend-label {
+  fill: #a9c0e1;
+}
+
+body.dark-mode .analytics-chart-shell .MuiChartsGrid-line {
+  stroke: rgba(100, 133, 176, 0.22);
+}
+
+body.dark-mode .analytics-chart-shell .MuiPieArcLabel-root {
+  fill: #edf4ff;
 }
 
 body.dark-mode .admin-analytics-page .card-header {

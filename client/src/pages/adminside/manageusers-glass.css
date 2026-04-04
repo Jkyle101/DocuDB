@@ -209,6 +209,58 @@
   flex-direction: column;
 }
 
+.user-management-dashboard .um-donut-shell {
+  min-height: 262px;
+}
+
+.user-management-dashboard .um-donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.user-management-dashboard .um-donut-center strong {
+  font-size: 1.8rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #173153;
+}
+
+.user-management-dashboard .um-donut-center span,
+.user-management-dashboard .um-chart-summary span {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #607895;
+  font-weight: 800;
+}
+
+.user-management-dashboard .um-donut-center span {
+  margin-top: 0.2rem;
+}
+
+.user-management-dashboard .um-chart-summary {
+  margin-top: 0.72rem;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.8rem;
+  align-items: center;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke, rgba(148, 163, 184, 0.34)) 84%, #ffffff);
+  background: color-mix(in srgb, var(--glass-bg-soft, rgba(248, 252, 255, 0.52)) 80%, #ffffff);
+  padding: 0.56rem 0.7rem;
+}
+
+.user-management-dashboard .um-chart-summary strong {
+  color: #173153;
+  font-size: 0.92rem;
+  font-weight: 760;
+}
+
 .user-management-dashboard .um-empty-inline {
   border-radius: 12px;
   border: 1px dashed color-mix(in srgb, var(--glass-stroke, rgba(148, 163, 184, 0.34)) 88%, #ffffff);
@@ -506,6 +558,21 @@ body.dark-mode .user-management-dashboard .um-status-pill.active {
 body.dark-mode .user-management-dashboard .um-status-pill.inactive {
   color: #d9e4f6;
   background: rgba(71, 85, 105, 0.34);
+}
+
+body.dark-mode .user-management-dashboard .um-donut-center strong,
+body.dark-mode .user-management-dashboard .um-chart-summary strong {
+  color: #eef5ff;
+}
+
+body.dark-mode .user-management-dashboard .um-donut-center span,
+body.dark-mode .user-management-dashboard .um-chart-summary span {
+  color: #9eb4d4;
+}
+
+body.dark-mode .user-management-dashboard .um-chart-summary {
+  background: color-mix(in srgb, var(--glass-bg, rgba(14, 26, 48, 0.58)) 90%, #08152c) !important;
+  border-color: var(--glass-stroke, rgba(116, 149, 194, 0.32)) !important;
 }
 
 @media (max-width: 1199.98px) {

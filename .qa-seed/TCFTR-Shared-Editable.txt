@@ -1,0 +1,3 @@
+Shared editable coverage file.
+User2 can modify this file after editor sharing is granted.
+Initial state is ready for collaborative editing.

@@ -20,7 +20,9 @@ import {
 import { BACKEND_URL } from "../config";
 import UploadModal from "../components/UploadModal";
 import CreateFolderModal from "../components/CreateFolderModal";
+import { useUploadManager } from "../context/UploadManagerContext";
 import { isExternalFileDrag, uploadDroppedEntries } from "../utils/dropUpload";
+import { updateCopcSearchParams } from "../utils/copcSearchParams";
 import { useSearchParams } from "react-router-dom";
 
 const workflowStatusMeta = (status) => {
@@ -81,12 +83,13 @@ const formatFileSize = (bytes = 0) => {
 };
 
 export default function CopcUploadPage() {
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const requestedProgramId = String(searchParams.get("programId") || "");
   const requestedFolderId = String(searchParams.get("folderId") || "");
   const userId = localStorage.getItem("userId");
   const role = localStorage.getItem("role") || "user";
   const normalizedRole = String(role || "").toLowerCase();
+  const { startTrackedTask } = useUploadManager();
 
   const [programs, setPrograms] = useState([]);
   const [selectedProgramId, setSelectedProgramId] = useState("");
@@ -135,6 +138,12 @@ export default function CopcUploadPage() {
   );
   const [checklistPosition, setChecklistPosition] = useState({ x: null, y: null });
   const [isChecklistDragging, setIsChecklistDragging] = useState(false);
+
+  const syncProgramQuery = (programId, extraUpdates = {}) =>
+    updateCopcSearchParams(searchParams, setSearchParams, {
+      programId,
+      ...extraUpdates,
+    });
 
   const getDefaultChecklistPosition = useCallback(() => {
     if (typeof window === "undefined") return { x: 0, y: CHECKLIST_PANEL_TOP };
@@ -355,12 +364,14 @@ export default function CopcUploadPage() {
     setPrograms(list);
     const requestedExists = requestedProgramId && list.some((item) => String(item._id) === requestedProgramId);
     const selectedExists = selectedProgramId && list.some((item) => String(item._id) === String(selectedProgramId));
-    if (requestedExists) {
-      setSelectedProgramId(requestedProgramId);
-      return;
-    }
-    if (!selectedExists) {
-      setSelectedProgramId(list.length > 0 ? String(list[0]._id) : "");
+    let nextProgramId = "";
+    if (requestedExists) nextProgramId = requestedProgramId;
+    else if (selectedExists) nextProgramId = String(selectedProgramId);
+    else if (list.length > 0) nextProgramId = String(list[0]._id);
+
+    setSelectedProgramId(nextProgramId);
+    if (nextProgramId !== requestedProgramId || (!nextProgramId && requestedFolderId)) {
+      syncProgramQuery(nextProgramId, { folderId: null });
     }
   };
 
@@ -532,19 +543,41 @@ export default function CopcUploadPage() {
     setUploadingDroppedItems(true);
     setDropUploadMessage("Preparing dropped files...");
     try {
-      const result = await uploadDroppedEntries({
-        dataTransfer,
-        destinationFolderId,
-        userId,
-        role,
-        onStatus: setDropUploadMessage,
-      });
-      await loadProgramFolders(selectedProgramId, true);
-      await loadUploadStatuses(selectedProgramId, statusScopedFolderId, statusFilter);
-      await loadApprovedFilesInFolder(destinationFolderId);
-      setDropUploadMessage(
-        `Uploaded ${result.uploadedCount} file${result.uploadedCount === 1 ? "" : "s"} by drag and drop.`
+      startTrackedTask(
+        {
+          name: "COPC drag-and-drop upload",
+          detail: "Uploading into the current COPC folder",
+          statusText: "Preparing dropped files...",
+          successText: "COPC upload complete",
+          onSuccess: () => {
+            loadProgramFolders(selectedProgramId, true).catch(() => {});
+            loadUploadStatuses(selectedProgramId, statusScopedFolderId, statusFilter).catch(() => {});
+            loadApprovedFilesInFolder(destinationFolderId).catch(() => {});
+          },
+        },
+        async (task) => {
+          const result = await uploadDroppedEntries({
+            dataTransfer,
+            destinationFolderId,
+            userId,
+            role,
+            duplicateAction: "keep_both",
+            signal: task.signal,
+            onStatus: (message) => task.setStatusText(message),
+            onProgress: ({ percent, statusText, detail }) => {
+              task.setProgress(percent, { statusText, detail });
+            },
+          });
+          return {
+            result,
+            statusText: `Uploaded ${result.uploadedCount} file${result.uploadedCount === 1 ? "" : "s"}`,
+            detail: result.createdFolders > 0
+              ? `${result.createdFolders} folders created`
+              : "Files uploaded to the COPC workspace",
+          };
+        }
       );
+      setDropUploadMessage("");
       return true;
     } catch (err) {
       alert(err?.response?.data?.error || err?.message || "Drag-and-drop upload failed");
@@ -785,7 +818,7 @@ export default function CopcUploadPage() {
             {breadcrumbs.map((b) => (
               <span key={b._id || "root"} className="d-flex align-items-center">
                 <FaChevronRight className="mx-2 text-muted" size={12} />
-                <button className="btn btn-link p-0 text-dark text-decoration-none" onClick={() => setCurrentFolderId(b._id)}>
+                <button className="btn btn-link p-0 theme-text-strong text-decoration-none" onClick={() => setCurrentFolderId(b._id)}>
                   {b.name}
                 </button>
               </span>
@@ -798,7 +831,13 @@ export default function CopcUploadPage() {
             className="form-select"
             style={{ minWidth: "260px", width: "100%", maxWidth: "460px" }}
             value={selectedProgramId}
-            onChange={(e) => setSelectedProgramId(e.target.value)}
+            onChange={(e) => {
+              const nextProgramId = e.target.value;
+              const programChanged = String(nextProgramId) !== String(selectedProgramId);
+              setSelectedProgramId(nextProgramId);
+              if (programChanged) setCurrentFolderId(null);
+              syncProgramQuery(nextProgramId, programChanged ? { folderId: null } : {});
+            }}
           >
             <option value="">Select Program</option>
             {programs.map((p) => (

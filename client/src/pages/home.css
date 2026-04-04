@@ -1158,6 +1158,13 @@ body.dark-mode .page-header h4 {
   color: var(--text-strong) !important;
 }
 
+body.dark-mode .data-table .table,
+body.dark-mode .data-table .table tbody tr,
+body.dark-mode .data-table .table td,
+body.dark-mode .data-table .table td .text-truncate {
+  color: var(--text-strong) !important;
+}
+
 body.dark-mode .data-table .table tbody tr:hover,
 body.dark-mode .context-menu-item:hover,
 body.dark-mode .dashboard-mini-item:hover {

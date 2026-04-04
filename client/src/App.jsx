@@ -8,7 +8,6 @@ import Layout from "./components/layout";
 import Upload from "./pages/upload"; // upload page
 import Shared from "./pages/shared"; // shared page
 import Recent from "./pages/recent"; // recent page
-import Trash from "./pages/trash"; // trash page
 import MyGroups from "./pages/mygroups"; // my groups page
 import ManageUsers from "./pages/adminside/manageusers"; // manage users page
 import SystemLogs from "./pages/adminside/systemlogs.jsx"; //system logs
@@ -20,6 +19,7 @@ import CopcQaReviewPage from "./pages/copcqareview";
 import CopcEvaluationPage from "./pages/copcevaluation";
 import CopcSubmissionsPage from "./pages/copcsubmissions";
 import UserCopcDashboardPage from "./pages/usercopcdashboard";
+import AdminCopcDashboardPage from "./pages/admincopcdashboard";
 import AdminCopcArchivedPage from "./pages/admincopcarchived";
 import AdminCopcRecentUploadsPage from "./pages/admincopcrecentuploads";
 import Settings from "./pages/settings"; // user settings page
@@ -305,7 +305,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<UserCopcDashboardPage defaultTab="workflow" />} />
+        <Route index element={<AdminCopcDashboardPage defaultTab="workflow" />} />
       </Route>
       <Route
         path="/admin/tasks"
@@ -315,7 +315,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<UserCopcDashboardPage defaultTab="task_management" />} />
+        <Route index element={<AdminCopcDashboardPage defaultTab="tasks" />} />
       </Route>
       <Route
         path="/admin/copc-programs"
@@ -325,7 +325,7 @@ function AppRoutes() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<UserCopcDashboardPage defaultTab="programs" />} />
+        <Route index element={<AdminCopcDashboardPage defaultTab="programs" />} />
       </Route>
       <Route
         path="/admin/copc-archived"

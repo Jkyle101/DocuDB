@@ -512,3 +512,142 @@
     transform: translateY(0);
   }
 }
+
+body.dark-mode .admin-trash-page {
+  --trash-bg: #071223;
+  --trash-panel: color-mix(in srgb, var(--glass-bg-strong, rgba(14, 27, 49, 0.74)) 90%, #081325);
+  --trash-ink: var(--text-strong);
+  --trash-muted: var(--text-muted);
+  --trash-border: var(--glass-stroke, rgba(116, 149, 194, 0.32));
+  --trash-primary: #8bb4ff;
+  --trash-primary-soft: rgba(59, 130, 246, 0.18);
+  --trash-danger: #ff9085;
+  --trash-danger-soft: rgba(185, 54, 44, 0.18);
+  color: var(--trash-ink);
+}
+
+body.dark-mode .trash-hero-panel {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(59, 130, 246, 0.18), transparent 42%),
+    linear-gradient(135deg, #0a1830 0%, #10213d 100%);
+  border-color: var(--trash-border);
+  box-shadow: 0 18px 34px rgba(2, 7, 20, 0.34);
+}
+
+body.dark-mode .trash-toolbar-panel,
+body.dark-mode .trash-item-card,
+body.dark-mode .trash-cleanup-card,
+body.dark-mode .trash-table-shell,
+body.dark-mode .trash-empty-state {
+  background: color-mix(in srgb, var(--glass-bg-strong, rgba(14, 27, 49, 0.74)) 90%, #081325);
+  border-color: var(--trash-border);
+  box-shadow: 0 16px 30px rgba(2, 7, 20, 0.34);
+}
+
+body.dark-mode .trash-title,
+body.dark-mode .trash-item-name,
+body.dark-mode .trash-cleanup-card h4,
+body.dark-mode .trash-list-table tbody td {
+  color: var(--trash-ink);
+}
+
+body.dark-mode .trash-subtitle,
+body.dark-mode .trash-selection-meta,
+body.dark-mode .trash-meta-line,
+body.dark-mode .trash-cleanup-card p,
+body.dark-mode .trash-empty-state,
+body.dark-mode .trash-list-table thead th {
+  color: var(--trash-muted);
+}
+
+body.dark-mode .trash-search-shell,
+body.dark-mode .trash-view-toggle,
+body.dark-mode .trash-select-toggle,
+body.dark-mode .trash-check-btn {
+  background: rgba(10, 21, 38, 0.76);
+  border-color: color-mix(in srgb, var(--trash-border) 84%, #10233e);
+  color: var(--trash-ink);
+}
+
+body.dark-mode .trash-search-shell input {
+  color: var(--trash-ink);
+}
+
+body.dark-mode .trash-search-shell input::placeholder {
+  color: var(--trash-muted);
+}
+
+body.dark-mode .trash-view-toggle button {
+  color: var(--trash-muted);
+}
+
+body.dark-mode .trash-view-toggle button:hover,
+body.dark-mode .trash-check-btn:hover {
+  background: rgba(59, 130, 246, 0.16);
+  color: #d7e7ff;
+}
+
+body.dark-mode .trash-view-toggle button.is-active,
+body.dark-mode .trash-check-btn.is-selected {
+  background: rgba(37, 99, 235, 0.26);
+  border-color: rgba(96, 165, 250, 0.42);
+  color: #eff6ff;
+}
+
+body.dark-mode .trash-kind-pill.kind-folder {
+  background: rgba(59, 130, 246, 0.14);
+  border-color: rgba(96, 165, 250, 0.28);
+  color: #b9d3ff;
+}
+
+body.dark-mode .trash-kind-pill.kind-file {
+  background: rgba(249, 115, 22, 0.14);
+  border-color: rgba(251, 146, 60, 0.28);
+  color: #ffd3aa;
+}
+
+body.dark-mode .trash-icon-shell.kind-folder {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+body.dark-mode .trash-icon-shell.kind-file {
+  background: rgba(139, 92, 246, 0.12);
+}
+
+body.dark-mode .trash-item-card.is-selected,
+body.dark-mode .trash-list-table tbody tr.is-selected td {
+  background: rgba(37, 99, 235, 0.12);
+}
+
+body.dark-mode .trash-cleanup-card {
+  border-color: rgba(96, 165, 250, 0.34);
+  background:
+    radial-gradient(circle at top, rgba(59, 130, 246, 0.16), transparent 55%),
+    color-mix(in srgb, var(--glass-bg-strong, rgba(14, 27, 49, 0.74)) 90%, #081325);
+}
+
+body.dark-mode .trash-cleanup-icon {
+  background: rgba(59, 130, 246, 0.14);
+  color: #9bc2ff;
+}
+
+body.dark-mode .trash-list-table thead th {
+  background: rgba(16, 30, 52, 0.92);
+  border-bottom-color: var(--trash-border);
+}
+
+body.dark-mode .trash-list-table tbody td {
+  border-color: color-mix(in srgb, var(--trash-border) 76%, #10233e);
+}
+
+body.dark-mode .trash-empty-state {
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
+body.dark-mode .trash-empty-state svg {
+  color: #90b5f6;
+}
+
+body.dark-mode .trash-empty-state h5 {
+  color: var(--trash-ink);
+}

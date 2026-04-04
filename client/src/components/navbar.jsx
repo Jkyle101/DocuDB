@@ -3,7 +3,7 @@ import { FaSearch, FaSignOutAlt, FaBars, FaTimes, FaFolder, FaFileAlt, FaFilePdf
 import { useNavigate, useLocation } from "react-router-dom";
 import { Link } from "react-router-dom";
 import axios from "axios";
-import { BACKEND_URL } from "../config";
+import { BACKEND_URL, buildUploadUrl } from "../config";
 import logo from "../assets/docudbllcc.png";
 import "./navbar.css";
 
@@ -69,10 +69,7 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
   const notificationAudioRef = useRef(null);
 
   const buildProfilePictureUrl = useCallback((filename) => {
-    const safeName = String(filename || "").trim();
-    if (!safeName) return "";
-    const cacheBust = Number(profilePictureVersion) > 0 ? `?v=${Number(profilePictureVersion)}` : "";
-    return `${BACKEND_URL}/uploads/${safeName}${cacheBust}`;
+    return buildUploadUrl(filename, profilePictureVersion);
   }, [profilePictureVersion]);
 
   useEffect(() => {
@@ -1180,129 +1177,129 @@ function Navbar({ onSearch, toggleSidebar, isSidebarOpen }) {
           {/* Center Section: Desktop Search Bar */}
           <div className="search-container-google" ref={searchRef}>
             <div className="search-toolbar-google">
-            <div className="search-wrapper-google">
-              <form onSubmit={handleSearch}>
-                <FaSearch className="search-icon-google" />
+              <div className="search-wrapper-google">
+                <form onSubmit={handleSearch}>
+                  <FaSearch className="search-icon-google" />
 
-                <input
-                  className="search-input-google"
-                  type="search"
-                  placeholder={isAdminPage ? "Search in Drive" : "Search in Drive"}
-                  value={query}
-                  onChange={handleInputChange}
-                  onKeyDown={handleKeyDown}
-                  onFocus={() => {
-                    setIsInputFocused(true);
-                    if (recentSearches.length > 0 && query === "") {
-                      setShowSuggestions(true);
-                    }
-                  }}
-                  onBlur={() => {
-                    setTimeout(() => setIsInputFocused(false), 150);
-                  }}
-                  autoComplete="off"
-                />
+                    <input
+                      className="search-input-google"
+                      type="search"
+                      placeholder={isAdminPage ? "Search in Drive" : "Search in Drive"}
+                      value={query}
+                      onChange={handleInputChange}
+                      onKeyDown={handleKeyDown}
+                      onFocus={() => {
+                        setIsInputFocused(true);
+                        if (recentSearches.length > 0 && query === "") {
+                          setShowSuggestions(true);
+                        }
+                      }}
+                      onBlur={() => {
+                        setTimeout(() => setIsInputFocused(false), 150);
+                      }}
+                      autoComplete="off"
+                    />
 
-                {query && (
-                  <button
-                    type="button"
-                    className="search-clear-google"
-                    onClick={clearSearch}
-                    aria-label="Clear search"
-                  >
-                    <FaTimesIcon size={16} />
-                  </button>
-                )}
+                    {query && (
+                      <button
+                        type="button"
+                        className="search-clear-google"
+                        onClick={clearSearch}
+                        aria-label="Clear search"
+                      >
+                        <FaTimesIcon size={16} />
+                      </button>
+                    )}
 
-                {isLoading && !query && (
-                  <div className="position-absolute top-50 end-0 translate-middle-y me-3">
-                    <div className="spinner-border spinner-border-sm text-muted" role="status">
-                      <span className="visually-hidden">Loading...</span>
-                    </div>
-                  </div>
-                )}
-              </form>
+                    {isLoading && !query && (
+                      <div className="position-absolute top-50 end-0 translate-middle-y me-3">
+                        <div className="spinner-border spinner-border-sm text-muted" role="status">
+                          <span className="visually-hidden">Loading...</span>
+                        </div>
+                      </div>
+                    )}
+                </form>
 
               {/* Google Drive Style Suggestions Dropdown */}
-              {((query === "" && isInputFocused && recentSearches.length > 0) || showSuggestions) && (
-                <div
-                  ref={suggestionsRef}
-                  className="suggestions-google"
-                >
+                {((query === "" && isInputFocused && recentSearches.length > 0) || showSuggestions) && (
+                  <div
+                    ref={suggestionsRef}
+                    className="suggestions-google"
+                  >
                   {/* Recent Searches */}
-                  {query === "" && recentSearches.length > 0 && (
-                    <div className="suggestion-section-google">
-                      <div className="suggestion-header-google">
-                        <FaHistory className="me-1" size={10} />
-                        Recent searches
-                      </div>
-                      {recentSearches.map((recent, index) => (
-                        <div
-                          key={`recent-${index}`}
-                          className={`suggestion-item-google ${selectedIndex === index ? 'selected-google' : ''}`}
-                          onClick={() => handleRecentSearchClick(recent)}
-                        >
-                          <FaSearch className="suggestion-icon-google" size={16} />
-                          <div className="suggestion-content-google">
-                            <div className="suggestion-title-google">{recent}</div>
+                      {query === "" && recentSearches.length > 0 && (
+                        <div className="suggestion-section-google">
+                          <div className="suggestion-header-google">
+                            <FaHistory className="me-1" size={10} />
+                            Recent searches
                           </div>
-                        </div>
-                      ))}
-                      {suggestions.length > 0 && <hr className="my-1" />}
-                    </div>
-                  )}
-
-                  {/* Search Suggestions */}
-                  {showSuggestions && suggestions.length > 0 && (
-                    <div className="suggestion-section-google">
-                      {query === "" && recentSearches.length === 0 && (
-                        <div className="suggestion-header-google">
-                          <FaSearch className="me-1" size={10} />
-                          Search results
-                        </div>
-                      )}
-                      {suggestions.map((suggestion, index) => {
-                        const actualIndex = query === "" ? recentSearches.length + index : index;
-                        return (
-                          <div
-                            key={suggestion.id}
-                            className={`suggestion-item-google ${selectedIndex === actualIndex ? 'selected-google' : ''}`}
-                            onClick={() => handleSuggestionClick(suggestion)}
-                          >
-                            <div className="suggestion-icon-google">
-                              {suggestion.icon}
-                            </div>
-                            <div className="suggestion-content-google">
-                              <div className="suggestion-title-google">{suggestion.name}</div>
-                              <div className="suggestion-meta-google">
-                                {suggestion.type} | {suggestion.path}
-                                {suggestion.size && ` | ${formatFileSize(suggestion.size)}`}
+                          {recentSearches.map((recent, index) => (
+                            <div
+                              key={`recent-${index}`}
+                              className={`suggestion-item-google ${selectedIndex === index ? 'selected-google' : ''}`}
+                              onClick={() => handleRecentSearchClick(recent)}
+                            >
+                              <FaSearch className="suggestion-icon-google" size={16} />
+                              <div className="suggestion-content-google">
+                                <div className="suggestion-title-google">{recent}</div>
                               </div>
                             </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                          ))}
+                          {suggestions.length > 0 && <hr className="my-1" />}
+                        </div>
+                      )}
+
+                  {/* Search Suggestions */}
+                      {showSuggestions && suggestions.length > 0 && (
+                        <div className="suggestion-section-google">
+                          {query === "" && recentSearches.length === 0 && (
+                            <div className="suggestion-header-google">
+                              <FaSearch className="me-1" size={10} />
+                              Search results
+                            </div>
+                          )}
+                          {suggestions.map((suggestion, index) => {
+                            const actualIndex = query === "" ? recentSearches.length + index : index;
+                            return (
+                              <div
+                                key={suggestion.id}
+                                className={`suggestion-item-google ${selectedIndex === actualIndex ? 'selected-google' : ''}`}
+                                onClick={() => handleSuggestionClick(suggestion)}
+                              >
+                                <div className="suggestion-icon-google">
+                                  {suggestion.icon}
+                                </div>
+                                <div className="suggestion-content-google">
+                                  <div className="suggestion-title-google">{suggestion.name}</div>
+                                  <div className="suggestion-meta-google">
+                                    {suggestion.type} | {suggestion.path}
+                                    {suggestion.size && ` | ${formatFileSize(suggestion.size)}`}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
 
                   {/* No Results */}
-                  {query && !isLoading && showSuggestions && suggestions.length === 0 && (
-                    <div className="no-results-google">
-                      <FaSearch />
-                      <div>No results found for "{query}"</div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-            <button
-              className={`search-advanced-toggle ${hasActiveAdvancedFilters() ? "active" : ""}`}
-              type="button"
-              onClick={() => setShowAdvancedFilters((prev) => !prev)}
-              title="Advanced search filters"
-            >
-              <FaSlidersH size={14} />
-            </button>
+                      {query && !isLoading && showSuggestions && suggestions.length === 0 && (
+                        <div className="no-results-google">
+                          <FaSearch />
+                          <div>No results found for "{query}"</div>
+                        </div>
+                      )}
+                  </div>
+                )}
+              </div>
+              <button
+                className={`search-advanced-toggle ${hasActiveAdvancedFilters() ? "active" : ""}`}
+                type="button"
+                onClick={() => setShowAdvancedFilters((prev) => !prev)}
+                title="Advanced search filters"
+              >
+                <FaSlidersH size={14} />
+              </button>
             </div>
             {showAdvancedFilters && advancedFilterPanel}
           </div>

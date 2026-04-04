@@ -91,6 +91,7 @@
   font-size: clamp(1.34rem, 1.4vw + 1rem, 2.05rem);
   line-height: 1.1;
   letter-spacing: -0.025em;
+  color: var(--text-strong);
 }
 
 .copc-dashboard-gh .copc-glass-subtitle {
@@ -228,6 +229,7 @@
   text-align: left;
   padding: 0.78rem 0.82rem 0.75rem;
   transition: transform 0.16s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  color: var(--text-strong);
 }
 
 .copc-dashboard-gh .copc-step-card:hover {
@@ -292,6 +294,7 @@
   font-size: 1.02rem;
   font-weight: 730;
   letter-spacing: -0.015em;
+  color: var(--text-strong);
 }
 
 .copc-dashboard-gh .copc-step-copy {
@@ -374,6 +377,7 @@
   background: color-mix(in srgb, var(--copc-panel) 84%, #ffffff);
   overflow: hidden;
   min-height: 560px;
+  color: var(--text-strong);
 }
 
 .copc-dashboard-gh .copc-gh-content > .container-fluid,
@@ -393,6 +397,7 @@
   border-radius: 16px;
   background: color-mix(in srgb, var(--copc-panel-strong) 78%, #ffffff);
   padding: 0.85rem;
+  color: var(--text-strong);
 }
 
 .copc-dashboard-gh .copc-rail-heading {
@@ -442,6 +447,26 @@
   font-size: 0.83rem;
   line-height: 1.45;
   color: var(--copc-muted);
+}
+
+.copc-dashboard-gh .copc-gh-content .card,
+.copc-dashboard-gh .copc-gh-content .card-body,
+.copc-dashboard-gh .copc-gh-content .card-header,
+.copc-dashboard-gh .copc-gh-content h1,
+.copc-dashboard-gh .copc-gh-content h2,
+.copc-dashboard-gh .copc-gh-content h3,
+.copc-dashboard-gh .copc-gh-content h4,
+.copc-dashboard-gh .copc-gh-content h5,
+.copc-dashboard-gh .copc-gh-content h6 {
+  color: var(--text-strong);
+}
+
+.copc-dashboard-gh .copc-gh-content .card-header.bg-light {
+  color: var(--text-strong) !important;
+}
+
+.copc-dashboard-gh .copc-gh-content .btn.text-start {
+  color: var(--text-strong);
 }
 
 .copc-dashboard-gh .copc-help-inline {

@@ -12,6 +12,9 @@ import {
   FaUndo,
 } from "react-icons/fa";
 import { BACKEND_URL } from "../config";
+import { updateCopcSearchParams } from "../utils/copcSearchParams";
+import { isPdfFile } from "../utils/fileType";
+import UniversalDocViewer from "../components/UniversalDocViewer";
 import "./copc-review-workspace.css";
 
 const statusToneClass = (status) => {
@@ -22,7 +25,8 @@ const statusToneClass = (status) => {
 
 export default function CopcDepartmentReviewPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedProgramId = String(searchParams.get("programId") || "");
   const userId = localStorage.getItem("userId");
   const role = localStorage.getItem("role") || "user";
 
@@ -38,21 +42,24 @@ export default function CopcDepartmentReviewPage() {
   const [query, setQuery] = useState("");
   const [selectedSubmissionId, setSelectedSubmissionId] = useState("");
 
+  const syncProgramQuery = (programId) =>
+    updateCopcSearchParams(searchParams, setSearchParams, { programId });
+
   const loadPrograms = async () => {
     const { data } = await axios.get(`${BACKEND_URL}/copc/programs`, { params: { userId, role } });
     const list = Array.isArray(data) ? data : [];
     setPrograms(list);
-    if (!list.length) {
-      setSelectedProgramId("");
-      return;
+    const selectedExists = selectedProgramId && list.some((item) => String(item._id) === String(selectedProgramId));
+    const requestedExists = requestedProgramId && list.some((item) => String(item._id) === requestedProgramId);
+    let nextProgramId = "";
+    if (requestedExists) nextProgramId = requestedProgramId;
+    else if (selectedExists) nextProgramId = String(selectedProgramId);
+    else if (list.length > 0) nextProgramId = String(list[0]._id);
+
+    setSelectedProgramId(nextProgramId);
+    if (nextProgramId !== requestedProgramId) {
+      syncProgramQuery(nextProgramId);
     }
-    const queryProgramId = String(searchParams.get("programId") || "");
-    const hasQueryProgram = queryProgramId && list.some((item) => String(item._id) === queryProgramId);
-    setSelectedProgramId((prev) => {
-      if (prev && list.some((item) => String(item._id) === String(prev))) return prev;
-      if (hasQueryProgram) return queryProgramId;
-      return String(list[0]._id);
-    });
   };
 
   const loadSubmissions = async (programId, nextFilter = statusFilter) => {
@@ -87,6 +94,12 @@ export default function CopcDepartmentReviewPage() {
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!requestedProgramId) return;
+    const exists = programs.some((item) => String(item._id) === requestedProgramId);
+    if (exists) setSelectedProgramId(requestedProgramId);
+  }, [requestedProgramId, programs]);
 
   useEffect(() => {
     loadSubmissions(selectedProgramId, statusFilter).catch(() => {
@@ -166,9 +179,14 @@ export default function CopcDepartmentReviewPage() {
   const previewUrl = selectedSubmission
     ? `${BACKEND_URL}/preview/${selectedSubmission.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`
     : "";
+  const fileUrl = selectedSubmission
+    ? `${BACKEND_URL}/view/${selectedSubmission.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`
+    : "";
   const downloadUrl = selectedSubmission
     ? `${BACKEND_URL}/download/${selectedSubmission.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`
     : "";
+  const isPdfPreview = isPdfFile(selectedSubmission);
+  const launchUrl = isPdfPreview ? fileUrl : previewUrl;
   const canAct = selectedSubmission?.programChairStatus === "pending";
 
   return (
@@ -187,7 +205,11 @@ export default function CopcDepartmentReviewPage() {
           <select
             className="form-select copc-review-program-select"
             value={selectedProgramId}
-            onChange={(e) => setSelectedProgramId(e.target.value)}
+            onChange={(e) => {
+              const nextProgramId = e.target.value;
+              setSelectedProgramId(nextProgramId);
+              syncProgramQuery(nextProgramId);
+            }}
           >
             <option value="">Select Program</option>
             {programs.map((program) => (
@@ -304,7 +326,7 @@ export default function CopcDepartmentReviewPage() {
                     <span>{selectedSubmission.originalName}</span>
                   </div>
                   <div className="copc-review-viewer-actions">
-                    <span>100%</span>
+                    <span>{isPdfPreview ? "Doc Viewer" : "Preview"}</span>
                     <a
                       href={downloadUrl}
                       target="_blank"
@@ -314,13 +336,18 @@ export default function CopcDepartmentReviewPage() {
                     >
                       <FaDownload />
                     </a>
-                    <a href={previewUrl} target="_blank" rel="noreferrer" title="Open preview in new tab">
+                    <a href={launchUrl} target="_blank" rel="noreferrer" title="Open preview in new tab">
                       <FaExternalLinkAlt />
                     </a>
                   </div>
                 </div>
-                <div className="copc-review-viewer-frame">
-                  <iframe title={`Preview ${selectedSubmission.originalName}`} src={previewUrl} />
+                <div className="copc-review-viewer-frame is-doc-viewer">
+                  <UniversalDocViewer
+                    file={selectedSubmission}
+                    viewUrl={fileUrl}
+                    previewUrl={previewUrl}
+                    minHeight={620}
+                  />
                 </div>
               </div>
             </section>

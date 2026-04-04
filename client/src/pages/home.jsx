@@ -46,6 +46,7 @@ import VersionModal from "../components/VersionModal.jsx";
 import CommentsModal from "../components/CommentsModal.jsx";
 import { useOutletContext, useNavigate } from "react-router-dom";
 import { BACKEND_URL } from "../config.js";
+import { useUploadManager } from "../context/UploadManagerContext";
 import { isExternalFileDrag, uploadDroppedEntries } from "../utils/dropUpload";
 
 export default function Home() {
@@ -65,7 +66,6 @@ export default function Home() {
   const isQaReviewer = normalizeRole(role) === "qa_admin";
   const isFaculty = normalizeRole(role) === "user";
   const canUploadByRole = ["superadmin", "qa_admin", "dept_chair", "user"].includes(normalizeRole(role));
-  const canDeleteByRole = ["superadmin", "qa_admin"].includes(normalizeRole(role));
   const canCheckTasks = isAdmin || isProgramChair || isQaReviewer;
   const LEGACY_TASK_STATUS_MAP = { not_started: "pending", complete: "approved" };
   const normalizeTaskStatusValue = (value) => {
@@ -131,6 +131,7 @@ export default function Home() {
   const [facultyCompleteness, setFacultyCompleteness] = useState({ percent: 0, requirements: [] });
   const { searchResults } = useOutletContext();
   const navigate = useNavigate();
+  const { startTrackedTask } = useUploadManager();
   const CHECKLIST_PANEL_WIDTH = 360;
   const CHECKLIST_PANEL_TOP = 92;
   const CHECKLIST_PANEL_RIGHT = 18;
@@ -530,6 +531,7 @@ export default function Home() {
 
   const isSharedEditor = (item) => item?.isShared && getItemPermission(item) === "editor";
   const canEditItem = (item) => !item?.isShared || isSharedEditor(item);
+  const canDeleteItem = (item) => !item?.isShared;
   const isSearchMode = Array.isArray(searchResults);
   const canDragItem = (item) => {
     if (isSearchMode) return false;
@@ -602,20 +604,42 @@ export default function Home() {
     setUploadingDroppedItems(true);
     setDropUploadMessage("Preparing dropped files...");
     try {
-      const result = await uploadDroppedEntries({
-        dataTransfer,
-        destinationFolderId,
-        userId,
-        role,
-        onStatus: setDropUploadMessage,
-      });
-      await fetchFolderContents(currentFolder);
-      if (currentFolder) {
-        await fetchFolderTasks(currentFolder);
-      }
-      setDropUploadMessage(
-        `Uploaded ${result.uploadedCount} file${result.uploadedCount === 1 ? "" : "s"} by drag and drop.`
+      startTrackedTask(
+        {
+          name: "Drag and drop upload",
+          detail: destinationFolderId ? "Uploading into the selected folder" : "Uploading into My Drive",
+          statusText: "Preparing dropped files...",
+          successText: "Drag-and-drop upload complete",
+          onSuccess: () => {
+            fetchFolderContents(currentFolder).catch(console.error);
+            if (currentFolder) {
+              fetchFolderTasks(currentFolder).catch(console.error);
+            }
+          },
+        },
+        async (task) => {
+          const result = await uploadDroppedEntries({
+            dataTransfer,
+            destinationFolderId,
+            userId,
+            role,
+            duplicateAction: "keep_both",
+            signal: task.signal,
+            onStatus: (message) => task.setStatusText(message),
+            onProgress: ({ percent, statusText, detail }) => {
+              task.setProgress(percent, { statusText, detail });
+            },
+          });
+          return {
+            result,
+            statusText: `Uploaded ${result.uploadedCount} file${result.uploadedCount === 1 ? "" : "s"}`,
+            detail: result.createdFolders > 0
+              ? `${result.createdFolders} folders created`
+              : "Files uploaded to your drive",
+          };
+        }
       );
+      setDropUploadMessage("");
       return true;
     } catch (err) {
       alert(err?.response?.data?.error || err?.message || "Drag-and-drop upload failed");
@@ -626,6 +650,7 @@ export default function Home() {
       setExternalDropActive(false);
     }
   }, [
+    startTrackedTask,
     canUploadByRole,
     isSearchMode,
     currentFolder,
@@ -931,7 +956,7 @@ export default function Home() {
                 width: "18px",
                 height: "18px",
                 borderRadius: "50%",
-                border: isTaskDone(task) ? "none" : "2px solid #c7c7c7",
+                border: isTaskDone(task) ? "none" : "2px solid var(--border-strong)",
                 background: isTaskDone(task) ? "#45be57" : "transparent",
                 color: "#fff",
                 display: "flex",
@@ -944,7 +969,7 @@ export default function Home() {
             >
               {isTaskDone(task) ? "v" : ""}
             </div>
-            <div className="small" style={{ color: "#555" }}>
+            <div className="small" style={{ color: "var(--text-strong)" }}>
               {task.title}
             </div>
           </div>
@@ -1001,7 +1026,7 @@ export default function Home() {
                       >
                         <FaChevronRight className="mx-2 text-muted" size={12} />
                         <button
-                          className="btn btn-link p-0 text-dark text-decoration-none fw-semibold"
+                          className="btn btn-link p-0 theme-text-strong text-decoration-none fw-semibold"
                           onClick={() => setCurrentFolder(b._id || null)}
                         >
                           {b.name || "Root"}
@@ -1314,7 +1339,7 @@ export default function Home() {
                       )}
                       <a
                         className="btn btn-sm btn-outline-primary file-card-action-btn"
-                        href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}`}
+                        href={`${BACKEND_URL}/preview/${file.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
                         target="_blank"
                         rel="noreferrer"
                         title="Preview"
@@ -1327,7 +1352,7 @@ export default function Home() {
                       </a>
                       <a
                         className="btn btn-sm btn-outline-success file-card-action-btn"
-                        href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
+                        href={`${BACKEND_URL}/download/${file.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
                         title="Download"
                         onClick={(e) => {
                           e.stopPropagation();
@@ -1494,7 +1519,7 @@ export default function Home() {
                               <FaShareAlt />
                             </button>
                           )}
-                          {!folder.isShared && canDeleteByRole && (
+                          {canDeleteItem(folder) && (
                             <button
                               className="btn btn-sm btn-outline-danger"
                               onClick={() => deleteFolder(folder)}
@@ -1606,7 +1631,7 @@ export default function Home() {
                           )}
                           <a
                             className="btn btn-sm btn-outline-primary"
-                            href={`${BACKEND_URL}/preview/${file.filename}?userId=${userId}`}
+                            href={`${BACKEND_URL}/preview/${file.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
                             target="_blank"
                             rel="noreferrer"
                             title="Preview"
@@ -1616,7 +1641,7 @@ export default function Home() {
                           </a>
                           <a
                             className="btn btn-sm btn-outline-success"
-                            href={`${BACKEND_URL}/download/${file.filename}?userId=${userId}`}
+                            href={`${BACKEND_URL}/download/${file.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
                             title="Download"
                             onClick={() => trackAccess(file, "DOWNLOAD")}
                           >
@@ -1676,7 +1701,7 @@ export default function Home() {
                               <FaShareAlt />
                             </button>
                           )}
-                          {!file.isShared && canDeleteByRole && (
+                          {canDeleteItem(file) && (
                             <button
                               className="btn btn-sm btn-outline-danger"
                               onClick={() => deleteFile(file)}
@@ -1764,10 +1789,10 @@ export default function Home() {
                       <FaArrowsAlt />
                     </button>
                   )}
-                  <div className="fw-semibold" style={{ color: "#555" }}>Task Checklist</div>
+                  <div className="fw-semibold" style={{ color: "var(--text-strong)" }}>Task Checklist</div>
                 </div>
                 <div className="d-flex align-items-center gap-2">
-                  <div style={{ fontWeight: 600, color: "#555" }}>{Math.round(taskProgress)}%</div>
+                  <div style={{ fontWeight: 600, color: "var(--text-muted)" }}>{Math.round(taskProgress)}%</div>
                   <button
                     className="btn btn-sm btn-outline-secondary"
                     onClick={() => setIsChecklistCollapsed((v) => !v)}
@@ -1777,7 +1802,7 @@ export default function Home() {
                   </button>
                 </div>
               </div>
-              <div className="progress mt-2" style={{ height: "10px", background: "#d9dce0" }}>
+              <div className="progress mt-2" style={{ height: "10px", background: "var(--bg-soft-2)" }}>
                 <div className="progress-bar" style={{ width: `${Math.max(0, Math.min(100, taskProgress))}%`, background: "#45be57" }} />
               </div>
             </div>
@@ -1929,7 +1954,7 @@ export default function Home() {
                             </button>
                           </>
                         )}
-                        {!contextMenu.item.data.isShared && canDeleteByRole && (
+                        {canDeleteItem(contextMenu.item.data) && (
                           <button
                             className="btn btn-outline-danger d-flex align-items-center"
                             onClick={() => {
@@ -1959,7 +1984,7 @@ export default function Home() {
                         </a>
                         <a
                           className="btn btn-outline-success d-flex align-items-center"
-                          href={`${BACKEND_URL}/download/${contextMenu.item.data.filename}?userId=${userId}`}
+                          href={`${BACKEND_URL}/download/${contextMenu.item.data.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}
                           onClick={() => {
                             trackAccess(contextMenu.item.data, "DOWNLOAD");
                             setContextMenu({ visible: false, item: null });
@@ -2090,7 +2115,7 @@ export default function Home() {
                             </button>
                           </>
                         )}
-                        {!contextMenu.item.data.isShared && canDeleteByRole && (
+                        {canDeleteItem(contextMenu.item.data) && (
                           <button
                             className="btn btn-outline-danger d-flex align-items-center"
                             onClick={() => {

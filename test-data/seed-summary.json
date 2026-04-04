@@ -1,0 +1,218 @@
+{
+  "generatedAt": "2026-03-27T21:13:31.258Z",
+  "baseUrl": "http://localhost:3001",
+  "credentials": {
+    "defaultPassword": "TcFtr#2026",
+    "emails": {
+      "superadmin": "tcftr.superadmin@llcc.edu.ph",
+      "user1": "tcftr.user1@llcc.edu.ph",
+      "user2": "tcftr.user2@llcc.edu.ph",
+      "deptChair": "tcftr.deptchair@llcc.edu.ph",
+      "qaAdmin": "tcftr.qa@llcc.edu.ph",
+      "evaluator": "tcftr.evaluator@llcc.edu.ph"
+    },
+    "otpCodes": {
+      "registrationEmail": "new.test@llcc.edu.ph",
+      "registrationCode": "246810",
+      "passwordResetEmail": "tcftr.user1@llcc.edu.ph",
+      "passwordResetCode": "135790"
+    }
+  },
+  "ids": {
+    "superadminId": "69c268c28bb89dd87dc344f6",
+    "user1Id": "69c268c48bb89dd87dc34503",
+    "user2Id": "69c268c58bb89dd87dc34510",
+    "deptChairId": "69c268c68bb89dd87dc3451d",
+    "qaAdminId": "69c268c78bb89dd87dc3452a",
+    "evaluatorId": "69c268c88bb89dd87dc34537",
+    "rootFolderId": "69c268ca8bb89dd87dc34549",
+    "sharedFolderId": "69c268ca8bb89dd87dc34556",
+    "moveTargetFolderId": "69c268cb8bb89dd87dc34565",
+    "searchableFileId": "69c268e68bb89dd87dc3458e",
+    "docxFileId": "69c268e88bb89dd87dc345a1",
+    "pdfFileId": "69c268ea8bb89dd87dc345b4",
+    "groupId": "69c268f28bb89dd87dc3461b",
+    "adminGroupId": "69c6efd67f42c82748acae5f",
+    "templateId": "69c6ef877f42c82748ac99e2",
+    "generatedTemplateFileId": "69c6f2b07f42c82748ad7d53",
+    "autoReportFileId": "69c6f2b17f42c82748ad7d6d",
+    "copcProgramId": "69c268f58bb89dd87dc3465b",
+    "lockedCopcProgramId": "69c6f08c7f42c82748acd792",
+    "approvedCopcFileId": "69c6f07b7f42c82748acd2ac",
+    "chairRejectedCopcFileId": "69c6f07f7f42c82748acd463",
+    "qaRejectedCopcFileId": "69c6f0837f42c82748acd4a4",
+    "pendingCopcFileId": "69c6f0887f42c82748acd6c6",
+    "lockedApprovedCopcFileId": "69c6f0957f42c82748acdb84",
+    "rootCommentId": "69c268f48bb89dd87dc34647",
+    "replyCommentId": "69c6efd87f42c82748acaed4",
+    "editedCommentId": "69c6f2ae7f42c82748ad7bdb",
+    "mainTaskFolderId": "69c268f68bb89dd87dc34679"
+  },
+  "names": {
+    "rootFolder": "TCFTR Root",
+    "sharedFolder": "TCFTR Shared Target",
+    "moveTargetFolder": "TCFTR Move Target",
+    "collaborationGroup": "TCFTR Collaboration Group",
+    "adminGroup": "TCFTR Admin Group",
+    "copcProgramCode": "TCFTR",
+    "copcProgramName": "TCFTR COPC Program",
+    "lockedCopcProgramCode": "TCFLOCK",
+    "lockedCopcProgramName": "TCFTR Locked COPC Program"
+  },
+  "coverage": {
+    "folders": {
+      "deepArchiveFolderId": "69c6ee8cb25f828d015e62d8",
+      "semesterFolderId": "69c6ee8cb25f828d015e62db",
+      "movedRenamedFolderId": "69c6ee8cb25f828d015e62de",
+      "trashedFolderId": "69c6ee8fb25f828d015e62e1"
+    },
+    "files": {
+      "searchable": "TCFTR-Searchable.txt",
+      "policyPdf": "TCFTR-Policy.pdf",
+      "reportDocx": "TCFTR-Report.docx",
+      "imageJpg": "TCFTR-Image.jpg",
+      "dragFile": "drag-file.txt",
+      "duplicateNames": [
+        "TCFTR-Duplicate-1.txt",
+        "TCFTR-Duplicate-2.txt"
+      ],
+      "sharedEditableId": "69c6eec87f42c82748ac7b62",
+      "renamedArchiveId": "69c6eed67f42c82748ac7d98",
+      "movedFileId": "69c6eece7f42c82748ac7d34",
+      "trashedFileId": "69c6f2a37f42c82748ad776f"
+    },
+    "notifications": {
+      "user2Total": 23,
+      "user2Unread": 18,
+      "recentTypes": [
+        "REVIEW_REQUIRED",
+        "COMMENT",
+        "GROUP_ANNOUNCEMENT",
+        "GROUP_NOTIFICATION",
+        "ACTION_REQUIRED",
+        "PASSWORD_CHANGE_REQUEST",
+        "SHARE_FILE",
+        "COMMENT",
+        "PASSWORD_CHANGE_REQUEST",
+        "UPLOAD"
+      ]
+    },
+    "comments": {
+      "rootComment": "TCFTR root comment seed",
+      "replyComment": "TCFTR reply seed",
+      "editedComment": "TCFTR editable comment seed updated"
+    },
+    "passwordRequests": [
+      {
+        "_id": "69c6efdde2a955ad356f97e5",
+        "userId": "69c268c58bb89dd87dc34510",
+        "status": "pending",
+        "reviewNotes": "TCFTR Seed Pending Request"
+      },
+      {
+        "_id": "69c6efdde2a955ad356f97e8",
+        "userId": "69c268c68bb89dd87dc3451d",
+        "status": "approved",
+        "reviewNotes": "TCFTR Seed Approved Request"
+      },
+      {
+        "_id": "69c6efdee2a955ad356f97ec",
+        "userId": "69c268c78bb89dd87dc3452a",
+        "status": "rejected",
+        "reviewNotes": "TCFTR Seed Rejected Request"
+      }
+    ],
+    "trash": {
+      "files": [
+        {
+          "_id": "69c6f2a37f42c82748ad776f",
+          "originalName": "TCFTR-Trash-File.pdf"
+        },
+        {
+          "_id": "69c6f1647f42c82748ad1be2",
+          "originalName": "TCFTR-Trash-File.pdf"
+        },
+        {
+          "_id": "69c6f10a7f42c82748acf292",
+          "originalName": "TCFTR-Trash-File.pdf"
+        },
+        {
+          "_id": "69c6f0677f42c82748accdd4",
+          "originalName": "TCFTR-Trash-File.pdf"
+        },
+        {
+          "_id": "69c6efd07f42c82748acac46",
+          "originalName": "TCFTR-Trash-File.pdf"
+        },
+        {
+          "_id": "69c6ef007f42c82748ac83f5",
+          "originalName": "TCFTR-Trash-File.pdf"
+        }
+      ],
+      "folders": [
+        {
+          "_id": "69c6ee8fb25f828d015e62e1",
+          "name": "TCFTR Trash Folder"
+        }
+      ]
+    },
+    "forms": {
+      "templateName": "TCFTR Template A",
+      "generatedFileName": "TCFTR Template A_1774645936186.docx",
+      "autoReportName": "TCFTR Compliance Snapshot_1774645936862.pdf"
+    },
+    "copc": {
+      "mainProgram": {
+        "_id": "69c268f58bb89dd87dc3465b",
+        "code": "TCFTR",
+        "name": "TCFTR COPC Program",
+        "stage": "internal_evaluation",
+        "status": "Internal Evaluation"
+      },
+      "lockedProgram": {
+        "_id": "69c6f08c7f42c82748acd792",
+        "code": "TCFLOCK",
+        "name": "TCFTR Locked COPC Program",
+        "stage": "copc_ready",
+        "status": "COPC Ready",
+        "locked": true
+      },
+      "uploadFolderIds": [
+        "69c268f68bb89dd87dc34679",
+        "69c268f58bb89dd87dc3465d",
+        "69c268f88bb89dd87dc346d4",
+        "69c268f68bb89dd87dc3469c"
+      ],
+      "submissions": {
+        "approved": {
+          "_id": "69c6f07b7f42c82748acd2ac",
+          "name": "COT_Area01_Curriculum_Mapping_2026-03-27.pdf",
+          "status": "approved"
+        },
+        "chairRejected": {
+          "_id": "69c6f07f7f42c82748acd463",
+          "name": "COT_Area01_Faculty_Profile_2026-03-27.pdf",
+          "status": "rejected_program_chair"
+        },
+        "qaRejected": {
+          "_id": "69c6f0837f42c82748acd4a4",
+          "name": "COT_Area01_Laboratory_Inventory_2026-03-27.pdf",
+          "status": "rejected_qa"
+        },
+        "pending": {
+          "_id": "69c6f0887f42c82748acd6c6",
+          "name": "COED_Area02_Extension_Program_2026-03-27.pdf",
+          "status": "pending_program_chair"
+        }
+      },
+      "tasks": {
+        "rootTaskProgress": 73.33,
+        "copcTaskProgress": 91.67
+      }
+    },
+    "seedNotes": {
+      "helpFeedback": "The Help & Feedback page in this build is client-side only, so it does not require a database seed record.",
+      "negativeCases": "Validation and unauthorized-access test cases are supported by the seeded roles, ownership, and pending requests above rather than separate negative-only records."
+    }
+  }
+}

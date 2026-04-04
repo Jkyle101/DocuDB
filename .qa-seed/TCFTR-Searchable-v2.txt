@@ -1,0 +1,4 @@
+TCFTR Searchable Seed File
+ALPHA123 searchable content for content-search, editor, and recent activity tests.
+Seeded revision includes workflow checklist updates and document management notes.
+Editor update placeholder line.

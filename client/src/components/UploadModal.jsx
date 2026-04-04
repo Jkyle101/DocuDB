@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import axios from "axios";
 import { createPortal } from "react-dom";
 import { BACKEND_URL } from "../config";
+import { useUploadManager } from "../context/UploadManagerContext";
 import {
   buildCopcFilename,
   buildCopcFilenameFromServerError,
@@ -10,6 +11,35 @@ import {
   renameFileWithName,
 } from "../utils/copcFilename";
 
+const normalizeNameKey = (value = "") => String(value || "").trim().toLowerCase();
+
+const splitFileNameParts = (value = "") => {
+  const raw = String(value || "").trim();
+  const match = raw.match(/^(.*?)(\.[^.]+)?$/);
+  return {
+    basename: match?.[1] || raw || "Untitled",
+    extension: match?.[2] || "",
+  };
+};
+
+const buildKeepBothName = (fileName, existingNames) => {
+  const taken = new Set((existingNames || []).map((name) => normalizeNameKey(name)));
+  const { basename, extension } = splitFileNameParts(fileName);
+  let counter = 1;
+  let candidate = `${basename} (${counter})${extension}`;
+  while (taken.has(normalizeNameKey(candidate))) {
+    counter += 1;
+    candidate = `${basename} (${counter})${extension}`;
+  }
+  return candidate;
+};
+
+const buildSpeedLabel = (loaded, lastLoaded, now, lastTs) => {
+  const deltaBytes = Math.max(0, loaded - (lastLoaded || 0));
+  const deltaMs = Math.max(1, now - (lastTs || now));
+  const speedMBps = (deltaBytes / 1024 / 1024) / (deltaMs / 1000);
+  return `${speedMBps.toFixed(2)} MB/s`;
+};
 
 export default function UploadModal({ onClose, onUploaded, parentFolder, hideDestinationFolder = false }) {
   const [file, setFile] = useState(null);
@@ -35,14 +65,10 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
   const [uploadingFolder, setUploadingFolder] = useState(false);
   const [folderProgressText, setFolderProgressText] = useState("");
   const [uploadingSingle, setUploadingSingle] = useState(false);
-  const [progress, setProgress] = useState({
-    active: false,
-    percent: 0,
-    fileName: "",
-    speedText: "0.00 MB/s",
-    mode: "",
-  });
+  const [duplicatePrompt, setDuplicatePrompt] = useState(null);
+  const [duplicateChoice, setDuplicateChoice] = useState("replace_existing");
   const speedRef = useRef({ lastLoaded: 0, lastTs: 0 });
+  const { startTrackedTask } = useUploadManager();
 
   const isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent || "");
   const isSecureContextForCamera =
@@ -232,47 +258,25 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
     }
   };
 
-  const beginProgress = (fileName, mode = "upload") => {
-    speedRef.current = { lastLoaded: 0, lastTs: Date.now() };
-    setProgress({
-      active: true,
-      percent: 0,
-      fileName: fileName || "Unknown",
-      speedText: "0.00 MB/s",
-      mode,
-    });
-  };
-
-  const updateProgress = (loaded, total, fileName, mode = "upload") => {
-    const now = Date.now();
-    const prev = speedRef.current;
-    const deltaBytes = Math.max(0, loaded - (prev.lastLoaded || 0));
-    const deltaMs = Math.max(1, now - (prev.lastTs || now));
-    const speedMBps = (deltaBytes / 1024 / 1024) / (deltaMs / 1000);
-    speedRef.current = { lastLoaded: loaded, lastTs: now };
-
-    const safeTotal = total && total > 0 ? total : loaded || 1;
-    const percent = Math.min(100, Math.max(0, (loaded / safeTotal) * 100));
-    setProgress((prevState) => ({
-      ...prevState,
-      active: true,
-      mode,
-      fileName: fileName || prevState.fileName,
-      percent,
-      speedText: `${speedMBps.toFixed(2)} MB/s`,
-    }));
-  };
-
-  const endProgress = () => {
-    setProgress((prevState) => ({ ...prevState, active: false, percent: 0, speedText: "0.00 MB/s" }));
-  };
-
-  const createUploadFormData = ({ uploadFile, userId, role, parentId }) => {
+  const createUploadFormData = ({
+    uploadFile,
+    userId,
+    role,
+    parentId,
+    isUpdate = false,
+    fileId = "",
+    changeDescription = "",
+    duplicateAction = "",
+  }) => {
     const formData = new FormData();
     formData.append("file", uploadFile);
     formData.append("userId", userId || "");
     formData.append("role", role || "user");
     if (parentId) formData.append("parentFolder", parentId);
+    if (isUpdate) formData.append("isUpdate", "true");
+    if (fileId) formData.append("fileId", fileId);
+    if (changeDescription) formData.append("changeDescription", changeDescription);
+    if (duplicateAction) formData.append("duplicateAction", duplicateAction);
     return formData;
   };
 
@@ -281,17 +285,27 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
     userId,
     role,
     parentId,
+    isUpdate = false,
+    fileId = "",
+    changeDescription = "",
+    duplicateAction = "",
     onUploadProgress,
+    signal,
   }) => {
     const formData = createUploadFormData({
       uploadFile,
       userId,
       role,
       parentId,
+      isUpdate,
+      fileId,
+      changeDescription,
+      duplicateAction,
     });
     return axios.post(`${BACKEND_URL}/upload`, formData, {
       headers: { "Content-Type": "multipart/form-data" },
       onUploadProgress,
+      signal,
     });
   };
 
@@ -300,7 +314,12 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
     userId,
     role,
     parentId,
+    isUpdate = false,
+    fileId = "",
+    changeDescription = "",
+    duplicateAction = "",
     onUploadProgress,
+    signal,
   }) => {
     const initialFile = isCopcContext ? renameFileForCopc(sourceFile).file : sourceFile;
     try {
@@ -309,7 +328,12 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
         userId,
         role,
         parentId,
+        isUpdate,
+        fileId,
+        changeDescription,
+        duplicateAction,
         onUploadProgress,
+        signal,
       });
     } catch (err) {
       if (!isCopcContext || !isCopcNamingError(err)) throw err;
@@ -323,9 +347,101 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
         userId,
         role,
         parentId,
+        isUpdate,
+        fileId,
+        changeDescription,
+        duplicateAction,
         onUploadProgress,
+        signal,
       });
     }
+  };
+
+  const findExistingFileConflict = async (nextName, folderId) => {
+    const userId = localStorage.getItem("userId");
+    const role = localStorage.getItem("role");
+    const { data } = await axios.get(`${BACKEND_URL}/files`, {
+      params: {
+        userId,
+        role,
+        parentFolder: folderId || "",
+      },
+    });
+    const rows = Array.isArray(data) ? data : [];
+    const nameKey = normalizeNameKey(nextName);
+    const existingFile = rows.find((row) => normalizeNameKey(row?.originalName) === nameKey) || null;
+    return {
+      existingFile,
+      existingNames: rows.map((row) => row?.originalName).filter(Boolean),
+    };
+  };
+
+  const queueSingleUpload = ({
+    sourceFile,
+    duplicateAction = "",
+    existingFile = null,
+  }) => {
+    const userId = localStorage.getItem("userId");
+    const role = localStorage.getItem("role");
+    const preparedFile = isCopcContext ? renameFileForCopc(sourceFile).file : sourceFile;
+    const nextTaskName = preparedFile?.name || sourceFile?.name || "Untitled file";
+    const replacingExisting = duplicateAction === "replace_existing";
+
+    startTrackedTask(
+      {
+        name: nextTaskName,
+        detail: replacingExisting
+          ? `Replacing ${existingFile?.originalName || nextTaskName}`
+          : "Uploading to your selected location",
+        statusText: replacingExisting ? "Replacing existing file..." : "Uploading file...",
+        successText: replacingExisting ? "Uploaded as a new version" : "Upload complete",
+        onSuccess: (result) => {
+          if (typeof onUploaded === "function") {
+            onUploaded(result?.file);
+          }
+        },
+      },
+      async (task) => {
+        speedRef.current = { lastLoaded: 0, lastTs: Date.now() };
+        const { data } = await uploadWithCopcRetry({
+          sourceFile,
+          userId,
+          role,
+          parentId: destinationFolder,
+          isUpdate: replacingExisting,
+          fileId: replacingExisting ? existingFile?._id : "",
+          changeDescription: replacingExisting
+            ? `Replaced existing file ${existingFile?.originalName || nextTaskName} via upload options`
+            : "",
+          duplicateAction,
+          signal: task.signal,
+          onUploadProgress: (evt) => {
+            const loaded = evt.loaded || 0;
+            const total = evt.total || preparedFile?.size || sourceFile?.size || 1;
+            const now = Date.now();
+            const previous = speedRef.current;
+            const percent = Math.min(100, Math.max(0, (loaded / Math.max(total, 1)) * 100));
+            const speedText = buildSpeedLabel(loaded, previous.lastLoaded, now, previous.lastTs);
+            speedRef.current = { lastLoaded: loaded, lastTs: now };
+            task.setProgress(percent, {
+              statusText: replacingExisting ? "Replacing existing file..." : "Uploading file...",
+              detail: `${Math.round(percent)}% • ${speedText}`,
+            });
+          },
+        });
+
+        return {
+          file: data?.file,
+          statusText: replacingExisting ? "Existing file updated with a new version" : "Upload complete",
+          detail:
+            duplicateAction === "keep_both" && data?.naming?.storedName && data.naming.storedName !== sourceFile?.name
+              ? `Saved as ${data.naming.storedName}`
+              : data?.duplicate?.status === "duplicate"
+                ? "Duplicate content detected by the system"
+                : "Ready in your drive",
+        };
+      }
+    );
   };
 
   const submit = async (e) => {
@@ -337,34 +453,31 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
 
     try {
       setUploadingSingle(true);
-      const userId = localStorage.getItem("userId");
-      const role = localStorage.getItem("role");
       const preparedFile = isCopcContext ? renameFileForCopc(file).file : file;
-      beginProgress(preparedFile?.name || file.name, "single");
+      const { existingFile, existingNames } = await findExistingFileConflict(
+        preparedFile?.name || file.name,
+        destinationFolder
+      );
 
-      const { data } = await uploadWithCopcRetry({
-        sourceFile: file,
-        userId,
-        role,
-        parentId: destinationFolder,
-        onUploadProgress: (evt) => {
-          updateProgress(
-            evt.loaded || 0,
-            evt.total || preparedFile?.size || file.size || 1,
-            preparedFile?.name || file.name,
-            "single"
-          );
-        },
-      });
+      if (existingFile) {
+        setDuplicateChoice("replace_existing");
+        setDuplicatePrompt({
+          sourceFile: file,
+          existingFile,
+          preparedName: preparedFile?.name || file.name,
+          keepBothName: buildKeepBothName(preparedFile?.name || file.name, existingNames),
+        });
+        setUploadingSingle(false);
+        return;
+      }
 
-      if (onUploaded) onUploaded(data.file);
+      queueSingleUpload({ sourceFile: file });
+      setUploadingSingle(false);
       onClose();
     } catch (err) {
       console.error("Upload failed:", err);
-      alert(err?.response?.data?.error || "Upload failed. Please check backend logs.");
-    } finally {
       setUploadingSingle(false);
-      endProgress();
+      alert(err?.response?.data?.error || "Upload failed. Please check backend logs.");
     }
   };
 
@@ -441,84 +554,106 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
 
     try {
       setUploadingFolder(true);
-      setFolderProgressText("Preparing folder structure...");
-      const totalBytes = folderItems.reduce((sum, item) => sum + (item.file?.size || 0), 0);
-      let completedBytes = 0;
-
-      const folderMap = new Map();
-      folderMap.set("", destinationFolder || null);
-
-      const folderPaths = new Set();
-      for (const item of folderItems) {
-        const parts = normalizeRelativePath(item.relativePath).split("/");
-        if (parts.length <= 1) continue;
-        let acc = "";
-        for (let i = 0; i < parts.length - 1; i += 1) {
-          acc = acc ? `${acc}/${parts[i]}` : parts[i];
-          folderPaths.add(acc);
-        }
-      }
-
-      const sortedFolderPaths = Array.from(folderPaths).sort(
-        (a, b) => a.split("/").length - b.split("/").length
-      );
-
-      for (const folderPath of sortedFolderPaths) {
-        const segments = folderPath.split("/");
-        const name = segments[segments.length - 1];
-        const parentPath = segments.slice(0, -1).join("/");
-        const parentId = folderMap.get(parentPath) || null;
-
-        setFolderProgressText(`Creating folder: ${folderPath}`);
-        const { data } = await axios.post(`${BACKEND_URL}/folders`, {
-          name,
-          owner: userId,
-          parentFolder: parentId,
-        });
-        folderMap.set(folderPath, data?.folder?._id || null);
-      }
-
-      let completed = 0;
-      for (const item of folderItems) {
-        const relative = normalizeRelativePath(item.relativePath);
-        const folderPath = relative.includes("/")
-          ? relative.split("/").slice(0, -1).join("/")
-          : "";
-        const parentId = folderMap.get(folderPath) || destinationFolder || null;
-        const preparedFile = isCopcContext ? renameFileForCopc(item.file).file : item.file;
-        beginProgress(relative, "folder");
-
-        await uploadWithCopcRetry({
-          sourceFile: item.file,
-          userId,
-          role: role || "user",
-          parentId,
-          onUploadProgress: (evt) => {
-            const loadedCurrent = evt.loaded || 0;
-            updateProgress(
-              completedBytes + loadedCurrent,
-              totalBytes || completedBytes + (preparedFile?.size || item.file?.size || 1),
-              preparedFile?.name || relative,
-              "folder"
-            );
+      const itemsSnapshot = [...folderItems];
+      const destinationSnapshot = destinationFolder || null;
+      startTrackedTask(
+        {
+          name: `Folder upload (${itemsSnapshot.length} files)`,
+          detail: "Preparing folder structure",
+          statusText: "Preparing folder upload...",
+          successText: "Folder upload complete",
+          onSuccess: () => {
+            if (typeof onUploaded === "function") {
+              onUploaded();
+            }
           },
-        });
+        },
+        async (task) => {
+          const totalBytes = itemsSnapshot.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+          let completedBytes = 0;
+          const folderMap = new Map();
+          folderMap.set("", destinationSnapshot);
 
-        completed += 1;
-        completedBytes += item.file?.size || 0;
-        setFolderProgressText(`Uploading files: ${completed}/${folderItems.length}`);
-      }
+          const folderPaths = new Set();
+          for (const item of itemsSnapshot) {
+            const parts = normalizeRelativePath(item.relativePath).split("/");
+            if (parts.length <= 1) continue;
+            let acc = "";
+            for (let i = 0; i < parts.length - 1; i += 1) {
+              acc = acc ? `${acc}/${parts[i]}` : parts[i];
+              folderPaths.add(acc);
+            }
+          }
 
+          const sortedFolderPaths = Array.from(folderPaths).sort(
+            (a, b) => a.split("/").length - b.split("/").length
+          );
+
+          for (const folderPath of sortedFolderPaths) {
+            task.setStatusText("Creating folders...");
+            task.setDetail(folderPath);
+            const segments = folderPath.split("/");
+            const name = segments[segments.length - 1];
+            const parentPath = segments.slice(0, -1).join("/");
+            const parentId = folderMap.get(parentPath) || null;
+            const { data } = await axios.post(`${BACKEND_URL}/folders`, {
+              name,
+              owner: userId,
+              parentFolder: parentId,
+            });
+            folderMap.set(folderPath, data?.folder?._id || null);
+          }
+
+          for (let index = 0; index < itemsSnapshot.length; index += 1) {
+            const item = itemsSnapshot[index];
+            const relative = normalizeRelativePath(item.relativePath);
+            const folderPath = relative.includes("/")
+              ? relative.split("/").slice(0, -1).join("/")
+              : "";
+            const parentId = folderMap.get(folderPath) || destinationSnapshot || null;
+            const preparedFile = isCopcContext ? renameFileForCopc(item.file).file : item.file;
+            speedRef.current = { lastLoaded: 0, lastTs: Date.now() };
+
+            await uploadWithCopcRetry({
+              sourceFile: item.file,
+              userId,
+              role: role || "user",
+              parentId,
+              duplicateAction: "keep_both",
+              signal: task.signal,
+              onUploadProgress: (evt) => {
+                const loadedCurrent = evt.loaded || 0;
+                const total = totalBytes || completedBytes + (preparedFile?.size || item.file?.size || 1);
+                const aggregateLoaded = completedBytes + loadedCurrent;
+                const now = Date.now();
+                const previous = speedRef.current;
+                const percent = Math.min(100, Math.max(0, (aggregateLoaded / Math.max(total, 1)) * 100));
+                const speedText = buildSpeedLabel(loadedCurrent, previous.lastLoaded, now, previous.lastTs);
+                speedRef.current = { lastLoaded: loadedCurrent, lastTs: now };
+                task.setProgress(percent, {
+                  statusText: `Uploading ${index + 1}/${itemsSnapshot.length}`,
+                  detail: `${relative} • ${speedText}`,
+                });
+              },
+            });
+
+            completedBytes += item.file?.size || 0;
+          }
+
+          return {
+            statusText: "Folder upload complete",
+            detail: `${itemsSnapshot.length} files uploaded`,
+          };
+        }
+      );
       setFolderItems([]);
-      if (onUploaded) onUploaded();
+      setFolderProgressText("");
+      setUploadingFolder(false);
       onClose();
     } catch (err) {
       console.error("Folder upload failed:", err);
-      alert(err?.response?.data?.error || "Folder upload failed. Please check logs and try again.");
-    } finally {
       setUploadingFolder(false);
-      setFolderProgressText("");
-      endProgress();
+      alert(err?.response?.data?.error || "Folder upload failed. Please check logs and try again.");
     }
   };
 
@@ -607,31 +742,16 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
   }, []);
 
   const modalMarkup = (
-    <div className="modal d-block app-modal-overlay" tabIndex="-1" role="dialog" aria-modal="true">
-      <div className="modal-dialog modal-dialog-centered">
-        <div className="modal-content">
-          <div className="modal-header">
-            <h5 className="modal-title">Upload File or Folder</h5>
-            <button type="button" className="btn-close" onClick={onClose}></button>
-          </div>
-          <form onSubmit={submit}>
-            <div className="modal-body">
-              {progress.active && (
-                <div className="alert alert-primary py-2 mb-3">
-                  <div className="d-flex justify-content-between align-items-center mb-1">
-                    <strong>Uploading: {Math.round(progress.percent)}%</strong>
-                    <small>{progress.mode === "folder" ? "Folder Upload" : "File Upload"}</small>
-                  </div>
-                  <div className="progress" role="progressbar" aria-valuenow={progress.percent} aria-valuemin="0" aria-valuemax="100">
-                    <div className="progress-bar progress-bar-striped progress-bar-animated" style={{ width: `${progress.percent}%` }} />
-                  </div>
-                  <div className="small mt-2">
-                    <div>File: <strong>{progress.fileName}</strong></div>
-                    <div>Speed: {progress.speedText}</div>
-                  </div>
-                </div>
-              )}
-
+    <>
+      <div className="modal d-block app-modal-overlay" tabIndex="-1" role="dialog" aria-modal="true">
+        <div className="modal-dialog modal-dialog-centered app-modal-dialog app-modal-dialog--wide">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h5 className="modal-title">Upload File or Folder</h5>
+              <button type="button" className="btn-close" onClick={onClose}></button>
+            </div>
+            <form onSubmit={submit}>
+              <div className="modal-body">
               <div className="d-flex gap-2 flex-wrap mb-3">
                 <button
                   type="button"
@@ -931,19 +1051,96 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
                   </div>
                 </div>
               )}
-            </div>
-            <div className="modal-footer">
-              <button type="button" className="btn btn-light" onClick={onClose} disabled={uploadingFolder || uploadingSingle}>
-                Cancel
-              </button>
-              <button type="submit" className="btn btn-success" disabled={uploadingFolder || uploadingSingle}>
-                Upload
-              </button>
-            </div>
-          </form>
+              </div>
+              <div className="modal-footer">
+                <button type="button" className="btn btn-light" onClick={onClose} disabled={uploadingFolder || uploadingSingle}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-success" disabled={uploadingFolder || uploadingSingle}>
+                  Upload
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
       </div>
-    </div>
+      {duplicatePrompt && (
+        <div className="modal d-block app-modal-overlay" tabIndex="-1" role="dialog" aria-modal="true" style={{ zIndex: 2100 }}>
+          <div className="modal-dialog modal-dialog-centered app-modal-dialog app-modal-dialog--compact">
+            <div className="modal-content">
+              <div className="modal-header">
+                <h5 className="modal-title">Upload Options</h5>
+                <button type="button" className="btn-close" onClick={() => setDuplicatePrompt(null)}></button>
+              </div>
+              <div className="modal-body">
+                <p className="mb-3">
+                  <strong>{duplicatePrompt.preparedName}</strong> already exists in this location.
+                  Do you want to replace the existing file with a new version or keep both files?
+                  Replacing the file keeps version history and existing sharing settings.
+                </p>
+                <div className="vstack gap-3">
+                  <label className="d-flex align-items-start gap-3">
+                    <input
+                      type="radio"
+                      name="duplicateChoice"
+                      className="form-check-input mt-1"
+                      checked={duplicateChoice === "replace_existing"}
+                      onChange={() => setDuplicateChoice("replace_existing")}
+                    />
+                    <span>
+                      <span className="d-block fw-semibold">Replace existing file</span>
+                      <span className="small text-muted">
+                        Upload this as the newest version of {duplicatePrompt.existingFile?.originalName || duplicatePrompt.preparedName}.
+                      </span>
+                    </span>
+                  </label>
+                  <label className="d-flex align-items-start gap-3">
+                    <input
+                      type="radio"
+                      name="duplicateChoice"
+                      className="form-check-input mt-1"
+                      checked={duplicateChoice === "keep_both"}
+                      onChange={() => setDuplicateChoice("keep_both")}
+                    />
+                    <span>
+                      <span className="d-block fw-semibold">Keep both files</span>
+                      <span className="small text-muted">
+                        Save this upload as <strong>{duplicatePrompt.keepBothName}</strong>.
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              </div>
+              <div className="modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-light"
+                  onClick={() => setDuplicatePrompt(null)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    queueSingleUpload({
+                      sourceFile: duplicatePrompt.sourceFile,
+                      duplicateAction: duplicateChoice,
+                      existingFile: duplicatePrompt.existingFile,
+                    });
+                    setDuplicatePrompt(null);
+                    setUploadingSingle(false);
+                    onClose();
+                  }}
+                >
+                  Upload
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 
   if (typeof document !== "undefined") {

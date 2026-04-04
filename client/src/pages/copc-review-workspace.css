@@ -284,9 +284,18 @@
 }
 
 .copc-review-viewer-frame {
+  background: #eef3fa;
+}
+
+.copc-review-viewer-frame.is-pdf,
+.copc-review-viewer-frame.is-doc-viewer {
+  padding: 0.75rem;
+}
+
+.copc-review-viewer-frame.is-iframe {
   height: min(72vh, 980px);
   min-height: 560px;
-  background: #eef3fa;
+  padding: 0;
 }
 
 .copc-review-viewer-frame iframe {

@@ -667,12 +667,6 @@ export default function AdminTasksPage() {
             <FaListUl className="me-2" />
             Workflow Hub
           </div>
-          <div className="task-hub-nav">
-            <button type="button" className="task-hub-nav-item">Dashboard</button>
-            <button type="button" className="task-hub-nav-item">My Tasks</button>
-            <button type="button" className="task-hub-nav-item is-active">Projects</button>
-            <button type="button" className="task-hub-nav-item">Calendar</button>
-          </div>
           <div className="task-hub-meta">
             <span className="badge text-bg-light border">{taskSummary.total} tasks</span>
             <span className="badge text-bg-light border">{Math.round(taskProgress)}% complete</span>

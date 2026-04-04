@@ -32,6 +32,9 @@ import {
   FaCog,
 } from "react-icons/fa";
 import "./editor.css";
+import UniversalDocViewer from "../components/UniversalDocViewer";
+import { isPdfFile } from "../utils/fileType";
+import { exportEditorContentToPdf } from "../utils/editorPdfExport";
 
 function parseCsv(content) {
   return (content || "")
@@ -74,6 +77,7 @@ export default function EditorPage() {
   const [kind, setKind] = useState("text");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [exportingPdf, setExportingPdf] = useState(false);
   const [content, setContent] = useState("");
   const [changeDescription, setChangeDescription] = useState("");
   const [sheetRows, setSheetRows] = useState([[""]]);
@@ -92,6 +96,39 @@ export default function EditorPage() {
     if (!file?.filename) return "";
     return `${BACKEND_URL}/preview/${file.filename}?userId=${userId}&role=${role}`;
   }, [file?.filename, role, userId]);
+
+  const fileUrl = useMemo(() => {
+    if (!file?.filename) return "";
+    return `${BACKEND_URL}/view/${file.filename}?userId=${userId}&role=${role}`;
+  }, [file?.filename, role, userId]);
+
+  const exportUrl = useMemo(() => {
+    if (kind === "pdf" && isPdfFile(file)) return fileUrl;
+    return previewUrl;
+  }, [file, fileUrl, kind, previewUrl]);
+
+  const handleOpenPreview = () => {
+    if (!exportUrl) return;
+    window.open(exportUrl, "_blank");
+  };
+
+  const handleExportPdf = async () => {
+    try {
+      setExportingPdf(true);
+      await exportEditorContentToPdf({
+        kind,
+        fileName: file?.originalName || "document",
+        content,
+        sheetRows,
+        slides,
+      });
+    } catch (err) {
+      console.error("Client PDF export failed:", err);
+      alert("Failed to export PDF");
+    } finally {
+      setExportingPdf(false);
+    }
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -614,7 +651,10 @@ export default function EditorPage() {
                     <button className="btn ribbon-icon-btn" title="Back to Files" onClick={() => navigate(-1)}>
                       <FaFolderOpen />
                     </button>
-                    <button className="btn ribbon-icon-btn" title="Export" onClick={() => window.open(previewUrl, "_blank")} disabled={!previewUrl}>
+                    <button className="btn ribbon-icon-btn" title="Open Preview" onClick={handleOpenPreview} disabled={!exportUrl}>
+                      <FaEye />
+                    </button>
+                    <button className="btn ribbon-icon-btn" title="Export PDF" onClick={handleExportPdf} disabled={exportingPdf || !file}>
                       <FaFileExport />
                     </button>
                   </div>
@@ -717,8 +757,13 @@ export default function EditorPage() {
           {kind === "pdf" && (
             <div className="row g-3">
               <div className="col-lg-6">
-                <div className="border rounded overflow-hidden">
-                  <iframe title="pdf-preview" src={previewUrl} style={{ width: "100%", height: "72vh", border: "none" }} />
+                <div className="border rounded overflow-hidden p-2">
+                  <UniversalDocViewer
+                    file={file}
+                    viewUrl={fileUrl}
+                    previewUrl={previewUrl}
+                    minHeight={560}
+                  />
                 </div>
               </div>
               <div className="col-lg-6">

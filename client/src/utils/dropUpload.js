@@ -103,6 +103,9 @@ export async function uploadDroppedEntries({
   userId,
   role,
   onStatus,
+  onProgress,
+  duplicateAction = "keep_both",
+  signal,
 }) {
   if (!userId) throw new Error("Missing user session.");
 
@@ -149,20 +152,25 @@ export async function uploadDroppedEntries({
 
   let uploadedCount = 0;
   const total = droppedEntries.length;
-  const postDroppedFile = ({ file, parentId }) => {
+  const totalBytes = droppedEntries.reduce((sum, item) => sum + (item.file?.size || 0), 0);
+  let completedBytes = 0;
+  const postDroppedFile = ({ file, parentId, onUploadProgress }) => {
     const formData = new FormData();
     formData.append("file", file);
     formData.append("userId", userId);
     formData.append("role", role || "user");
     if (parentId) formData.append("parentFolder", parentId);
+    if (duplicateAction) formData.append("duplicateAction", duplicateAction);
     return axios.post(`${BACKEND_URL}/upload`, formData, {
       headers: { "Content-Type": "multipart/form-data" },
+      onUploadProgress,
+      signal,
     });
   };
 
-  const uploadDroppedFileWithCopcRetry = async ({ file, parentId }) => {
+  const uploadDroppedFileWithCopcRetry = async ({ file, parentId, onUploadProgress }) => {
     try {
-      return await postDroppedFile({ file, parentId });
+      return await postDroppedFile({ file, parentId, onUploadProgress });
     } catch (err) {
       if (!isCopcNamingError(err)) throw err;
       const retryName = buildCopcFilenameFromServerError(
@@ -170,11 +178,12 @@ export async function uploadDroppedEntries({
         file?.name
       );
       const retryFile = renameFileWithName(file, retryName);
-      return postDroppedFile({ file: retryFile, parentId });
+      return postDroppedFile({ file: retryFile, parentId, onUploadProgress });
     }
   };
 
   for (let i = 0; i < droppedEntries.length; i += 1) {
+    if (signal?.aborted) throw new Error("Upload canceled");
     const item = droppedEntries[i];
     const relative = normalizeRelativePath(item.relativePath);
     const folderPath = relative.includes("/") ? relative.split("/").slice(0, -1).join("/") : "";
@@ -184,8 +193,32 @@ export async function uploadDroppedEntries({
       onStatus(`Uploading ${i + 1}/${total}: ${relative}`);
     }
 
-    await uploadDroppedFileWithCopcRetry({ file: item.file, parentId });
+    await uploadDroppedFileWithCopcRetry({
+      file: item.file,
+      parentId,
+      onUploadProgress: (evt) => {
+        if (typeof onProgress !== "function") return;
+        const loadedCurrent = evt.loaded || 0;
+        const denominator = totalBytes || completedBytes + (item.file?.size || 1);
+        onProgress({
+          percent: ((completedBytes + loadedCurrent) / Math.max(denominator, 1)) * 100,
+          statusText: `Uploading ${i + 1}/${total}`,
+          detail: relative,
+        });
+      },
+    });
     uploadedCount += 1;
+    completedBytes += item.file?.size || 0;
+    if (typeof onProgress === "function") {
+      const percent = totalBytes > 0
+        ? (completedBytes / totalBytes) * 100
+        : (uploadedCount / Math.max(total, 1)) * 100;
+      onProgress({
+        percent,
+        statusText: `Uploading ${uploadedCount}/${total}`,
+        detail: relative,
+      });
+    }
   }
 
   if (typeof onStatus === "function") {

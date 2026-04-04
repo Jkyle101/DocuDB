@@ -45,7 +45,7 @@ export default function AdminHome() {
   // âœ… Fetch folders + files + breadcrumbs
   const fetchFolderContents = useCallback(async (folderId) => {
     try {
-      const params = { role, parentFolder: folderId || "" };
+      const params = { userId, role, parentFolder: folderId || "" };
 
       const [fdrRes, filRes, bcRes] = await Promise.all([
         axios.get(`${BACKEND_URL}/folders`, { params }),
@@ -59,7 +59,7 @@ export default function AdminHome() {
     } catch (err) {
       console.error("Error fetching admin contents:", err);
     }
-  }, [role]);
+  }, [role, userId]);
 
   useEffect(() => {
     fetchFolderContents(currentFolderId);
@@ -305,7 +305,7 @@ export default function AdminHome() {
                 <span key={b._id || "root"} className="d-flex align-items-center">
                   <FaChevronRight className="mx-2 text-muted" size={12} />
                   <button
-                    className="btn btn-link p-0 text-dark text-decoration-none"
+                    className="btn btn-link p-0 theme-text-strong text-decoration-none"
                     onClick={() => setCurrentFolderId(b._id || null)}
                   >
                     {b.name || "Root"}
@@ -407,7 +407,7 @@ export default function AdminHome() {
                 <div className="btn-group w-100">
                   <a
                     className="btn btn-sm btn-outline-primary"
-                    href={`${BACKEND_URL}/preview/${file.filename}?role=${role}`}
+                    href={`${BACKEND_URL}/preview/${file.filename}?role=${encodeURIComponent(role || "")}&userId=${encodeURIComponent(userId || "")}`}
                     target="_blank"
                     rel="noreferrer"
                   >
@@ -415,7 +415,7 @@ export default function AdminHome() {
                   </a>
                   <a
                     className="btn btn-sm btn-outline-success"
-                    href={`${BACKEND_URL}/download/${file.filename}?role=${role}`}
+                    href={`${BACKEND_URL}/download/${file.filename}?role=${encodeURIComponent(role || "")}&userId=${encodeURIComponent(userId || "")}`}
                   >
                     <FaCloudDownloadAlt />
                   </a>
@@ -501,7 +501,7 @@ export default function AdminHome() {
                     <div className="btn-group">
                       <a
                         className="btn btn-sm btn-outline-primary"
-                        href={`${BACKEND_URL}/preview/${file.filename}?role=${role}`}
+                        href={`${BACKEND_URL}/preview/${file.filename}?role=${encodeURIComponent(role || "")}&userId=${encodeURIComponent(userId || "")}`}
                         target="_blank"
                         rel="noreferrer"
                       >
@@ -509,7 +509,7 @@ export default function AdminHome() {
                       </a>
                       <a
                         className="btn btn-sm btn-outline-success"
-                        href={`${BACKEND_URL}/download/${file.filename}?role=${role}`}
+                        href={`${BACKEND_URL}/download/${file.filename}?role=${encodeURIComponent(role || "")}&userId=${encodeURIComponent(userId || "")}`}
                       >
                         <FaCloudDownloadAlt />
                       </a>

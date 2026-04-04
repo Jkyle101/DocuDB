@@ -3,6 +3,7 @@ import axios from "axios";
 import { FaCheckCircle, FaClock, FaFolderOpen, FaTasks } from "react-icons/fa";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { BACKEND_URL } from "../config";
+import { updateCopcSearchParams } from "../utils/copcSearchParams";
 import "./task-management.css";
 
 const STATUS_META = {
@@ -69,7 +70,7 @@ const programLabel = (program) => {
 
 export default function CopcAssignedTasksPage() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const requestedProgramId = String(searchParams.get("programId") || "");
   const userId = localStorage.getItem("userId");
   const role = localStorage.getItem("role") || "user";
@@ -82,6 +83,9 @@ export default function CopcAssignedTasksPage() {
   const [loadingPrograms, setLoadingPrograms] = useState(false);
   const [loadingTasks, setLoadingTasks] = useState(false);
   const [taskQuery, setTaskQuery] = useState("");
+
+  const syncProgramQuery = (programId) =>
+    updateCopcSearchParams(searchParams, setSearchParams, { programId });
 
   const loadPrograms = async () => {
     setLoadingPrograms(true);
@@ -96,12 +100,14 @@ export default function CopcAssignedTasksPage() {
         requestedProgramId && list.some((program) => String(program._id) === requestedProgramId);
       const selectedExists =
         selectedProgramId && list.some((program) => String(program._id) === String(selectedProgramId));
-      if (requestedExists) {
-        setSelectedProgramId(requestedProgramId);
-        return;
-      }
-      if (!selectedExists) {
-        setSelectedProgramId(list.length > 0 ? String(list[0]._id) : "");
+      let nextProgramId = "";
+      if (requestedExists) nextProgramId = requestedProgramId;
+      else if (selectedExists) nextProgramId = String(selectedProgramId);
+      else if (list.length > 0) nextProgramId = String(list[0]._id);
+
+      setSelectedProgramId(nextProgramId);
+      if (nextProgramId !== requestedProgramId) {
+        syncProgramQuery(nextProgramId);
       }
     } finally {
       setLoadingPrograms(false);
@@ -254,7 +260,11 @@ export default function CopcAssignedTasksPage() {
               <select
                 className="form-select"
                 value={selectedProgramId}
-                onChange={(event) => setSelectedProgramId(event.target.value)}
+                onChange={(event) => {
+                  const nextProgramId = event.target.value;
+                  setSelectedProgramId(nextProgramId);
+                  syncProgramQuery(nextProgramId);
+                }}
                 disabled={loadingPrograms}
               >
                 <option value="">{loadingPrograms ? "Loading programs..." : "Select Program"}</option>

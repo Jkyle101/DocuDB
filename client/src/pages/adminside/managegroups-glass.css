@@ -178,6 +178,35 @@
   min-height: 252px;
 }
 
+.group-management-dashboard .gm-chart-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.42rem;
+  margin-top: 0.72rem;
+}
+
+.group-management-dashboard .gm-chart-chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
+  padding: 0.24rem 0.58rem;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--glass-stroke, rgba(148, 163, 184, 0.34)) 82%, #ffffff);
+  background: color-mix(in srgb, var(--glass-bg-soft, rgba(248, 252, 255, 0.52)) 80%, #ffffff);
+  color: #537194;
+  font-size: 0.74rem;
+  font-weight: 700;
+}
+
+.group-management-dashboard .gm-chart-chip.is-accent {
+  color: #0a66ff;
+  background: color-mix(in srgb, #0a66ff 10%, #ffffff);
+}
+
+.group-management-dashboard .gm-chart-chip.is-muted {
+  color: #6b7f99;
+}
+
 .group-management-dashboard .gm-growth-card {
   padding: 1.05rem;
   background: linear-gradient(158deg, #0a66ff 0%, #1e4bc8 100%);
@@ -598,6 +627,10 @@
   margin: 0.2rem 0 0.6rem;
 }
 
+.group-management-dashboard .gm-mini-chart-block {
+  margin-bottom: 0.6rem;
+}
+
 .group-management-dashboard .gm-top-groups {
   border-top: 1px solid color-mix(in srgb, var(--glass-stroke, rgba(148, 163, 184, 0.34)) 80%, #ffffff);
   padding-top: 0.6rem;
@@ -833,6 +866,17 @@ body.dark-mode .group-management-dashboard .gm-growth-card {
 
 body.dark-mode .group-management-dashboard .gm-icon-btn {
   border-color: rgba(173, 206, 255, 0.45);
+}
+
+body.dark-mode .group-management-dashboard .gm-chart-chip {
+  background: rgba(10, 22, 41, 0.58);
+  border-color: rgba(116, 149, 194, 0.3);
+  color: #9eb4d4;
+}
+
+body.dark-mode .group-management-dashboard .gm-chart-chip.is-accent {
+  color: #d9e8fd;
+  background: rgba(47, 125, 255, 0.22);
 }
 
 @media (max-width: 1199.98px) {

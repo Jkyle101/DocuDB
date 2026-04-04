@@ -4,6 +4,7 @@ import { FaCheckCircle, FaCog, FaDownload, FaFolderOpen, FaTimes } from "react-i
 import { createPortal } from "react-dom";
 import { BACKEND_URL } from "../config";
 import { useLocation, useNavigate, useSearchParams } from "react-router-dom";
+import { updateCopcSearchParams } from "../utils/copcSearchParams";
 
 const DEPARTMENT_CODES = ["COED", "COT", "COHTM"];
 
@@ -22,7 +23,7 @@ const toDisplayFolderLabel = (value) =>
 export default function CopcWorkflowPage() {
   const navigate = useNavigate();
   const location = useLocation();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const requestedProgramId = String(searchParams.get("programId") || "");
   const userId = localStorage.getItem("userId");
   const role = localStorage.getItem("role") || "user";
@@ -78,6 +79,9 @@ export default function CopcWorkflowPage() {
   const canOpenUploadWorkspace = !isSuperAdmin && normalizedRole !== "evaluator";
   const canOpenSummaryFolders = normalizedRole !== "evaluator";
 
+  const syncProgramQuery = (programId) =>
+    updateCopcSearchParams(searchParams, setSearchParams, { programId });
+
   const buildWorkflowCards = (workflowData, folderRows = [], programId) => {
     const summaryRows = Array.isArray(workflowData?.summary) ? workflowData.summary : [];
     const summaryById = new Map();
@@ -127,12 +131,14 @@ export default function CopcWorkflowPage() {
     setPrograms(list);
     const requestedExists = requestedProgramId && list.some((item) => String(item._id) === requestedProgramId);
     const selectedExists = selectedProgramId && list.some((item) => String(item._id) === String(selectedProgramId));
-    if (requestedExists) {
-      setSelectedProgramId(requestedProgramId);
-      return;
-    }
-    if (!selectedExists) {
-      setSelectedProgramId(list.length ? String(list[0]._id) : "");
+    let nextProgramId = "";
+    if (requestedExists) nextProgramId = requestedProgramId;
+    else if (selectedExists) nextProgramId = String(selectedProgramId);
+    else if (list.length > 0) nextProgramId = String(list[0]._id);
+
+    setSelectedProgramId(nextProgramId);
+    if (nextProgramId !== requestedProgramId) {
+      syncProgramQuery(nextProgramId);
     }
   };
 
@@ -486,7 +492,11 @@ export default function CopcWorkflowPage() {
             className="form-select"
             style={{ minWidth: "260px", width: "100%", maxWidth: "460px" }}
             value={selectedProgramId}
-            onChange={(e) => setSelectedProgramId(e.target.value)}
+            onChange={(e) => {
+              const nextProgramId = e.target.value;
+              setSelectedProgramId(nextProgramId);
+              syncProgramQuery(nextProgramId);
+            }}
           >
             <option value="">Select Program</option>
             {programs.map((p) => (

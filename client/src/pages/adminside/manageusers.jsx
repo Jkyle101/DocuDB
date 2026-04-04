@@ -5,9 +5,7 @@ import {
   FaSearch, FaFilter, FaUserPlus, FaUpload, FaFileExcel,
   FaUser, FaChartBar, FaCrown, FaCheck, FaSave
 } from "react-icons/fa";
-import {
-  PieChart, Pie, Cell, ResponsiveContainer, Tooltip
-} from "recharts";
+import { BarChart, PieChart } from "@mui/x-charts";
 import "bootstrap/dist/css/bootstrap.min.css";
 import { BACKEND_URL } from "../../config";
 import "./admin-analytics.css";
@@ -24,6 +22,22 @@ const normalizeDepartment = (value) => {
   if (collapsed.includes("COHTM") || collapsed.includes("HOSPITALITY") || collapsed.includes("TOURISM")) return "COHTM";
   if (collapsed.includes("COT") || collapsed.includes("TECHNOLOGY")) return "COT";
   return "";
+};
+
+const formatRoleName = (role) => {
+  const labels = {
+    user: "User",
+    dept_chair: "Dept Chair",
+    qa_admin: "QA Admin",
+    evaluator: "Evaluator",
+    superadmin: "Super Admin",
+  };
+
+  return labels[role] || String(role || "Unknown")
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
 };
 
 export default function ManageUsers() {
@@ -190,7 +204,7 @@ export default function ManageUsers() {
       roles[normalized] = (roles[normalized] || 0) + 1;
     });
     return Object.entries(roles).map(([role, count]) => ({
-      name: role.charAt(0).toUpperCase() + role.slice(1),
+      name: formatRoleName(role),
       value: count,
       color: role === 'superadmin'
         ? '#ffc107'
@@ -198,9 +212,20 @@ export default function ManageUsers() {
             ? '#0d6efd'
             : role === 'qa_admin'
               ? '#198754'
-              : '#17a2b8'
+        : '#17a2b8'
     }));
   }, [users]);
+
+  const rolePieData = useMemo(
+    () => roleChartData.map((entry) => ({
+      id: entry.name,
+      label: entry.name,
+      value: entry.value,
+      color: entry.color,
+    })),
+    [roleChartData]
+  );
+  const totalRoleUsers = rolePieData.reduce((sum, item) => sum + item.value, 0);
 
   const activeRate = userStats.totalUsers
     ? ((userStats.activeUsers || 0) / userStats.totalUsers * 100).toFixed(1)
@@ -468,6 +493,16 @@ export default function ManageUsers() {
       percent: Math.round((count / total) * 100),
     }));
   }, [users]);
+  const leadingRole = roleChartData.length > 0
+    ? roleChartData.reduce((peak, entry) => (entry.value > peak.value ? entry : peak), roleChartData[0])
+    : { name: "No roles", value: 0 };
+  const leadingDepartment = departmentStats.length > 0
+    ? departmentStats.reduce((peak, entry) => (entry.count > peak.count ? entry : peak), departmentStats[0])
+    : { name: "No departments", count: 0 };
+  const roleBreakdownData = useMemo(
+    () => [...roleChartData].sort((a, b) => b.value - a.value),
+    [roleChartData]
+  );
 
   const resetFilters = () => {
     setSearchTerm("");
@@ -673,16 +708,46 @@ export default function ManageUsers() {
                     <small className="text-muted">Current allocation by role.</small>
                   </div>
                   {roleChartData.some((item) => item.value > 0) ? (
-                    <ResponsiveContainer width="100%" height={250}>
-                      <PieChart>
-                        <Pie data={roleChartData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={90}>
-                          {roleChartData.map((entry) => (
-                            <Cell key={entry.name} fill={entry.color} />
+                    <>
+                      <div className="analytics-chart-shell um-donut-shell analytics-pie-stack">
+                        <div className="analytics-pie-shell">
+                          <PieChart
+                            height={228}
+                            hideLegend
+                            margin={{ top: 16, right: 16, bottom: 16, left: 16 }}
+                            series={[{
+                              data: rolePieData,
+                              innerRadius: 60,
+                              outerRadius: 86,
+                              paddingAngle: 2,
+                              cornerRadius: 6,
+                            }]}
+                          />
+                          <div className="analytics-pie-center">
+                            <strong>{totalRoleUsers}</strong>
+                            <span>accounts</span>
+                          </div>
+                        </div>
+                        <div className="analytics-breakdown-list">
+                          {roleBreakdownData.map((role) => (
+                            <div key={role.name} className="analytics-breakdown-row">
+                              <div className="analytics-breakdown-label">
+                                <span className="analytics-breakdown-dot" style={{ background: role.color }}></span>
+                                <span>{role.name}</span>
+                              </div>
+                              <strong>{role.value}</strong>
+                              <small>
+                                {totalRoleUsers > 0 ? `${Math.round((role.value / totalRoleUsers) * 100)}%` : "0%"}
+                              </small>
+                            </div>
                           ))}
-                        </Pie>
-                        <Tooltip />
-                      </PieChart>
-                    </ResponsiveContainer>
+                        </div>
+                      </div>
+                      <div className="um-chart-summary">
+                        <span>Largest role</span>
+                        <strong>{leadingRole.name} ({leadingRole.value})</strong>
+                      </div>
+                    </>
                   ) : (
                     <div className="um-empty-inline">No users yet.</div>
                   )}
@@ -722,6 +787,26 @@ export default function ManageUsers() {
                   <div className="um-card-head">
                     <h6 className="mb-1">Department Coverage</h6>
                     <small className="text-muted">Distribution across departments.</small>
+                  </div>
+                  <div className="analytics-chart-shell analytics-chart-shell--compact">
+                    <BarChart
+                      dataset={departmentStats}
+                      height={205}
+                      margin={{ top: 20, right: 18, bottom: 36, left: 40 }}
+                      grid={{ horizontal: true }}
+                      xAxis={[{ id: "department-coverage", scaleType: "band", dataKey: "name" }]}
+                      series={[{
+                        id: "department-users",
+                        dataKey: "count",
+                        label: "Users",
+                        color: "#0a66ff",
+                        valueFormatter: (value) => `${value ?? 0} users`,
+                      }]}
+                    />
+                  </div>
+                  <div className="um-chart-summary">
+                    <span>Coverage leader</span>
+                    <strong>{leadingDepartment.name} ({leadingDepartment.count})</strong>
                   </div>
                   <div className="um-dept-list">
                     {departmentStats.map((item) => (

@@ -1,0 +1,75 @@
+.universal-doc-viewer {
+  width: 100%;
+  min-width: 0;
+}
+
+.universal-doc-viewer #react-doc-viewer {
+  border: 0;
+  background: transparent;
+}
+
+.universal-doc-viewer-shell {
+  width: 100%;
+  min-height: var(--universal-doc-viewer-min-height, 560px);
+  border: 1px solid color-mix(in srgb, var(--glass-stroke, rgba(148, 163, 184, 0.34)) 80%, #ffffff);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--glass-bg-soft, rgba(248, 252, 255, 0.52)) 84%, #ffffff);
+  overflow: hidden;
+}
+
+.universal-doc-viewer-frame,
+.universal-doc-viewer-media,
+.universal-doc-viewer-audio {
+  width: 100%;
+  min-height: var(--universal-doc-viewer-min-height, 560px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eef3fa;
+}
+
+.universal-doc-viewer-frame iframe,
+.universal-doc-viewer-media img,
+.universal-doc-viewer-media video {
+  width: 100%;
+  height: var(--universal-doc-viewer-min-height, 560px);
+  border: 0;
+  display: block;
+}
+
+.universal-doc-viewer-media img {
+  height: auto;
+  max-height: var(--universal-doc-viewer-min-height, 560px);
+  object-fit: contain;
+}
+
+.universal-doc-viewer-media video {
+  background: #000000;
+  object-fit: contain;
+}
+
+.universal-doc-viewer-audio {
+  padding: 1.5rem;
+}
+
+.universal-doc-viewer-audio audio {
+  width: min(100%, 760px);
+}
+
+body.dark-mode .universal-doc-viewer-shell {
+  background: color-mix(in srgb, var(--glass-bg, rgba(14, 26, 48, 0.58)) 90%, #0b172f);
+}
+
+body.dark-mode .universal-doc-viewer-frame,
+body.dark-mode .universal-doc-viewer-media,
+body.dark-mode .universal-doc-viewer-audio {
+  background: #0d203f;
+}
+
+@media (max-width: 767.98px) {
+  .universal-doc-viewer-frame iframe,
+  .universal-doc-viewer-media video {
+    min-height: 420px;
+    height: var(--universal-doc-viewer-min-height, 420px);
+  }
+}

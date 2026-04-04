@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { FaUser, FaEnvelope, FaSave, FaKey, FaBell, FaShieldAlt, FaPalette, FaCamera, FaTrash, FaEye, FaEyeSlash } from "react-icons/fa";
 import axios from "axios";
-import { BACKEND_URL } from "../config";
+import { BACKEND_URL, buildUploadUrl } from "../config";
 
 const DEPARTMENT_OPTIONS = ["COED", "COT", "COHTM"];
 const PROFILE_PICTURE_EVENT = "profile-picture-updated";
@@ -15,13 +15,6 @@ const normalizeDepartment = (value) => {
   if (collapsed.includes("COHTM") || collapsed.includes("HOSPITALITY") || collapsed.includes("TOURISM")) return "COHTM";
   if (collapsed.includes("COT") || collapsed.includes("TECHNOLOGY")) return "COT";
   return "";
-};
-
-const buildProfilePictureUrl = (filename, version = 0) => {
-  const safeName = String(filename || "").trim();
-  if (!safeName) return "";
-  const query = Number(version) > 0 ? `?v=${Number(version)}` : "";
-  return `${BACKEND_URL}/uploads/${safeName}${query}`;
 };
 
 const dispatchProfilePictureUpdated = (profilePicture, updatedAt = Date.now()) => {
@@ -122,7 +115,6 @@ function Settings() {
     };
     loadProfile();
 
-    // Load preferences from localStorage
     const savedPrefs = localStorage.getItem(`userPreferences_${userId}`);
     if (savedPrefs) {
       try {
@@ -500,7 +492,7 @@ function Settings() {
                             />
                           ) : userData.profilePicture ? (
                             <img
-                              src={buildProfilePictureUrl(userData.profilePicture, profilePictureVersion)}
+                              src={buildUploadUrl(userData.profilePicture, profilePictureVersion)}
                               alt="Current Profile"
                               className="profile-picture-preview"
                             />
@@ -748,6 +740,7 @@ function Settings() {
                       </div>
                     </div>
                   </div>
+
                   <div className="mt-4">
                     <button type="button" className="btn btn-primary" onClick={handlePreferencesUpdate}>
                       <FaSave className="me-2" />

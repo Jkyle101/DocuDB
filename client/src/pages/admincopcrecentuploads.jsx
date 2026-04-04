@@ -1,7 +1,18 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
-import { FaCloudUploadAlt, FaRedoAlt, FaSearch, FaUsers } from "react-icons/fa";
+import {
+  FaCalendarAlt,
+  FaCloudUploadAlt,
+  FaDatabase,
+  FaFileAlt,
+  FaFilter,
+  FaFolderOpen,
+  FaRedoAlt,
+  FaSearch,
+  FaUsers,
+} from "react-icons/fa";
 import { BACKEND_URL } from "../config";
+import "./admincopcrecentuploads.css";
 
 function normalizeRole(value) {
   const raw = String(value || "").toLowerCase();
@@ -18,6 +29,21 @@ function formatDateTime(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "N/A";
   return date.toLocaleString();
+}
+
+function formatRelativeTime(value) {
+  if (!value) return "N/A";
+  const ts = new Date(value).getTime();
+  if (!Number.isFinite(ts)) return "N/A";
+  const diffMs = Date.now() - ts;
+  if (diffMs < 60_000) return "Just now";
+  const minutes = Math.floor(diffMs / 60_000);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  return formatDateTime(value);
 }
 
 function formatBytes(size) {
@@ -47,6 +73,19 @@ function reviewStatusClass(status) {
   if (key === "pending_program_chair" || key === "pending_qa") return "text-bg-warning";
   if (key === "rejected_program_chair" || key === "rejected_qa") return "text-bg-danger";
   return "text-bg-light border";
+}
+
+function formatRole(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "N/A";
+  return raw.replace(/_/g, " ").replace(/\b[a-z]/g, (char) => char.toUpperCase());
+}
+
+function uploaderInitials(name, email) {
+  const source = String(name || "").trim() || String(email || "").trim() || "User";
+  const tokens = source.split(/\s+/).filter(Boolean);
+  if (tokens.length === 1) return tokens[0].slice(0, 2).toUpperCase();
+  return `${tokens[0][0]}${tokens[1][0]}`.toUpperCase();
 }
 
 function buildTopUploaders(rows = []) {
@@ -266,71 +305,97 @@ export default function AdminCopcRecentUploadsPage() {
     };
   }, [uploads, meta.total]);
 
+  const isBusy = loading || refreshing;
+  const coveragePercent = useMemo(() => {
+    if (!stats.totalUploads) return 0;
+    return Math.min(100, Math.round((stats.shownUploads / stats.totalUploads) * 100));
+  }, [stats.shownUploads, stats.totalUploads]);
+
+  const resetFilters = () => {
+    setSelectedProgramId("");
+    setLimit(50);
+    setSearch("");
+  };
+
   if (!canViewActivity) {
     return <div className="alert alert-danger">Only super admin, dept chair, or QA admin can view COPC upload activity.</div>;
   }
 
   return (
-    <div className="container-fluid py-2">
-      <div className="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
-        <div>
-          <h4 className="mb-1">Recent COPC Upload Activity</h4>
-          <div className="small text-muted">
-            Track who uploaded the newest COPC files, when they uploaded, and where files were placed.
+    <div className="container-fluid py-3 copc-recent-ui">
+      <div className="copc-recent-shell">
+        <header className="copc-recent-header">
+          <div>
+            <p className="copc-recent-kicker mb-2">COPC Monitoring</p>
+            <h4 className="copc-recent-title mb-1">Recent COPC Upload Activity</h4>
+            <p className="copc-recent-subtitle mb-0">
+              Real-time visibility into new COPC submissions, uploader activity, and storage placement.
+            </p>
           </div>
-        </div>
-        <button
-          className="btn btn-outline-primary"
-          onClick={() => loadUploads({ silent: false })}
-          disabled={loading || refreshing}
-        >
-          <FaRedoAlt className="me-1" />
-          {refreshing ? "Refreshing..." : "Refresh"}
-        </button>
-      </div>
+          <div className="copc-recent-header-actions">
+            <div className="copc-meta-pill">
+              <FaCalendarAlt />
+              <span>{formatDateTime(meta.generatedAt)}</span>
+            </div>
+            <button
+              className="btn btn-primary copc-refresh-btn"
+              onClick={() => loadUploads({ silent: false })}
+              disabled={isBusy}
+            >
+              <FaRedoAlt className={`me-2 ${isBusy ? "copc-icon-spin" : ""}`} />
+              {refreshing ? "Refreshing..." : "Refresh Data"}
+            </button>
+          </div>
+        </header>
 
-      <div className="row g-3 mb-3">
-        <div className="col-md-3">
-          <div className="card shadow-sm h-100">
-            <div className="card-body py-3">
-              <div className="small text-muted">Uploads Shown</div>
-              <div className="fw-bold fs-4">{stats.shownUploads}</div>
-              <div className="small text-muted">Total matching files: {stats.totalUploads}</div>
+        <section className="copc-stat-grid" aria-label="COPC upload overview">
+          <article className="copc-stat-card">
+            <span className="copc-stat-icon tone-upload">
+              <FaCloudUploadAlt />
+            </span>
+            <div className="copc-stat-label">Uploads Shown</div>
+            <div className="copc-stat-value">{stats.shownUploads.toLocaleString()}</div>
+            <div className="copc-stat-meta">Total matching files: {stats.totalUploads.toLocaleString()}</div>
+          </article>
+          <article className="copc-stat-card">
+            <span className="copc-stat-icon tone-users">
+              <FaUsers />
+            </span>
+            <div className="copc-stat-label">Unique Uploaders</div>
+            <div className="copc-stat-value">{stats.uniqueUploaders.toLocaleString()}</div>
+            <div className="copc-stat-meta">Top uploader list updates by current dataset</div>
+          </article>
+          <article className="copc-stat-card">
+            <span className="copc-stat-icon tone-latest">
+              <FaDatabase />
+            </span>
+            <div className="copc-stat-label">Latest Upload</div>
+            <div className="copc-stat-value">{formatRelativeTime(stats.latestUploadDate)}</div>
+            <div className="copc-stat-meta">{formatDateTime(stats.latestUploadDate)}</div>
+          </article>
+          <article className="copc-stat-card is-accent">
+            <span className="copc-stat-icon tone-generated">
+              <FaCalendarAlt />
+            </span>
+            <div className="copc-stat-label">Dataset Window</div>
+            <div className="copc-stat-value">{coveragePercent}%</div>
+            <div className="copc-stat-meta">
+              {meta.hasMore ? "Additional uploads exist beyond this row limit." : "Viewing all files in this query."}
             </div>
-          </div>
-        </div>
-        <div className="col-md-3">
-          <div className="card shadow-sm h-100">
-            <div className="card-body py-3">
-              <div className="small text-muted">Unique Uploaders</div>
-              <div className="fw-bold fs-4">{stats.uniqueUploaders}</div>
-              <div className="small text-muted">Top list updates with filters</div>
-            </div>
-          </div>
-        </div>
-        <div className="col-md-3">
-          <div className="card shadow-sm h-100">
-            <div className="card-body py-3">
-              <div className="small text-muted">Latest Upload</div>
-              <div className="fw-semibold">{formatDateTime(stats.latestUploadDate)}</div>
-              <div className="small text-muted">Newest file in this result set</div>
-            </div>
-          </div>
-        </div>
-        <div className="col-md-3">
-          <div className="card shadow-sm h-100">
-            <div className="card-body py-3">
-              <div className="small text-muted">Generated</div>
-              <div className="fw-semibold">{formatDateTime(meta.generatedAt)}</div>
-              <div className="small text-muted">{meta.hasMore ? "More files available" : "Showing latest available set"}</div>
-            </div>
-          </div>
-        </div>
-      </div>
+          </article>
+        </section>
 
-      <div className="card shadow-sm mb-3">
-        <div className="card-body">
-          <div className="row g-2">
+        <section className="copc-filter-surface">
+          <div className="copc-filter-head">
+            <div className="copc-filter-title">
+              <FaFilter className="me-2" />
+              Filter Activity
+            </div>
+            <button className="btn btn-link copc-clear-btn" type="button" onClick={resetFilters}>
+              Clear All
+            </button>
+          </div>
+          <div className="row g-2 align-items-end">
             <div className="col-lg-4 col-md-6">
               <label className="form-label small fw-semibold mb-1">Program</label>
               <select
@@ -341,7 +406,8 @@ export default function AdminCopcRecentUploadsPage() {
                 <option value="">All COPC Programs</option>
                 {(programs || []).map((program) => (
                   <option key={program._id} value={program._id}>
-                    {program.programCode || program.name} - {program.programName || "Untitled"}{program.year ? ` (${program.year})` : ""}
+                    {program.programCode || program.name} - {program.programName || "Untitled"}
+                    {program.year ? ` (${program.year})` : ""}
                   </option>
                 ))}
               </select>
@@ -375,104 +441,151 @@ export default function AdminCopcRecentUploadsPage() {
             </div>
           </div>
           {error && <div className="alert alert-danger mt-3 mb-0 py-2">{error}</div>}
-        </div>
-      </div>
+        </section>
 
-      <div className="row g-3">
-        <div className="col-lg-8">
-          <div className="card shadow-sm">
-            <div className="card-header bg-light fw-semibold">
-              <FaCloudUploadAlt className="me-2" />
-              Newest COPC Files ({filteredUploads.length})
-            </div>
-            <div className="card-body p-0">
-              {loading && <div className="p-3 small text-muted">Loading upload activity...</div>}
-              {!loading && filteredUploads.length === 0 && (
-                <div className="p-3 text-muted">No COPC uploads found for this filter.</div>
-              )}
-              {!loading && filteredUploads.length > 0 && (
-                <div className="table-responsive">
-                  <table className="table table-hover align-middle mb-0">
-                    <thead className="table-light">
-                      <tr>
-                        <th>Uploaded At</th>
-                        <th>File</th>
-                        <th>Uploaded By</th>
-                        <th>Program</th>
-                        <th>Folder</th>
-                        <th>Status</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredUploads.map((row) => (
-                        <tr key={row.fileId}>
-                          <td className="small text-nowrap">{formatDateTime(row.uploadDate)}</td>
-                          <td>
-                            <div className="fw-semibold">{row.originalName || "Untitled File"}</div>
-                            <div className="small text-muted">{formatBytes(row.size)}</div>
-                          </td>
-                          <td>
-                            <div className="fw-semibold">{row.uploadedBy?.name || "Unknown User"}</div>
-                            <div className="small text-muted">{row.uploadedBy?.email || "No email available"}</div>
-                            <div className="small text-muted">
-                              {(row.uploadedBy?.role || "N/A").replace(/_/g, " ")}
-                              {row.uploadedBy?.department ? ` | ${row.uploadedBy.department}` : ""}
-                            </div>
-                          </td>
-                          <td>
-                            <div className="fw-semibold">{row.program?.code || "N/A"}</div>
-                            <div className="small text-muted">
-                              {row.program?.name || "Unknown Program"}
-                              {row.program?.year ? ` (${row.program.year})` : ""}
-                            </div>
-                          </td>
-                          <td className="small text-muted">{row.folderPath || "Program Root"}</td>
-                          <td>
-                            <span className={`badge ${reviewStatusClass(row.reviewStatus)}`}>
-                              {reviewStatusLabel(row.reviewStatus)}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+        <div className="row g-3">
+          <div className="col-12 col-xl-8">
+            <section className="card copc-main-panel">
+              <div className="copc-panel-header">
+                <div className="copc-panel-title">
+                  <FaFileAlt className="me-2" />
+                  Newest COPC Files
                 </div>
-              )}
-            </div>
+                <span className="copc-panel-count">{filteredUploads.length} entries</span>
+              </div>
+              <div className="card-body p-0">
+                {loading && <div className="p-3 small text-muted">Loading upload activity...</div>}
+                {!loading && filteredUploads.length === 0 && (
+                  <div className="p-3 text-muted">No COPC uploads found for this filter.</div>
+                )}
+                {!loading && filteredUploads.length > 0 && (
+                  <>
+                    <div className="table-responsive">
+                      <table className="table table-hover align-middle mb-0 copc-recent-table">
+                        <thead className="table-light">
+                          <tr>
+                            <th>Uploaded At</th>
+                            <th>File</th>
+                            <th>Uploaded By</th>
+                            <th>Program</th>
+                            <th>Folder</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredUploads.map((row) => (
+                            <tr key={row.fileId}>
+                              <td className="small text-nowrap">{formatDateTime(row.uploadDate)}</td>
+                              <td>
+                                <div className="fw-semibold">{row.originalName || "Untitled File"}</div>
+                                <div className="small text-muted">{formatBytes(row.size)}</div>
+                              </td>
+                              <td>
+                                <div className="fw-semibold">{row.uploadedBy?.name || "Unknown User"}</div>
+                                <div className="small text-muted">{row.uploadedBy?.email || "No email available"}</div>
+                                <div className="small text-muted">
+                                  {formatRole(row.uploadedBy?.role)}
+                                  {row.uploadedBy?.department ? ` | ${row.uploadedBy.department}` : ""}
+                                </div>
+                              </td>
+                              <td>
+                                <div className="fw-semibold">{row.program?.code || "N/A"}</div>
+                                <div className="small text-muted">
+                                  {row.program?.name || "Unknown Program"}
+                                  {row.program?.year ? ` (${row.program.year})` : ""}
+                                </div>
+                              </td>
+                              <td className="small text-muted">
+                                <span className="copc-folder-chip">
+                                  <FaFolderOpen className="me-1" />
+                                  {row.folderPath || "Program Root"}
+                                </span>
+                              </td>
+                              <td>
+                                <span className={`badge copc-status-badge ${reviewStatusClass(row.reviewStatus)}`}>
+                                  {reviewStatusLabel(row.reviewStatus)}
+                                </span>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="copc-table-footer">
+                      <span>
+                        Showing {filteredUploads.length.toLocaleString()} of {stats.totalUploads.toLocaleString()} uploads
+                      </span>
+                      <span>{meta.hasMore ? "More results available with this filter scope." : "Latest available set loaded."}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </section>
           </div>
-        </div>
 
-        <div className="col-lg-4">
-          <div className="card shadow-sm">
-            <div className="card-header bg-light fw-semibold">
-              <FaUsers className="me-2" />
-              Top Uploaders (Current Set)
-            </div>
-            <div className="card-body">
-              {topUploaders.length === 0 && (
-                <div className="small text-muted">No uploader activity available.</div>
-              )}
-              {topUploaders.length > 0 && (
-                <div className="list-group list-group-flush">
-                  {topUploaders.map((uploader) => (
-                    <div key={`${uploader.id || uploader.email}`} className="list-group-item px-0">
-                      <div className="d-flex justify-content-between align-items-start">
-                        <div>
-                          <div className="fw-semibold">{uploader.name || "Unknown User"}</div>
+          <div className="col-12 col-xl-4">
+            <section className="card copc-side-panel mb-3">
+              <div className="copc-panel-header">
+                <div className="copc-panel-title">
+                  <FaUsers className="me-2" />
+                  Top Uploaders
+                </div>
+                <span className="copc-panel-count">Current Set</span>
+              </div>
+              <div className="card-body">
+                {topUploaders.length === 0 && (
+                  <div className="small text-muted">No uploader activity available.</div>
+                )}
+                {topUploaders.length > 0 && (
+                  <div className="copc-uploader-list">
+                    {topUploaders.map((uploader, index) => (
+                      <div key={`${uploader.id || uploader.email}`} className="copc-uploader-item">
+                        <div className="copc-uploader-avatar">
+                          {uploaderInitials(uploader.name, uploader.email)}
+                        </div>
+                        <div className="copc-uploader-content">
+                          <div className="copc-uploader-head">
+                            <div className="fw-semibold">{uploader.name || "Unknown User"}</div>
+                            <span className="copc-uploader-count">
+                              {uploader.count} {uploader.count > 1 ? "files" : "file"}
+                            </span>
+                          </div>
                           <div className="small text-muted">{uploader.email || "No email available"}</div>
                           <div className="small text-muted">
-                            {(uploader.role || "N/A").replace(/_/g, " ")}
+                            #{index + 1} {formatRole(uploader.role)}
                             {uploader.department ? ` | ${uploader.department}` : ""}
                           </div>
+                          <div className="small text-muted mt-1">Latest: {formatDateTime(uploader.latestUploadDate)}</div>
                         </div>
-                        <span className="badge text-bg-primary">{uploader.count}</span>
                       </div>
-                      <div className="small text-muted mt-1">Latest: {formatDateTime(uploader.latestUploadDate)}</div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
+                )}
+              </div>
+            </section>
+
+            <section className="card copc-side-panel copc-system-panel">
+              <div className="copc-panel-header">
+                <div className="copc-panel-title">System Snapshot</div>
+              </div>
+              <div className="card-body">
+                <div className="copc-health-row">
+                  <span>Status</span>
+                  <strong>{isBusy ? "Syncing" : "Stable"}</strong>
                 </div>
-              )}
-            </div>
+                <div className="copc-health-row">
+                  <span>Coverage</span>
+                  <strong>{coveragePercent}%</strong>
+                </div>
+                <div className="copc-health-row">
+                  <span>Program Scope</span>
+                  <strong>{selectedProgramId ? "Filtered" : "All Programs"}</strong>
+                </div>
+                <div className="copc-health-bar" role="progressbar" aria-valuenow={coveragePercent} aria-valuemin={0} aria-valuemax={100}>
+                  <div className="copc-health-bar-fill" style={{ width: `${coveragePercent}%` }} />
+                </div>
+              </div>
+            </section>
           </div>
         </div>
       </div>

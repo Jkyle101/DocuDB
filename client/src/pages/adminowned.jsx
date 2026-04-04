@@ -33,6 +33,7 @@ import UploadModal from "../components/UploadModal";
 import ShareModal from "../components/ShareModal";
 import RenameModal from "../components/RenameModal";
 import { BACKEND_URL } from "../config";
+import { useUploadManager } from "../context/UploadManagerContext";
 import { isExternalFileDrag, uploadDroppedEntries } from "../utils/dropUpload";
 
 const OBJECT_ID_PATTERN = /^[a-f\d]{24}$/i;
@@ -68,6 +69,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
   const role = localStorage.getItem("role") || "superadmin";
   const userId = localStorage.getItem("userId");
   const userEmail = localStorage.getItem("email");
+  const { startTrackedTask } = useUploadManager();
   const normalizeRole = (value) => {
     const raw = String(value || "").toLowerCase();
     if (raw === "admin") return "superadmin";
@@ -510,7 +512,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
                 width: "18px",
                 height: "18px",
                 borderRadius: "50%",
-                border: isTaskDone(task) ? "none" : "2px solid #c7c7c7",
+                border: isTaskDone(task) ? "none" : "2px solid var(--border-strong)",
                 background: isTaskDone(task) ? "#45be57" : "transparent",
                 color: "#fff",
                 display: "flex",
@@ -523,7 +525,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
             >
               {isTaskDone(task) ? "v" : ""}
             </div>
-            <div className="small" style={{ color: "#555" }}>{task.title}</div>
+            <div className="small" style={{ color: "var(--text-strong)" }}>{task.title}</div>
           </div>
           {(task.children || []).length > 0 && <div className="ms-3 mt-1">{renderRequiredTaskList(task.children)}</div>}
         </li>
@@ -676,17 +678,39 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
     setUploadingDroppedItems(true);
     setDropUploadMessage("Preparing dropped files...");
     try {
-      const result = await uploadDroppedEntries({
-        dataTransfer,
-        destinationFolderId,
-        userId,
-        role,
-        onStatus: setDropUploadMessage,
-      });
-      await fetchContents(currentFolderId);
-      setDropUploadMessage(
-        `Uploaded ${result.uploadedCount} file${result.uploadedCount === 1 ? "" : "s"} by drag and drop.`
+      startTrackedTask(
+        {
+          name: "Admin drag-and-drop upload",
+          detail: destinationFolderId ? "Uploading into the selected admin folder" : "Uploading into admin root",
+          statusText: "Preparing dropped files...",
+          successText: "Drag-and-drop upload complete",
+          onSuccess: () => {
+            fetchContents(currentFolderId).catch(() => {});
+          },
+        },
+        async (task) => {
+          const result = await uploadDroppedEntries({
+            dataTransfer,
+            destinationFolderId,
+            userId,
+            role,
+            duplicateAction: "keep_both",
+            signal: task.signal,
+            onStatus: (message) => task.setStatusText(message),
+            onProgress: ({ percent, statusText, detail }) => {
+              task.setProgress(percent, { statusText, detail });
+            },
+          });
+          return {
+            result,
+            statusText: `Uploaded ${result.uploadedCount} file${result.uploadedCount === 1 ? "" : "s"}`,
+            detail: result.createdFolders > 0
+              ? `${result.createdFolders} folders created`
+              : "Files uploaded to admin storage",
+          };
+        }
       );
+      setDropUploadMessage("");
       return true;
     } catch (err) {
       alert(err?.response?.data?.error || err?.message || "Drag-and-drop upload failed");
@@ -790,12 +814,12 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
               {isOwnedScope ? "Admin Workspace" : "Admin Drive"}
             </span>
             {(Array.isArray(breadcrumbs) ? breadcrumbs : []).map((b) => (
-              <span key={b._id || "root"} className="d-flex align-items-center">
-                <FaChevronRight className="mx-2 text-muted" size={12} />
-                <button className="btn btn-link p-0 text-dark text-decoration-none" onClick={() => setCurrentFolderId(b._id || null)}>
-                  {b.name || "Root"}
-                </button>
-              </span>
+                <span key={b._id || "root"} className="d-flex align-items-center">
+                  <FaChevronRight className="mx-2 text-muted" size={12} />
+                  <button className="btn btn-link p-0 theme-text-strong text-decoration-none" onClick={() => setCurrentFolderId(b._id || null)}>
+                    {b.name || "Root"}
+                  </button>
+                </span>
             ))}
           </div>
         </div>
@@ -1259,11 +1283,11 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
                     title="Drag checklist"
                     aria-label="Drag checklist"
                     style={{ cursor: isChecklistDragging ? "grabbing" : "grab" }}
-                  >
-                    <FaArrowsAlt />
-                  </button>
-                )}
-                <div className="fw-semibold small" style={{ color: "#555" }}>Task Checklist</div>
+                    >
+                      <FaArrowsAlt />
+                    </button>
+                  )}
+                <div className="fw-semibold small" style={{ color: "var(--text-strong)" }}>Task Checklist</div>
               </div>
               <div className="d-flex align-items-center gap-2">
                 <span className="small text-muted">{checklistStats.completed}/{checklistStats.total}</span>
@@ -1276,7 +1300,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
                 </button>
               </div>
             </div>
-            <div className="progress mt-2" style={{ height: "10px", background: "#d9dce0" }}>
+            <div className="progress mt-2" style={{ height: "10px", background: "var(--bg-soft-2)" }}>
               <div className="progress-bar" style={{ width: `${Math.max(0, Math.min(100, taskProgress))}%`, background: "#45be57" }} />
             </div>
           </div>

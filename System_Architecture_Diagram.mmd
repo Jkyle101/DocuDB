@@ -1,41 +1,76 @@
 flowchart TB
-    user[End Users<br/>Faculty, Dept Chair, QA Admin, Evaluator, Superadmin]
+    endUsers["End Users<br/>User, Dept Chair, QA Admin, Evaluator, Superadmin"]
 
-    subgraph presentation[Presentation Layer]
-        browser[Web Browser]
-        frontend[React + Vite Frontend<br/>Pages, Components, Routing, Charts]
+    subgraph presentation["PRESENTATION LAYER (Client-Side / React.js)"]
+        browser["Web Browser"]
+        router["React Router + Role Guards<br/>Alias Normalization + Route Protection"]
+        userUI["User Workspace (/)<br/>My Drive, Shared/Recent, Groups,<br/>Smart Forms, Editor, COPC Upload,<br/>Notifications, Settings, Help"]
+        roleUI["Role-Specific COPC Views (/)<br/>Dept Chair Review + Task Board,<br/>QA Review + Compliance Tagging,<br/>Evaluator Stage + Package/Report Download"]
+        adminUI["Superadmin Workspace (/admin)<br/>Manage Users, Groups, Admin Files,<br/>Trash, Logs, Admin Search,<br/>COPC Program Lifecycle Control"]
     end
 
-    subgraph app[Application Layer]
-        api[Node.js + Express API<br/>Authentication, File Services, Sharing,<br/>Groups, Workflow, Notifications, Admin]
-        auth[Access Control Logic<br/>Role and Permission Checks]
-        forms[Document Services<br/>Editor, Forms, Reports, Preview]
+    subgraph app["APPLICATION / BUSINESS LAYER (Node.js + Express.js)"]
+        gateway["API Routing Layer (Express)"]
+        middleware["Middleware Pipeline<br/>JWT/Auth Check, RBAC + Assignment Access,<br/>Input Validation, File Upload Parsing,<br/>Error Handling, Soft Delete, Audit Logging"]
+        authSvc["Authentication + OTP Service"]
+        fileSvc["File/Folder Lifecycle Service<br/>Upload, Move, Rename, Trash, Restore, Versioning"]
+        shareSvc["Sharing + Permission Service"]
+        groupSvc["Group Collaboration Service"]
+        formSvc["Smart Forms + Document Editor Service"]
+        copcSvc["COPC Workflow Engine<br/>Init, Assignment, Review, QA, Evaluation,<br/>Compile, Finalize, Lock/Unlock, Archive"]
+        notifSvc["Notification Service<br/>In-App + Email Events"]
+        adminSvc["Admin Governance Service<br/>Users, Groups, Logs, Search, Analytics, Tasks"]
+        searchSvc["Search + Filter Service<br/>Filename, Metadata, Content Indexing"]
     end
 
-    subgraph data[Data Layer]
-        mongo[(MongoDB<br/>Users, Files, Folders, Groups,<br/>Logs, Notifications, Versions)]
-        storage[(Local Upload Storage<br/>Uploaded Files, Previews, Generated Outputs)]
+    subgraph data["DATA LAYER"]
+        mongo["MongoDB Collections<br/>users, files, folders, fileversions, folderversions,<br/>groups, comments, notifications, logs, auditlogs,<br/>formtemplates, passwordrequests, authchallenges"]
+        storage["File Storage (Local/Server)<br/>uploads, generated documents,<br/>compiled COPC packages, previews"]
     end
 
-    subgraph external[External / Infrastructure Layer]
-        smtp[SMTP Email Service]
-        pm2[PM2 Process Manager]
-        nginx[Nginx / Static Hosting<br/>Optional Production Frontend Serving]
+    subgraph infra["EXTERNAL / INFRASTRUCTURE LAYER"]
+        smtp["SMTP Email Service"]
+        pm2["PM2 Process Manager"]
+        nginx["Nginx / Hosting Layer<br/>Frontend static serving + reverse proxy"]
     end
 
-    user --> browser
-    browser --> frontend
-    frontend -->|HTTP / JSON API| api
-    frontend -->|served build assets| nginx
+    endUsers --> browser
+    browser --> router
+    router --> userUI
+    router --> roleUI
+    router --> adminUI
 
-    api --> auth
-    api --> forms
-    api --> mongo
-    api --> storage
-    api --> smtp
-    pm2 --> api
-    nginx --> frontend
+    userUI -->|HTTP / JSON API| gateway
+    roleUI -->|HTTP / JSON API| gateway
+    adminUI -->|HTTP / JSON API| gateway
 
-    forms --> storage
-    forms --> mongo
-    auth --> mongo
+    gateway --> middleware
+    middleware --> authSvc
+    middleware --> fileSvc
+    middleware --> shareSvc
+    middleware --> groupSvc
+    middleware --> formSvc
+    middleware --> copcSvc
+    middleware --> notifSvc
+    middleware --> adminSvc
+    middleware --> searchSvc
+
+    authSvc --> mongo
+    fileSvc --> mongo
+    fileSvc --> storage
+    shareSvc --> mongo
+    groupSvc --> mongo
+    formSvc --> mongo
+    formSvc --> storage
+    copcSvc --> mongo
+    copcSvc --> storage
+    notifSvc --> mongo
+    notifSvc --> smtp
+    adminSvc --> mongo
+    searchSvc --> mongo
+    searchSvc --> storage
+
+    pm2 --> gateway
+    nginx --> browser
+    nginx --> router
+    authSvc --> smtp
