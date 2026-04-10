@@ -16,6 +16,7 @@ import CopcQaReviewPage from "./copcqareview";
 import CopcEvaluationPage from "./copcevaluation";
 import CopcAssignedTasksPage from "./copcassignedtasks";
 import AdminTasksPage from "./admintasks";
+import AdminAllTasksPage from "./adminalltasks";
 import AdminCopcProgramsPage from "./admincopcprograms";
 import { fetchCopcHealthSnapshot } from "../utils/copcHealth";
 import "./admincopcdashboard.css";
@@ -62,6 +63,12 @@ const TAB_CONFIG = {
     icon: FaListUl,
     description: "Create and coordinate folder-level tasks across the COPC workspace.",
     tone: "tasks",
+  },
+  all_tasks: {
+    label: "All Tasks",
+    icon: FaListUl,
+    description: "Review every COPC task across folders, statuses, and assignments.",
+    tone: "alltasks",
   },
   department_review: {
     label: "Department Review",
@@ -112,6 +119,7 @@ export default function UserCopcDashboardPage({ defaultTab = "workflow" }) {
     const canOpenQaReview = ["qa_admin", "superadmin"].includes(userRole);
     const canOpenEvaluation = ["evaluator", "superadmin"].includes(userRole);
     const canOpenTaskManagement = ["dept_chair", "superadmin"].includes(userRole);
+    const canOpenAllTasks = ["dept_chair", "superadmin"].includes(userRole);
     const canOpenProgramManagement = userRole === "superadmin";
 
     return Object.fromEntries(
@@ -119,6 +127,7 @@ export default function UserCopcDashboardPage({ defaultTab = "workflow" }) {
         if (key === "tasks" && isAdminContext) return false;
         if (key === "upload") return canOpenUpload;
         if (key === "task_management") return canOpenTaskManagement;
+        if (key === "all_tasks") return canOpenAllTasks;
         if (key === "department_review") return canOpenDeptReview;
         if (key === "qa_review") return canOpenQaReview;
         if (key === "evaluation") return canOpenEvaluation;
@@ -195,6 +204,7 @@ export default function UserCopcDashboardPage({ defaultTab = "workflow" }) {
       "evaluation",
       "tasks",
       "task_management",
+      "all_tasks",
       "programs",
       "workflow",
     ];
@@ -301,6 +311,7 @@ export default function UserCopcDashboardPage({ defaultTab = "workflow" }) {
               {activeTab === "upload" && <CopcUploadPage />}
               {activeTab === "tasks" && <CopcAssignedTasksPage />}
               {activeTab === "task_management" && <AdminTasksPage />}
+              {activeTab === "all_tasks" && <AdminAllTasksPage />}
               {activeTab === "department_review" && <CopcDepartmentReviewPage />}
               {activeTab === "qa_review" && <CopcQaReviewPage />}
               {activeTab === "evaluation" && <CopcEvaluationPage />}

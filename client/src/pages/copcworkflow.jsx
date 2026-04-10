@@ -95,34 +95,53 @@ export default function CopcWorkflowPage() {
       if (rowLabel) summaryByLabel.set(rowLabel, rowPercent);
     });
 
-    const topFolders = (Array.isArray(folderRows) ? folderRows : [])
-      .filter(
-        (folder) =>
-          !folder?.isProgramRoot &&
-          String(folder?.parentFolder || "") === String(programId || "")
-      )
+    const visibleFolders = (Array.isArray(folderRows) ? folderRows : [])
+      .filter((folder) => !folder?.isProgramRoot)
       .sort((a, b) => String(b?.name || "").localeCompare(String(a?.name || "")));
 
-    if (!topFolders.length) {
-      return summaryRows.map((row) => ({
-        folderId: String(row?.folderId || ""),
-        label: String(row?.label || "Untitled Folder"),
-        percent: Number(row?.percent || 0),
-      }));
+    const topFolders = visibleFolders.filter(
+      (folder) => String(folder?.parentFolder || "") === String(programId || "")
+    );
+
+    if (topFolders.length) {
+      return topFolders.map((folder) => {
+        const folderId = String(folder?._id || "");
+        const folderName = String(folder?.name || "Untitled Folder");
+        const percent = summaryById.has(folderId)
+          ? Number(summaryById.get(folderId) || 0)
+          : Number(summaryByLabel.get(folderName) || 0);
+        return {
+          folderId,
+          label: folderName,
+          percent,
+        };
+      });
     }
 
-    return topFolders.map((folder) => {
-      const folderId = String(folder?._id || "");
-      const folderName = String(folder?.name || "Untitled Folder");
-      const percent = summaryById.has(folderId)
-        ? Number(summaryById.get(folderId) || 0)
-        : Number(summaryByLabel.get(folderName) || 0);
-      return {
-        folderId,
-        label: folderName,
-        percent,
-      };
-    });
+    if (visibleFolders.length) {
+      return visibleFolders.map((folder) => {
+        const folderId = String(folder?._id || "");
+        const folderName = String(folder?.name || "Untitled Folder");
+        const percent = summaryById.has(folderId)
+          ? Number(summaryById.get(folderId) || 0)
+          : Number(summaryByLabel.get(folderName) || 0);
+        return {
+          folderId,
+          label: folderName,
+          percent,
+        };
+      });
+    }
+
+    if (normalizedRole === "user") {
+      return [];
+    }
+
+    return summaryRows.map((row) => ({
+      folderId: String(row?.folderId || ""),
+      label: String(row?.label || "Untitled Folder"),
+      percent: Number(row?.percent || 0),
+    }));
   };
 
   const loadPrograms = async () => {

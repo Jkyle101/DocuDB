@@ -769,6 +769,50 @@ body,
   min-width: 0;
 }
 
+.admin-files-grid {
+  grid-template-columns: repeat(auto-fill, minmax(260px, 320px));
+  justify-content: start;
+}
+
+.admin-files-grid__item {
+  width: 100%;
+  max-width: 320px;
+}
+
+.admin-files-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: space-between;
+  min-height: 220px;
+}
+
+.admin-files-card__body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-width: 0;
+  text-align: center;
+}
+
+.admin-files-card__actions {
+  justify-content: center;
+}
+
+.admin-files-card__actions > .btn,
+.admin-files-card__actions > a {
+  flex: 0 0 auto;
+  width: 2.5rem;
+  height: 2.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
 .workspace-status-table-wrap {
   overflow-x: auto;
 }
@@ -814,6 +858,14 @@ body,
   .workspace-explorer-grid {
     grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
     gap: 1rem;
+  }
+
+  .admin-files-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .admin-files-grid__item {
+    max-width: none;
   }
 }
 

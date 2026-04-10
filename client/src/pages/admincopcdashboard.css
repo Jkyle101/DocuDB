@@ -250,6 +250,10 @@
   --copc-step-accent: #14a078;
 }
 
+.copc-dashboard-gh .copc-step-card.tone-alltasks {
+  --copc-step-accent: #0f766e;
+}
+
 .copc-dashboard-gh .copc-step-card.tone-programs {
   --copc-step-accent: #7c4dff;
 }

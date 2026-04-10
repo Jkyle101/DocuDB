@@ -318,6 +318,16 @@ function AppRoutes() {
         <Route index element={<AdminCopcDashboardPage defaultTab="tasks" />} />
       </Route>
       <Route
+        path="/admin/all-tasks"
+        element={
+          <ProtectedRoute allowedRoles={["superadmin"]}>
+            <Layout role="admin" />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<AdminCopcDashboardPage defaultTab="all_tasks" />} />
+      </Route>
+      <Route
         path="/admin/copc-programs"
         element={
           <ProtectedRoute allowedRoles={["superadmin"]}>

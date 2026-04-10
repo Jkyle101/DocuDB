@@ -7526,6 +7526,73 @@ app.get("/copc/programs/:id/task-reports", async (req, res) => {
       }
     }
 
+    const taskAssigneeIds = Array.from(
+      new Set(
+        allTaskRows
+          .flatMap((row) => collectTaskAssigneeIds(row.task))
+          .map((id) => String(id || "").trim())
+          .filter(Boolean)
+      )
+    );
+    const assigneeUsers = taskAssigneeIds.length
+      ? await UserModel.find({ _id: { $in: taskAssigneeIds } })
+          .select("_id name email role department")
+          .lean()
+      : [];
+    const assigneeMap = new Map(
+      assigneeUsers.map((user) => [String(user?._id || ""), user])
+    );
+
+    const programMeta = {
+      id: String(root?._id || ""),
+      code: String(root?.copc?.programCode || root?.name || ""),
+      name: String(root?.copc?.programName || root?.name || ""),
+      description: String(root?.copc?.description || root?.copc?.departmentName || ""),
+      year: root?.copc?.year || null,
+    };
+
+    const allTasks = allTaskRows.map((row) => {
+      const assignees = collectTaskAssigneeIds(row.task)
+        .map((assigneeId) => {
+          const key = String(assigneeId || "").trim();
+          if (!key) return null;
+          const user = assigneeMap.get(key);
+          return {
+            id: key,
+            name: String(user?.name || "").trim(),
+            email: String(user?.email || "").trim(),
+            role: normalizeRole(user?.role || row?.task?.assignedRole || ""),
+            department: normalizeDepartmentCode(user?.department || "") || "",
+          };
+        })
+        .filter(Boolean);
+
+      return {
+        program: programMeta,
+        taskObjectId: String(row?.task?._id || ""),
+        taskId: row.task.taskId,
+        title: row.task.title,
+        description: row.task.description || "",
+        scope: row.task.scope || "",
+        taskType: row.task.taskType || "general",
+        priority: row.task.priority || "medium",
+        status: row.task.status || "pending",
+        legacyStatus: row.task.legacyStatus || mapTaskStatusToLegacy(row.task.status),
+        percentage: Number(row.task.percentage || 0),
+        dueDate: row.task.dueDate || null,
+        createdAt: row.task.createdAt || null,
+        updatedAt: row.task.updatedAt || null,
+        overdue: isTaskOverdue(row.task),
+        depth: Number(row.depth || 0),
+        folderId: row.folderId,
+        folderName: row.folderName,
+        folderPath: row.folderPath,
+        assignedRole: row.task.assignedRole || "user",
+        source: row.task.source || "manual",
+        assignees,
+      };
+    });
+
     const completion = {
       totalTasks: allTaskRows.length,
       approved: allTaskRows.filter((row) => row.task.status === "approved").length,
@@ -7631,6 +7698,7 @@ app.get("/copc/programs/:id/task-reports", async (req, res) => {
         year: root?.copc?.year || null,
       },
       completionReport: completion,
+      allTasks,
       perCollegeComplianceReport: perFolder,
       missingDocumentsReport: {
         total: missingDocuments.length,
@@ -8025,10 +8093,13 @@ app.get("/admin/copc/recent-uploads", async (req, res) => {
         deletedAt: null,
         "copc.isProgramRoot": true,
       })
-        .select("_id name copc")
+        .select("_id name copc owner folderAssignments")
         .lean();
       if (!selectedRoot) {
         return res.status(404).json({ error: "COPC program root not found" });
+      }
+      if (normalizedActorRole !== "superadmin" && !(await canUserAccessCopcProgram(selectedRoot, userId, actorRole))) {
+        return res.status(403).json({ error: "Not authorized to view upload activity for this COPC program" });
       }
       programRoots = [selectedRoot];
     } else {
@@ -8036,9 +8107,18 @@ app.get("/admin/copc/recent-uploads", async (req, res) => {
         deletedAt: null,
         "copc.isProgramRoot": true,
       })
-        .select("_id name copc")
+        .select("_id name copc owner folderAssignments")
         .lean();
-      programRoots = allRoots;
+      if (normalizedActorRole === "superadmin") {
+        programRoots = allRoots;
+      } else {
+        const visibleRoots = [];
+        for (const root of allRoots) {
+          const canView = await canUserAccessCopcProgram(root, userId, actorRole);
+          if (canView) visibleRoots.push(root);
+        }
+        programRoots = visibleRoots;
+      }
     }
 
     if (!programRoots.length) {
@@ -9082,6 +9162,7 @@ app.get("/copc/programs/:id/assigned-tasks", async (req, res) => {
         if (taskAssignedForRole) assignmentSources.push("task_direct");
 
         assignedTasks.push({
+          taskObjectId: String(normalizedTask._id || ""),
           taskId: String(normalizedTask.taskId || normalizedTask._id || node.taskId || ""),
           title: normalizedTask.title,
           description: normalizedTask.description || "",
@@ -9094,6 +9175,7 @@ app.get("/copc/programs/:id/assigned-tasks", async (req, res) => {
           dueDate: normalizedTask.dueDate || null,
           status: normalizedTask.status || "pending",
           legacyStatus: normalizedTask.legacyStatus || mapTaskStatusToLegacy(normalizedTask.status),
+          assignedRole: normalizedTask.assignedRole || "user",
           percentage: Number(normalizedTask.percentage || 0),
           overdue: isTaskOverdue(normalizedTask),
           depth: Number(node.depth || 0),
@@ -9212,7 +9294,26 @@ app.get("/copc/programs/:id/folders", async (req, res) => {
     }));
 
     if (normalizedActorRole === "user") {
-      rows = rows.filter((row) => row.canUpload && !row.isProgramRoot);
+      const rowMap = new Map(rows.map((row) => [String(row._id), row]));
+      const visibleRowIds = new Set(
+        rows
+          .filter((row) => row.canUpload && !row.isProgramRoot)
+          .map((row) => String(row._id))
+      );
+
+      for (const rowId of Array.from(visibleRowIds)) {
+        let cursor = rowMap.get(String(rowId)) || null;
+        let guard = 0;
+        while (cursor && cursor.parentFolder && guard < 240) {
+          guard += 1;
+          const parentId = String(cursor.parentFolder || "");
+          if (!parentId || parentId === String(root._id)) break;
+          visibleRowIds.add(parentId);
+          cursor = rowMap.get(parentId) || null;
+        }
+      }
+
+      rows = rows.filter((row) => visibleRowIds.has(String(row._id)));
     }
 
     res.json({

@@ -888,7 +888,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
       </div>
 
       {view === "grid" ? (
-        <div className="workspace-explorer-grid">
+        <div className="workspace-explorer-grid admin-files-grid">
           {movingByDrop && (
             <div className="workspace-explorer-grid__full">
               <div className="alert alert-info py-2 mb-0">Moving item...</div>
@@ -897,7 +897,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
           {filteredVisibleFolders.map((folder) => (
             <div
               key={folder._id}
-              className="workspace-explorer-grid__item"
+              className="workspace-explorer-grid__item admin-files-grid__item"
               draggable={canDragItem()}
               onDragStart={(e) => handleDragStart(e, {
                 type: "folder",
@@ -909,7 +909,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
               onContextMenu={(e) => handleContextMenu(e, { type: "folder", data: folder })}
             >
               <div
-                className="card folder-card workspace-explorer-card h-100 text-center p-3 position-relative"
+                className="card folder-card workspace-explorer-card admin-files-card h-100 text-center p-3 position-relative"
                 onDragOver={(e) => handleFolderDragOver(e, folder._id)}
                 onDrop={(e) => handleFolderDrop(e, folder._id)}
                 onDragLeave={() => {
@@ -924,24 +924,47 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
                     className="btn btn-sm btn-light"
                     onClick={(e) => handleContextMenu(e, { type: "folder", data: folder })}
                     title="More actions"
+                    aria-label={`More actions for folder ${folder.name}`}
                   >
                     <FaEllipsisV />
                   </button>
                 </div>
-                <FaFolder size={42} className="text-warning mb-3" />
-                <h6 className="card-title text-truncate">{folder.name}</h6>
-                {folder.isPredefinedRoot && <span className="badge bg-primary">Predefined Folder Tree</span>}
-                <div className="workspace-explorer-actions mt-2">
-                  <button className="btn btn-sm btn-outline-primary" onClick={() => goInto(folder._id)}>
+                <div className="admin-files-card__body">
+                  <FaFolder size={42} className="text-warning mb-3" />
+                  <h6 className="card-title text-truncate w-100" title={folder.name}>{folder.name}</h6>
+                  {folder.isPredefinedRoot && <span className="badge bg-primary">Predefined Folder Tree</span>}
+                </div>
+                <div className="workspace-explorer-actions admin-files-card__actions mt-2">
+                  <button
+                    className="btn btn-sm btn-outline-primary"
+                    onClick={() => goInto(folder._id)}
+                    title="Open folder"
+                    aria-label={`Open folder ${folder.name}`}
+                  >
                     <FaEye />
                   </button>
-                  <button className="btn btn-sm btn-outline-info" onClick={() => setShareTarget({ type: "folder", item: folder })}>
+                  <button
+                    className="btn btn-sm btn-outline-info"
+                    onClick={() => setShareTarget({ type: "folder", item: folder })}
+                    title="Share folder"
+                    aria-label={`Share folder ${folder.name}`}
+                  >
                     <FaShareAlt />
                   </button>
-                  <button className="btn btn-sm btn-outline-secondary" onClick={() => setRenameTarget({ type: "folder", data: folder })}>
+                  <button
+                    className="btn btn-sm btn-outline-secondary"
+                    onClick={() => setRenameTarget({ type: "folder", data: folder })}
+                    title="Rename folder"
+                    aria-label={`Rename folder ${folder.name}`}
+                  >
                     <FaFileSignature />
                   </button>
-                  <button className="btn btn-sm btn-outline-danger" onClick={() => deleteFolder(folder)}>
+                  <button
+                    className="btn btn-sm btn-outline-danger"
+                    onClick={() => deleteFolder(folder)}
+                    title="Delete folder"
+                    aria-label={`Delete folder ${folder.name}`}
+                  >
                     <FaTrash />
                   </button>
                 </div>
@@ -952,7 +975,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
           {filteredVisibleFiles.map((file) => (
             <div
               key={file._id}
-              className="workspace-explorer-grid__item"
+              className="workspace-explorer-grid__item admin-files-grid__item"
               draggable={canDragItem()}
               onDragStart={(e) => handleDragStart(e, {
                 type: "file",
@@ -962,33 +985,63 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
               onDragEnd={handleDragEnd}
               onContextMenu={(e) => handleContextMenu(e, { type: "file", data: file })}
             >
-              <div className="card file-card workspace-explorer-card h-100 text-center p-3 position-relative">
+              <div className="card file-card workspace-explorer-card admin-files-card h-100 text-center p-3 position-relative">
                 <div className="position-absolute top-0 end-0 p-2">
                   <button
                     className="btn btn-sm btn-light"
                     onClick={(e) => handleContextMenu(e, { type: "file", data: file })}
                     title="More actions"
+                    aria-label={`More actions for file ${file.originalName}`}
                   >
                     <FaEllipsisV />
                   </button>
                 </div>
-                <div className="mb-3">{iconByMime(file.mimetype)}</div>
-                <h6 className="card-title text-truncate">{file.originalName}</h6>
-                <p className="text-muted small">{formatFileSize(file.size)}</p>
-                <div className="workspace-explorer-actions">
-                  <a className="btn btn-sm btn-outline-primary" href={`${BACKEND_URL}/preview/${file.filename}?role=${role}&userId=${userId}`} target="_blank" rel="noreferrer">
+                <div className="admin-files-card__body">
+                  <div className="mb-3">{iconByMime(file.mimetype)}</div>
+                  <h6 className="card-title text-truncate w-100" title={file.originalName}>{file.originalName}</h6>
+                  <p className="text-muted small mb-0">{formatFileSize(file.size)}</p>
+                </div>
+                <div className="workspace-explorer-actions admin-files-card__actions">
+                  <a
+                    className="btn btn-sm btn-outline-primary"
+                    href={`${BACKEND_URL}/preview/${file.filename}?role=${role}&userId=${userId}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="Preview file"
+                    aria-label={`Preview file ${file.originalName}`}
+                  >
                     <FaEye />
                   </a>
-                  <a className="btn btn-sm btn-outline-success" href={`${BACKEND_URL}/download/${file.filename}?role=${role}&userId=${userId}`}>
+                  <a
+                    className="btn btn-sm btn-outline-success"
+                    href={`${BACKEND_URL}/download/${file.filename}?role=${role}&userId=${userId}`}
+                    title="Download file"
+                    aria-label={`Download file ${file.originalName}`}
+                  >
                     <FaCloudDownloadAlt />
                   </a>
-                  <button className="btn btn-sm btn-outline-info" onClick={() => setShareTarget({ type: "file", item: file })}>
+                  <button
+                    className="btn btn-sm btn-outline-info"
+                    onClick={() => setShareTarget({ type: "file", item: file })}
+                    title="Share file"
+                    aria-label={`Share file ${file.originalName}`}
+                  >
                     <FaShareAlt />
                   </button>
-                  <button className="btn btn-sm btn-outline-secondary" onClick={() => setRenameTarget({ type: "file", data: file })}>
+                  <button
+                    className="btn btn-sm btn-outline-secondary"
+                    onClick={() => setRenameTarget({ type: "file", data: file })}
+                    title="Rename file"
+                    aria-label={`Rename file ${file.originalName}`}
+                  >
                     <FaFileSignature />
                   </button>
-                  <button className="btn btn-sm btn-outline-danger" onClick={() => deleteFile(file)}>
+                  <button
+                    className="btn btn-sm btn-outline-danger"
+                    onClick={() => deleteFile(file)}
+                    title="Delete file"
+                    aria-label={`Delete file ${file.originalName}`}
+                  >
                     <FaTrash />
                   </button>
                 </div>

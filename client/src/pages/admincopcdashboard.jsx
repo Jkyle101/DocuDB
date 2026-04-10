@@ -6,8 +6,10 @@ import {
   FaLayerGroup,
   FaListUl,
   FaShieldAlt,
+  FaTasks,
 } from "react-icons/fa";
 import AdminTasksPage from "./admintasks";
+import AdminAllTasksPage from "./adminalltasks";
 import CopcWorkflowPage from "./copcworkflow";
 import AdminCopcProgramsPage from "./admincopcprograms";
 import { fetchCopcHealthSnapshot } from "../utils/copcHealth";
@@ -25,6 +27,12 @@ const TAB_CONFIG = {
     icon: FaListUl,
     description: "Coordinate folder-level tasks, assignments, and progress monitoring.",
     tone: "tasks",
+  },
+  all_tasks: {
+    label: "All Tasks",
+    icon: FaTasks,
+    description: "Review every COPC task across programs, folders, assignees, and due dates.",
+    tone: "alltasks",
   },
   programs: {
     label: "Program Management",
@@ -197,6 +205,7 @@ export default function AdminCopcDashboardPage({ defaultTab = "workflow" }) {
             <div className="copc-gh-content">
               {activeTab === "workflow" && <CopcWorkflowPage />}
               {activeTab === "tasks" && <AdminTasksPage />}
+              {activeTab === "all_tasks" && <AdminAllTasksPage />}
               {activeTab === "programs" && <AdminCopcProgramsPage />}
             </div>
           </section>
