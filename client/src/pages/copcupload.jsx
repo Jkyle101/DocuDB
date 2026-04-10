@@ -782,16 +782,17 @@ export default function CopcUploadPage() {
     };
   }, [isChecklistDragging]);
 
-  const shouldFloatChecklist = viewportWidth >= 1200;
+  const shouldFloatChecklist = viewportWidth >= 1600;
   const defaultChecklistPosition = shouldFloatChecklist ? getDefaultChecklistPosition() : { x: 0, y: 0 };
   const checklistLeft = Number.isFinite(checklistPosition.x) ? checklistPosition.x : defaultChecklistPosition.x;
   const checklistTop = Number.isFinite(checklistPosition.y) ? checklistPosition.y : defaultChecklistPosition.y;
   const showTaskChecklist = !loading && !!selectedProgramId;
+  const shouldReserveChecklistSpace = showTaskChecklist && shouldFloatChecklist;
 
   return (
     <div
       className="container-fluid py-3 file-manager-container"
-      style={showTaskChecklist && shouldFloatChecklist ? { paddingRight: "450px" } : undefined}
+      style={shouldReserveChecklistSpace ? { paddingRight: "450px" } : undefined}
       onDragEnter={handleWorkspaceDragEnter}
       onDragOver={handleWorkspaceDragOver}
       onDragLeave={handleWorkspaceDragLeave}
@@ -1016,8 +1017,8 @@ export default function CopcUploadPage() {
               </div>
             )}
             {!loadingStatuses && filteredUploadStatuses.length > 0 && (
-              <div className="table-responsive">
-                <table className="table table-sm align-middle mb-0">
+              <div className="table-responsive workspace-status-table-wrap">
+                <table className="table table-sm align-middle mb-0 workspace-status-table">
                   <thead className="table-light">
                     <tr>
                       <th>File</th>
@@ -1091,16 +1092,16 @@ export default function CopcUploadPage() {
           ref={checklistCardRef}
           className="card shadow-sm mb-3"
           style={shouldFloatChecklist
-            ? {
-                position: "fixed",
-                left: checklistLeft,
-                top: checklistTop,
-                width: "420px",
+              ? {
+                  position: "fixed",
+                  left: checklistLeft,
+                  top: checklistTop,
+                  width: "420px",
                 maxHeight: "82vh",
-                overflowY: "auto",
-                zIndex: 9,
-              }
-            : { maxWidth: "460px" }}
+                  overflowY: "auto",
+                  zIndex: 9,
+                }
+              : { width: "min(460px, 100%)", marginLeft: "auto" }}
         >
           <div className="card-header bg-light py-2">
             <div className="d-flex justify-content-between align-items-center">
@@ -1195,11 +1196,11 @@ export default function CopcUploadPage() {
       )}
 
       {!loading && hasExplorerItems && view === "grid" && (
-        <div className="row g-4">
+        <div className="workspace-explorer-grid">
           {filteredFolders.map((folder) => (
-            <div key={folder._id} className="col-6 col-sm-4 col-md-3 col-xl-2">
+            <div key={folder._id} className="workspace-explorer-grid__item">
               <div
-                className="card folder-card h-100 text-center p-3 position-relative"
+                className="card folder-card workspace-explorer-card h-100 text-center p-3 position-relative"
                 onDragOver={(e) => handleFolderDragOver(e, folder._id)}
                 onDrop={(e) => handleFolderDrop(e, folder._id)}
                 onDragLeave={() => {
@@ -1212,7 +1213,7 @@ export default function CopcUploadPage() {
                 <FaFolder size={42} className="text-warning mb-3" />
                 <h6 className="card-title text-truncate" title={folder.path || folder.name}>{folder.name}</h6>
                 <p className="text-muted small text-truncate" title={folder.path || folder.name}>{folder.path || folder.name}</p>
-                <div className="d-flex gap-1 justify-content-center mt-2">
+                <div className="workspace-explorer-actions mt-2">
                   <button className="btn btn-sm btn-outline-primary" onClick={() => setCurrentFolderId(folder._id)} title="Open folder">
                     <FaEye className="me-1" /> Open
                   </button>
@@ -1224,8 +1225,8 @@ export default function CopcUploadPage() {
             </div>
           ))}
           {filteredApprovedFiles.map((file) => (
-            <div key={`approved-grid-${file._id}`} className="col-6 col-sm-4 col-md-3 col-xl-2">
-              <div className="card h-100 text-center p-3 position-relative border-success">
+            <div key={`approved-grid-${file._id}`} className="workspace-explorer-grid__item">
+              <div className="card workspace-explorer-card h-100 text-center p-3 position-relative border-success">
                 <FaFileAlt size={42} className="text-primary mb-3" />
                 <h6 className="card-title text-truncate" title={file.originalName}>{file.originalName}</h6>
                 <p className="text-muted small mb-1">{formatFileSize(file.size)}</p>
@@ -1233,7 +1234,7 @@ export default function CopcUploadPage() {
                   {file.uploadDate ? new Date(file.uploadDate).toLocaleString() : "N/A"}
                 </p>
                 <span className="badge bg-success mb-2">Approved</span>
-                <div className="d-flex gap-1 justify-content-center mt-1">
+                <div className="workspace-explorer-actions mt-1">
                   <a
                     className="btn btn-sm btn-outline-primary"
                     href={`${BACKEND_URL}/preview/${file.filename}?userId=${encodeURIComponent(userId || "")}&role=${encodeURIComponent(role || "")}`}

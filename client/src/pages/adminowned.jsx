@@ -778,16 +778,17 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
     return () => clearTimeout(timer);
   }, [dropUploadMessage, uploadingDroppedItems]);
 
-  const shouldFloatChecklist = typeof window !== "undefined" && window.innerWidth >= 1200;
+  const shouldFloatChecklist = typeof window !== "undefined" && window.innerWidth >= 1600;
   const defaultChecklistPosition = shouldFloatChecklist ? getDefaultChecklistPosition() : { x: 0, y: 0 };
   const checklistLeft = Number.isFinite(checklistPosition.x) ? checklistPosition.x : defaultChecklistPosition.x;
   const checklistTop = Number.isFinite(checklistPosition.y) ? checklistPosition.y : defaultChecklistPosition.y;
   const showTaskChecklist = currentFolderId && isAdmin && isCurrentFolderCopcScoped;
+  const shouldReserveChecklistSpace = showTaskChecklist && shouldFloatChecklist;
 
   return (
     <div
       className="container-fluid py-3 file-manager-container"
-      style={showTaskChecklist && shouldFloatChecklist ? { paddingRight: "450px" } : undefined}
+      style={shouldReserveChecklistSpace ? { paddingRight: "450px" } : undefined}
       onDragEnter={handleWorkspaceDragEnter}
       onDragOver={handleWorkspaceDragOver}
       onDragLeave={handleWorkspaceDragLeave}
@@ -887,16 +888,16 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
       </div>
 
       {view === "grid" ? (
-        <div className="row g-4">
+        <div className="workspace-explorer-grid">
           {movingByDrop && (
-            <div className="col-12">
+            <div className="workspace-explorer-grid__full">
               <div className="alert alert-info py-2 mb-0">Moving item...</div>
             </div>
           )}
           {filteredVisibleFolders.map((folder) => (
             <div
               key={folder._id}
-              className="col-6 col-sm-4 col-md-3 col-xl-2"
+              className="workspace-explorer-grid__item"
               draggable={canDragItem()}
               onDragStart={(e) => handleDragStart(e, {
                 type: "folder",
@@ -908,7 +909,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
               onContextMenu={(e) => handleContextMenu(e, { type: "folder", data: folder })}
             >
               <div
-                className="card folder-card h-100 text-center p-3 position-relative"
+                className="card folder-card workspace-explorer-card h-100 text-center p-3 position-relative"
                 onDragOver={(e) => handleFolderDragOver(e, folder._id)}
                 onDrop={(e) => handleFolderDrop(e, folder._id)}
                 onDragLeave={() => {
@@ -930,10 +931,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
                 <FaFolder size={42} className="text-warning mb-3" />
                 <h6 className="card-title text-truncate">{folder.name}</h6>
                 {folder.isPredefinedRoot && <span className="badge bg-primary">Predefined Folder Tree</span>}
-                <div
-                  className="d-flex gap-1 justify-content-center mt-2 flex-nowrap"
-                  style={{ overflowX: "auto", paddingBottom: "2px" }}
-                >
+                <div className="workspace-explorer-actions mt-2">
                   <button className="btn btn-sm btn-outline-primary" onClick={() => goInto(folder._id)}>
                     <FaEye />
                   </button>
@@ -954,7 +952,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
           {filteredVisibleFiles.map((file) => (
             <div
               key={file._id}
-              className="col-6 col-sm-4 col-md-3 col-xl-2"
+              className="workspace-explorer-grid__item"
               draggable={canDragItem()}
               onDragStart={(e) => handleDragStart(e, {
                 type: "file",
@@ -964,7 +962,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
               onDragEnd={handleDragEnd}
               onContextMenu={(e) => handleContextMenu(e, { type: "file", data: file })}
             >
-              <div className="card file-card h-100 text-center p-3 position-relative">
+              <div className="card file-card workspace-explorer-card h-100 text-center p-3 position-relative">
                 <div className="position-absolute top-0 end-0 p-2">
                   <button
                     className="btn btn-sm btn-light"
@@ -977,7 +975,7 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
                 <div className="mb-3">{iconByMime(file.mimetype)}</div>
                 <h6 className="card-title text-truncate">{file.originalName}</h6>
                 <p className="text-muted small">{formatFileSize(file.size)}</p>
-                <div className="d-flex flex-wrap gap-1 justify-content-center">
+                <div className="workspace-explorer-actions">
                   <a className="btn btn-sm btn-outline-primary" href={`${BACKEND_URL}/preview/${file.filename}?role=${role}&userId=${userId}`} target="_blank" rel="noreferrer">
                     <FaEye />
                   </a>
@@ -1261,16 +1259,16 @@ export default function AdminOwnedPage({ defaultScope = "owned" }) {
           ref={checklistCardRef}
           className="card shadow-sm mt-3"
           style={shouldFloatChecklist
-            ? {
-                position: "fixed",
-                left: checklistLeft,
-                top: checklistTop,
-                width: "420px",
+              ? {
+                  position: "fixed",
+                  left: checklistLeft,
+                  top: checklistTop,
+                  width: "420px",
                 maxHeight: "82vh",
-                overflowY: "auto",
-                zIndex: 9,
-              }
-            : { maxWidth: "460px" }}
+                  overflowY: "auto",
+                  zIndex: 9,
+                }
+              : { width: "min(460px, 100%)", marginLeft: "auto" }}
         >
           <div className="card-header bg-light py-2">
             <div className="d-flex justify-content-between align-items-center">

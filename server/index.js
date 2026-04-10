@@ -2243,6 +2243,65 @@ async function getGroupSharePermissionForFile(userId, fileId) {
   return best;
 }
 
+function getEntityOwnerId(entity) {
+  return (
+    entity?.owner?._id?.toString?.() ||
+    entity?.owner?.toString?.() ||
+    entity?.userId?.toString?.() ||
+    entity?.userId ||
+    null
+  );
+}
+
+function isUserInSharedWith(sharedWith, userId) {
+  if (!userId) return false;
+  return !!(sharedWith || []).some((entry) => {
+    const id = entry?._id?.toString?.() || entry?.toString?.() || entry;
+    return String(id) === String(userId);
+  });
+}
+
+async function buildFileAccessMetadata(file, userId) {
+  const normalizedUserId = userId == null ? null : String(userId);
+  const ownerId = getEntityOwnerId(file);
+  const isOwner = !!normalizedUserId && ownerId === normalizedUserId;
+  const isDirectShare = !isOwner && isUserInSharedWith(file?.sharedWith, normalizedUserId);
+  const groupPermission =
+    !isOwner && normalizedUserId ? await getGroupSharePermissionForFile(normalizedUserId, file?._id) : null;
+  const isShared = !!(isDirectShare || groupPermission);
+
+  return {
+    isOwned: isOwner,
+    isShared,
+    accessSource: isOwner
+      ? "owner"
+      : isDirectShare
+        ? "direct_share"
+        : groupPermission
+          ? "group_share"
+          : "assignment",
+    permission: isOwner
+      ? "owner"
+      : isDirectShare
+        ? normalizePermissionRole(file?.permissions, "viewer")
+        : groupPermission || "viewer",
+  };
+}
+
+function buildFolderAccessMetadata(folder, userId) {
+  const normalizedUserId = userId == null ? null : String(userId);
+  const ownerId = getEntityOwnerId(folder);
+  const isOwner = !!normalizedUserId && ownerId === normalizedUserId;
+  const isDirectShare = !isOwner && isUserInSharedWith(folder?.sharedWith, normalizedUserId);
+
+  return {
+    isOwned: isOwner,
+    isShared: isDirectShare,
+    accessSource: isOwner ? "owner" : isDirectShare ? "direct_share" : "assignment",
+    permission: isOwner ? "owner" : isDirectShare ? normalizePermissionRole(folder?.permissions, "viewer") : "viewer",
+  };
+}
+
 /* ========================
    MONGODB
 ======================== */
@@ -2598,8 +2657,11 @@ async function userHasFileAccess(file, userId, role, options = {}) {
   if (file.parentFolder) {
     const canViewParent = await canUserAccessFolderByAssignment(file.parentFolder, userId, role);
     if (!canViewParent) return false;
+    return true;
   }
-  return true;
+
+  // Root-level My Drive files must be explicitly owned or shared.
+  return false;
 }
 
 function isFlaggedByUser(ids, userId) {
@@ -4436,6 +4498,15 @@ app.post("/reports/auto-generate", async (req, res) => {
 // Get file versions
 app.get("/files/:id/versions", async (req, res) => {
   try {
+    const { userId, role } = req.query || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const actorRole = await resolveActorRole(userId, role);
+    const file = await File.findById(req.params.id).populate("owner");
+    if (!file) return res.status(404).json({ error: "File not found" });
+    if (!(await userHasFileAccess(file, userId, actorRole, { hydrateWorkflowAssignments: true }))) {
+      return res.status(403).json({ error: "Not authorized to view version history" });
+    }
+
     const versions = await FileVersion.find({ fileId: req.params.id })
       .populate("createdBy", "email")
       .sort({ versionNumber: -1 });
@@ -5103,22 +5174,24 @@ app.get("/files", async (req, res) => {
       visibleFiles = scopedFiles;
     }
 
-    // Add permission info for shared files
-    const filesWithPermissions = visibleFiles.map(file => {
-      const isOwner = file.owner._id.toString() === userId;
-      const isFavorite = isFlaggedByUser(file.favoritedBy, userId);
-      const isPinned = isFlaggedByUser(file.pinnedBy, userId);
-      return {
-        ...file.toObject(),
-        isShared: !isOwner,
-        permission: isOwner ? "owner" : normalizePermissionRole(file.permissions, "viewer"),
-        ownerEmail: file.owner?.email || null,
-        isDuplicate: !!file.duplicateOf,
-        classification: file.classification || null,
-        isFavorite,
-        isPinned,
-      };
-    });
+    // Attach ownership vs. share metadata so the UI can distinguish
+    // direct shares from assignment-based visibility.
+    const filesWithPermissions = await Promise.all(
+      visibleFiles.map(async (file) => {
+        const accessMeta = await buildFileAccessMetadata(file, userId);
+        const isFavorite = isFlaggedByUser(file.favoritedBy, userId);
+        const isPinned = isFlaggedByUser(file.pinnedBy, userId);
+        return {
+          ...file.toObject(),
+          ...accessMeta,
+          ownerEmail: file.owner?.email || null,
+          isDuplicate: !!file.duplicateOf,
+          classification: file.classification || null,
+          isFavorite,
+          isPinned,
+        };
+      })
+    );
 
     res.json(filesWithPermissions);
   } catch (err) {
@@ -5171,9 +5244,9 @@ app.get("/dashboard/personalized/:userId", async (req, res) => {
       .sort({ uploadDate: -1 })
       .limit(200);
 
-    const relevantFiles = rawFiles
-      .map((f) => {
-        const isOwner = f.owner?._id?.toString?.() === userId || f.userId?.toString?.() === userId;
+    const relevantFiles = (await Promise.all(
+      rawFiles.map(async (f) => {
+        const accessMeta = await buildFileAccessMetadata(f, userId);
         return {
           _id: f._id,
           originalName: f.originalName,
@@ -5181,7 +5254,7 @@ app.get("/dashboard/personalized/:userId", async (req, res) => {
           mimetype: f.mimetype,
           uploadDate: f.uploadDate,
           ownerEmail: f.owner?.email || null,
-          isShared: !isOwner,
+          ...accessMeta,
           isFavorite: isFlaggedByUser(f.favoritedBy, userId),
           isPinned: isFlaggedByUser(f.pinnedBy, userId),
           isDuplicate: !!f.duplicateOf,
@@ -5189,6 +5262,7 @@ app.get("/dashboard/personalized/:userId", async (req, res) => {
           relevanceScore: scoreRelevantFile(f, userId),
         };
       })
+    ))
       .sort((a, b) => b.relevanceScore - a.relevanceScore)
       .slice(0, 8);
 
@@ -5587,9 +5661,34 @@ app.patch("/files/:id/move", async (req, res) => {
 // Get single file
 app.get("/files/:id", async (req, res) => {
   try {
-    const file = await File.findById(req.params.id).populate("owner", "email").populate("sharedWith", "email");
+    const { userId, role } = req.query || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = hasGlobalViewAccess(actorRole);
+    const file = await File.findById(req.params.id).populate("owner", "email");
     if (!file) return res.status(404).json({ error: "File not found" });
-    res.json(file);
+    if (!isAdmin && !(await userHasFileAccess(file, userId, actorRole, { hydrateWorkflowAssignments: true }))) {
+      return res.status(403).json({ error: "Not authorized to view this file" });
+    }
+
+    const isOwner = getEntityOwnerId(file) === String(userId);
+    if (isOwner || isAdmin) {
+      await file.populate("sharedWith", "email");
+    }
+
+    const fileResponse = {
+      ...file.toObject(),
+      ...(await buildFileAccessMetadata(file, userId)),
+      ownerEmail: file.owner?.email || null,
+      isDuplicate: !!file.duplicateOf,
+      classification: file.classification || null,
+    };
+
+    if (!isOwner && !isAdmin) {
+      fileResponse.sharedWith = [];
+    }
+
+    res.json(fileResponse);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -5926,14 +6025,14 @@ app.get("/folders", async (req, res) => {
       }
     }
 
-    // Add owner and permission info for all folders
+    // Attach ownership vs. share metadata so assignment-based folders
+    // do not look like they were explicitly shared.
     const foldersWithPermissions = accessibleFolders.map(folder => {
-      const isOwner = folder.owner._id.toString() === userId;
+      const accessMeta = buildFolderAccessMetadata(folder, userId);
       const { progress } = computeTaskProgress(folder.complianceTasks || []);
       return {
         ...folder.toObject(),
-        isShared: !isOwner,
-        permission: isOwner ? "owner" : normalizePermissionRole(folder.permissions, "viewer"),
+        ...accessMeta,
         ownerEmail: folder.owner?.email || null,
         complianceProgress: progress,
       };
@@ -6102,9 +6201,32 @@ app.delete("/folders/:id", async (req, res) => {
 // Get single folder
 app.get("/folders/:id", async (req, res) => {
   try {
-    const folder = await Folder.findById(req.params.id).populate("owner", "email").populate("sharedWith", "email");
+    const { userId, role } = req.query || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const actorRole = await resolveActorRole(userId, role);
+    const isAdmin = hasGlobalViewAccess(actorRole);
+    const folder = await Folder.findById(req.params.id).populate("owner", "email");
     if (!folder) return res.status(404).json({ error: "Folder not found" });
-    res.json(folder);
+    if (!isAdmin && !(await canUserAccessFolderByAssignment(folder._id, userId, actorRole))) {
+      return res.status(403).json({ error: "Not authorized to view this folder" });
+    }
+
+    const isOwner = getEntityOwnerId(folder) === String(userId);
+    if (isOwner || isAdmin) {
+      await folder.populate("sharedWith", "email");
+    }
+
+    const folderResponse = {
+      ...folder.toObject(),
+      ...buildFolderAccessMetadata(folder, userId),
+      ownerEmail: folder.owner?.email || null,
+    };
+
+    if (!isOwner && !isAdmin) {
+      folderResponse.sharedWith = [];
+    }
+
+    res.json(folderResponse);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -9718,6 +9840,15 @@ app.patch("/files/:id/verify", async (req, res) => {
 // Get folder versions
 app.get("/folders/:id/versions", async (req, res) => {
   try {
+    const { userId, role } = req.query || {};
+    if (!userId) return res.status(400).json({ error: "Missing userId" });
+    const actorRole = await resolveActorRole(userId, role);
+    const folder = await Folder.findById(req.params.id);
+    if (!folder) return res.status(404).json({ error: "Folder not found" });
+    if (!hasGlobalViewAccess(actorRole) && !(await canUserAccessFolderByAssignment(folder._id, userId, actorRole))) {
+      return res.status(403).json({ error: "Not authorized to view folder version history" });
+    }
+
     const versions = await FolderVersion.find({ folderId: req.params.id })
       .populate("createdBy", "email")
       .sort({ versionNumber: -1 });

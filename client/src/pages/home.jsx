@@ -524,19 +524,24 @@ export default function Home() {
     return "viewer";
   };
 
+  const isOwnedItem = (item) => {
+    if (typeof item?.isOwned === "boolean") return item.isOwned;
+    return !item?.isShared;
+  };
+
   const getItemPermission = (item) => {
-    if (!item?.isShared) return "owner";
+    if (isOwnedItem(item)) return "owner";
     return normalizePermission(item.permission || item.permissions);
   };
 
   const isSharedEditor = (item) => item?.isShared && getItemPermission(item) === "editor";
-  const canEditItem = (item) => !item?.isShared || isSharedEditor(item);
-  const canDeleteItem = (item) => !item?.isShared;
+  const canEditItem = (item) => isOwnedItem(item) || isSharedEditor(item);
+  const canDeleteItem = (item) => isOwnedItem(item);
   const isSearchMode = Array.isArray(searchResults);
   const canDragItem = (item) => {
     if (isSearchMode) return false;
     if (isAdmin) return true;
-    return !item?.isShared;
+    return isOwnedItem(item);
   };
 
   const moveDraggedItem = useCallback(async (payload, destinationFolderId) => {
@@ -561,7 +566,7 @@ export default function Home() {
   }, [currentFolder, fetchFolderContents, fetchFolderTasks, role, userId]);
 
   const handleDragStart = (event, payload) => {
-    if (!payload || !canDragItem({ isShared: payload.isShared })) return;
+    if (!payload || !canDragItem(payload)) return;
     setDragPayload(payload);
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", `${payload.type}:${payload.id}`);
@@ -1151,6 +1156,7 @@ export default function Home() {
                   id: folder._id,
                   fromFolderId: currentFolder || "",
                   isShared: !!folder.isShared,
+                  isOwned: !!folder.isOwned,
                 })}
                 onDragEnd={handleDragEnd}
                 onContextMenu={(e) =>
@@ -1212,7 +1218,7 @@ export default function Home() {
                       >
                         <FaEye />
                       </button>
-                      {!folder.isShared && (
+                      {isOwnedItem(folder) && (
                         <button
                           className="btn btn-outline-secondary"
                           onClick={(e) => {
@@ -1251,6 +1257,7 @@ export default function Home() {
                   id: file._id,
                   fromFolderId: currentFolder || "",
                   isShared: !!file.isShared,
+                  isOwned: !!file.isOwned,
                 })}
                 onDragEnd={handleDragEnd}
                 onContextMenu={(e) =>
@@ -1313,7 +1320,7 @@ export default function Home() {
                       </p>
                     )}
                     <div className="file-card-actions" role="group">
-                      {!file.isShared && (
+                      {isOwnedItem(file) && (
                         <button
                           className={`btn btn-sm file-card-action-btn ${file.isFavorite ? "btn-warning" : "btn-outline-warning"}`}
                           onClick={(e) => {
@@ -1325,7 +1332,7 @@ export default function Home() {
                           {file.isFavorite ? <FaStar /> : <FaRegStar />}
                         </button>
                       )}
-                      {!file.isShared && (
+                      {isOwnedItem(file) && (
                         <button
                           className={`btn btn-sm file-card-action-btn ${file.isPinned ? "btn-dark" : "btn-outline-dark"}`}
                           onClick={(e) => {
@@ -1374,7 +1381,7 @@ export default function Home() {
                           <FaEdit />
                         </button>
                       )}
-                      {!file.isShared && (
+                      {isOwnedItem(file) && (
                         <button
                           className="btn btn-sm btn-outline-secondary file-card-action-btn"
                           onClick={(e) => {
@@ -1427,6 +1434,7 @@ export default function Home() {
                         id: folder._id,
                         fromFolderId: currentFolder || "",
                         isShared: !!folder.isShared,
+                        isOwned: !!folder.isOwned,
                       })}
                       onDragEnd={handleDragEnd}
                       onDragOver={(e) => handleFolderDragOver(e, folder._id)}
@@ -1462,6 +1470,8 @@ export default function Home() {
                             <FaUsers className="me-1" />
                             {folder.ownerEmail}
                           </span>
+                        ) : !isOwnedItem(folder) && folder.ownerEmail ? (
+                          <span className="text-muted">{folder.ownerEmail}</span>
                         ) : (
                           <span className="text-muted">You</span>
                         )}
@@ -1477,7 +1487,7 @@ export default function Home() {
                           >
                             <FaEye />
                           </button>
-                          {!folder.isShared && (
+                          {isOwnedItem(folder) && (
                             <button
                               className="btn btn-sm btn-outline-secondary"
                               onClick={() =>
@@ -1497,7 +1507,7 @@ export default function Home() {
                           >
                             <FaComment />
                           </button>
-                          {!folder.isShared && (
+                          {isOwnedItem(folder) && (
                             <button
                               className="btn btn-sm btn-outline-secondary"
                               onClick={() =>
@@ -1508,7 +1518,7 @@ export default function Home() {
                               <FaArrowsAlt />
                             </button>
                           )}
-                          {!folder.isShared && (
+                          {isOwnedItem(folder) && (
                             <button
                               className="btn btn-sm btn-outline-secondary"
                               onClick={() =>
@@ -1552,6 +1562,7 @@ export default function Home() {
                         id: file._id,
                         fromFolderId: currentFolder || "",
                         isShared: !!file.isShared,
+                        isOwned: !!file.isOwned,
                       })}
                       onDragEnd={handleDragEnd}
                       onContextMenu={(e) =>
@@ -1603,6 +1614,8 @@ export default function Home() {
                             <FaUsers className="me-1" />
                             {file.ownerEmail}
                           </span>
+                        ) : !isOwnedItem(file) && file.ownerEmail ? (
+                          <span className="text-muted">{file.ownerEmail}</span>
                         ) : (
                           <span className="text-muted">You</span>
                         )}
@@ -1611,7 +1624,7 @@ export default function Home() {
                       <td>{new Date(file.uploadDate).toLocaleDateString()}</td>
                       <td className="text-center">
                         <div className="btn-group flex-wrap gap-1 justify-content-center">
-                          {!file.isShared && (
+                          {isOwnedItem(file) && (
                             <button
                               className={`btn btn-sm ${file.isFavorite ? "btn-warning" : "btn-outline-warning"}`}
                               onClick={() => toggleFavorite(file)}
@@ -1620,7 +1633,7 @@ export default function Home() {
                               {file.isFavorite ? <FaStar /> : <FaRegStar />}
                             </button>
                           )}
-                          {!file.isShared && (
+                          {isOwnedItem(file) && (
                             <button
                               className={`btn btn-sm ${file.isPinned ? "btn-dark" : "btn-outline-dark"}`}
                               onClick={() => togglePinned(file)}
@@ -1659,7 +1672,7 @@ export default function Home() {
                               <FaEdit />
                             </button>
                           )}
-                          {!file.isShared && (
+                          {isOwnedItem(file) && (
                             <button
                               className="btn btn-sm btn-outline-secondary"
                               onClick={() =>
@@ -1679,7 +1692,7 @@ export default function Home() {
                           >
                             <FaComment />
                           </button>
-                          {!file.isShared && (
+                          {isOwnedItem(file) && (
                             <button
                               className="btn btn-sm btn-outline-secondary"
                               onClick={() =>
@@ -1690,7 +1703,7 @@ export default function Home() {
                               <FaArrowsAlt />
                             </button>
                           )}
-                          {!file.isShared && (
+                          {isOwnedItem(file) && (
                             <button
                               className="btn btn-sm btn-outline-secondary"
                               onClick={() =>
@@ -1879,7 +1892,7 @@ export default function Home() {
                           <FaComment className="me-2" />
                           Comments
                         </button>
-                        {!contextMenu.item.data.isShared && (
+                        {isOwnedItem(contextMenu.item.data) && (
                           <button
                             className="btn btn-outline-secondary d-flex align-items-center"
                             onClick={() => {
@@ -1894,7 +1907,7 @@ export default function Home() {
                             Move
                           </button>
                         )}
-                        {!contextMenu.item.data.isShared && (
+                        {isOwnedItem(contextMenu.item.data) && (
                           <button
                             className="btn btn-outline-info d-flex align-items-center"
                             onClick={() => {
@@ -1909,7 +1922,7 @@ export default function Home() {
                             Share
                           </button>
                         )}
-                        {!contextMenu.item.data.isShared && (
+                        {isOwnedItem(contextMenu.item.data) && (
                           <button
                             className="btn btn-outline-warning d-flex align-items-center"
                             onClick={() => {
@@ -1924,7 +1937,7 @@ export default function Home() {
                             Manage Shares
                           </button>
                         )}
-                        {!contextMenu.item.data.isShared && (
+                        {isOwnedItem(contextMenu.item.data) && (
                           <button
                             className="btn btn-outline-secondary d-flex align-items-center"
                             onClick={() => {
@@ -2019,7 +2032,7 @@ export default function Home() {
                             Edit Document
                           </button>
                         )}
-                        {!contextMenu.item.data.isShared && (
+                        {isOwnedItem(contextMenu.item.data) && (
                           <button
                             className="btn btn-outline-secondary d-flex align-items-center"
                             onClick={() => {
@@ -2031,7 +2044,7 @@ export default function Home() {
                             Move
                           </button>
                         )}
-                        {!contextMenu.item.data.isShared && (
+                        {isOwnedItem(contextMenu.item.data) && (
                           <button
                             className="btn btn-outline-info d-flex align-items-center"
                             onClick={() => {
@@ -2046,7 +2059,7 @@ export default function Home() {
                             Share
                           </button>
                         )}
-                        {!contextMenu.item.data.isShared && (
+                        {isOwnedItem(contextMenu.item.data) && (
                           <button
                             className="btn btn-outline-warning d-flex align-items-center"
                             onClick={() => {
@@ -2061,7 +2074,7 @@ export default function Home() {
                             Manage Shares
                           </button>
                         )}
-                        {!contextMenu.item.data.isShared && (
+                        {isOwnedItem(contextMenu.item.data) && (
                           <button
                             className="btn btn-outline-secondary d-flex align-items-center"
                             onClick={() => {
@@ -2076,7 +2089,7 @@ export default function Home() {
                             Version History
                           </button>
                         )}
-                        {!contextMenu.item.data.isShared && (
+                        {isOwnedItem(contextMenu.item.data) && (
                           <button
                             className={`btn d-flex align-items-center ${contextMenu.item.data.isFavorite ? "btn-warning" : "btn-outline-warning"}`}
                             onClick={() => {
@@ -2088,7 +2101,7 @@ export default function Home() {
                             {contextMenu.item.data.isFavorite ? "Remove Favorite" : "Add to Favorites"}
                           </button>
                         )}
-                        {!contextMenu.item.data.isShared && (
+                        {isOwnedItem(contextMenu.item.data) && (
                           <button
                             className={`btn d-flex align-items-center ${contextMenu.item.data.isPinned ? "btn-dark" : "btn-outline-dark"}`}
                             onClick={() => {
@@ -2100,7 +2113,7 @@ export default function Home() {
                             {contextMenu.item.data.isPinned ? "Unpin Document" : "Pin Document"}
                           </button>
                         )}
-                        {!contextMenu.item.data.isShared && (
+                        {isOwnedItem(contextMenu.item.data) && (
                           <>
                             <hr />
                             <button

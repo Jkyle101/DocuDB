@@ -17,7 +17,9 @@ export default function ManageSharesModal({ onClose, target, onUpdated }) {
         ? `${BACKEND_URL}/files/${target.item._id}`
         : `${BACKEND_URL}/folders/${target.item._id}`;
       
-      const res = await axios.get(endpoint);
+      const res = await axios.get(endpoint, {
+        params: { userId: actorId, role },
+      });
       const item = res.data;
       
       // sharedWith is already populated with email from backend

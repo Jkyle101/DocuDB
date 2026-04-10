@@ -366,7 +366,7 @@
   height: 44px;
   border: 1px solid var(--border-soft);
   border-radius: 22px;
-  background: var(--bg-surface);
+  background: #ffffff;
   padding: 0 48px;
   font-size: 16px;
   color: var(--text-strong);
@@ -853,8 +853,8 @@ body.dark-mode .chip-btn.active {
 
 .search-input-google {
   border-radius: 15px;
-  background: color-mix(in srgb, var(--glass-bg, rgba(255, 255, 255, 0.58)) 78%, #ffffff);
-  border: 1px solid var(--glass-stroke, rgba(148, 163, 184, 0.34));
+  background: #ffffff;
+  border: 1px solid #d7deea;
   height: 44px;
   padding-left: 44px;
   padding-right: 44px;
@@ -862,6 +862,7 @@ body.dark-mode .chip-btn.active {
 
 .search-input-google:focus {
   border-color: color-mix(in srgb, var(--brand, #0a66ff) 56%, #c8d9f2);
+  background: #ffffff;
   box-shadow: 0 0 0 0.22rem rgba(10, 102, 255, 0.14);
 }
 
@@ -972,8 +973,9 @@ body.dark-mode .navbar-google-drive {
 
 body.dark-mode .search-input-google,
 body.dark-mode .mobile-search-input {
-  background: color-mix(in srgb, var(--glass-bg-soft, rgba(13, 24, 44, 0.58)) 88%, #0a1731);
-  border-color: var(--glass-stroke-strong, rgba(116, 149, 194, 0.48));
+  background: #ffffff;
+  border-color: #d7deea;
+  color: #1f2937;
 }
 
 body.dark-mode .advanced-filters-panel,
@@ -983,6 +985,7 @@ body.dark-mode .suggestions-google {
 }
 
 /* Plain white search dropdown (non-glass) */
+.advanced-filters-panel,
 .suggestions-google,
 .mobile-suggestions-google {
   background: #ffffff !important;
@@ -993,6 +996,7 @@ body.dark-mode .suggestions-google {
   color: #1f2937;
 }
 
+body.dark-mode .advanced-filters-panel,
 body.dark-mode .suggestions-google,
 body.dark-mode .mobile-suggestions-google {
   background: #ffffff !important;

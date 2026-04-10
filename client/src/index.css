@@ -736,6 +736,64 @@ body,
   overflow: hidden;
 }
 
+.workspace-explorer-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1.25rem;
+  align-items: stretch;
+}
+
+.workspace-explorer-grid__item {
+  min-width: 0;
+}
+
+.workspace-explorer-grid__full {
+  grid-column: 1 / -1;
+}
+
+.workspace-explorer-card {
+  min-height: 220px;
+}
+
+.workspace-explorer-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.workspace-explorer-actions > .btn,
+.workspace-explorer-actions > a {
+  flex: 1 1 88px;
+  min-width: 0;
+}
+
+.workspace-status-table-wrap {
+  overflow-x: auto;
+}
+
+.workspace-status-table {
+  min-width: 920px;
+}
+
+.workspace-status-table th,
+.workspace-status-table td {
+  white-space: nowrap;
+}
+
+.workspace-status-table th:first-child,
+.workspace-status-table td:first-child,
+.workspace-status-table th:nth-child(2),
+.workspace-status-table td:nth-child(2) {
+  white-space: normal;
+}
+
+.workspace-status-table td:first-child,
+.workspace-status-table td:nth-child(2) {
+  word-break: break-word;
+}
+
 .folder-card:hover,
 .file-card:hover,
 .content-card:hover,
@@ -750,6 +808,19 @@ body,
 .table-active {
   background: color-mix(in srgb, var(--brand-soft) 72%, var(--glass-bg)) !important;
   border-color: color-mix(in srgb, var(--brand) 40%, var(--glass-stroke-strong)) !important;
+}
+
+@media (max-width: 575.98px) {
+  .workspace-explorer-grid {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1rem;
+  }
+}
+
+@media (max-width: 1199.98px) {
+  .workspace-status-table {
+    min-width: 840px;
+  }
 }
 
 .table-container {
@@ -992,6 +1063,83 @@ body.dark-mode .app-loading-card {
   border-color: var(--glass-stroke) !important;
   box-shadow: var(--shadow-glass-soft) !important;
   color: var(--text-strong) !important;
+}
+
+/* Keep advanced search filters solid instead of glass */
+.advanced-filters-panel {
+  background: #ffffff !important;
+  border: 1px solid #d7deea !important;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.14) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
+  color: #1f2937 !important;
+}
+
+body.dark-mode .advanced-filters-panel {
+  background: #ffffff !important;
+  border-color: #d7deea !important;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
+  color: #1f2937 !important;
+}
+
+/* Keep search suggestion dropdowns solid instead of glass */
+.suggestions-google,
+.mobile-suggestions-google,
+.search-wrapper-google .suggestions-google {
+  background: #ffffff !important;
+  border: 1px solid #d7deea !important;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.14) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
+  color: #1f2937 !important;
+}
+
+body.dark-mode .suggestions-google,
+body.dark-mode .mobile-suggestions-google,
+body.dark-mode .search-wrapper-google .suggestions-google {
+  background: #ffffff !important;
+  border-color: #d7deea !important;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.16) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
+  color: #1f2937 !important;
+}
+
+/* Keep search inputs solid instead of glass */
+.search-input-google,
+.mobile-search-input {
+  background: #ffffff !important;
+  border-color: #d7deea !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
+  color: #1f2937 !important;
+}
+
+.search-input-google:focus,
+.mobile-search-input:focus {
+  background: #ffffff !important;
+}
+
+body.dark-mode .search-input-google,
+body.dark-mode .mobile-search-input {
+  background: #ffffff !important;
+  border-color: #d7deea !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  opacity: 1 !important;
+  color: #1f2937 !important;
+}
+
+body.dark-mode .search-input-google::placeholder,
+body.dark-mode .mobile-search-input::placeholder {
+  color: #6b7280 !important;
 }
 
 body.dark-mode .form-control,

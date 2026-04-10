@@ -36,7 +36,9 @@ export default function VersionModal({ onClose, target, onRestored }) {
         ? `${BACKEND_URL}/files/${target.item._id}/versions`
         : `${BACKEND_URL}/folders/${target.item._id}/versions`;
 
-      const res = await axios.get(endpoint);
+      const res = await axios.get(endpoint, {
+        params: { userId, role },
+      });
       setVersions(res.data);
     } catch (err) {
       console.error("Failed to fetch versions:", err);

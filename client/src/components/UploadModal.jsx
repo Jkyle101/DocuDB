@@ -97,7 +97,11 @@ export default function UploadModal({ onClose, onUploaded, parentFolder, hideDes
         return;
       }
       try {
-        const { data } = await axios.get(`${BACKEND_URL}/folders/${parentFolder}`);
+        const userId = localStorage.getItem("userId");
+        const role = localStorage.getItem("role");
+        const { data } = await axios.get(`${BACKEND_URL}/folders/${parentFolder}`, {
+          params: { userId, role },
+        });
         const profileKey = String(data?.complianceProfileKey || "").toUpperCase();
         const isCopcProgramRoot = !!data?.copc?.isProgramRoot;
         setIsCopcContext(profileKey.startsWith("COPC_") || isCopcProgramRoot);

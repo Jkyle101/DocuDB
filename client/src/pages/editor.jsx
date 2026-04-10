@@ -135,7 +135,7 @@ export default function EditorPage() {
       try {
         setLoading(true);
         const [fileRes, contentRes] = await Promise.all([
-          axios.get(`${BACKEND_URL}/files/${id}`),
+          axios.get(`${BACKEND_URL}/files/${id}`, { params: { userId, role } }),
           axios.get(`${BACKEND_URL}/files/${id}/content`, { params: { userId, role } }),
         ]);
         setFile(fileRes.data);
