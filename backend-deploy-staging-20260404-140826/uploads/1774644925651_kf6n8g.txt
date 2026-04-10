@@ -1,0 +1,1 @@
+Drag-and-drop upload coverage file for the DocuDB seed.

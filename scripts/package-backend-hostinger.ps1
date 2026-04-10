@@ -3,6 +3,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $serverDir = Join-Path $ProjectRoot "server"
 if (-not (Test-Path $serverDir)) {
@@ -71,7 +72,40 @@ if (Test-Path $zipPath) {
   Remove-Item -LiteralPath $zipPath -Force
 }
 
-Compress-Archive -Path (Join-Path $stageDir "*") -DestinationPath $zipPath -Force
+function New-ZipFromDirectory {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$SourceDirectory,
+    [Parameter(Mandatory = $true)]
+    [string]$DestinationZipPath,
+    [int]$MaxAttempts = 4,
+    [int]$RetryDelaySeconds = 3
+  )
+
+  for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+    try {
+      if (Test-Path $DestinationZipPath) {
+        Remove-Item -LiteralPath $DestinationZipPath -Force
+      }
+
+      [System.IO.Compression.ZipFile]::CreateFromDirectory(
+        $SourceDirectory,
+        $DestinationZipPath,
+        [System.IO.Compression.CompressionLevel]::Optimal,
+        $false
+      )
+      return
+    } catch {
+      if ($attempt -ge $MaxAttempts) {
+        throw
+      }
+      Write-Warning "Zip creation attempt $attempt failed: $($_.Exception.Message). Retrying in $RetryDelaySeconds second(s)..."
+      Start-Sleep -Seconds $RetryDelaySeconds
+    }
+  }
+}
+
+New-ZipFromDirectory -SourceDirectory $stageDir -DestinationZipPath $zipPath
 
 Write-Output "Created backend package: $zipPath"
 Write-Output "Upload files included: $uploadedFileCount"

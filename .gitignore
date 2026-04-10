@@ -10,4 +10,4 @@ client/.env.production
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
-docudb-backend-hostinger-20260312-185843.zip
+docudb-backend-hostinger-*.zip

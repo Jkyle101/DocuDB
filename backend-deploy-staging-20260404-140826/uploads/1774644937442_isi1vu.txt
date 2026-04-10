@@ -1,0 +1,3 @@
+General note for analytics and smart notification coverage.
+This file intentionally avoids strong classification keywords.
+Review manually if confidence stays low.
